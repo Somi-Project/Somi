@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.pyc
+
+# Sensitive files
+config/settings.py
+twitter_cookies.pkl
+
+# Virtual environment (if you have one)
+venv/
