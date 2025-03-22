@@ -49,4 +49,6 @@ e.g. python somi.py aichat --name degenia
   aireply      Fetch latest mentions and reply using the agent's personality
   devpost      Post a message to Twitter
   gencookies   Generates Twitter cookies
-  wrapper      Generate and post a tweet initially, then every 10 minutes...
+```
+## Fin
+I've added comments throughout the code to highlight relevant parts for now 
