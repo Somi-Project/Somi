@@ -1,4 +1,9 @@
-__pycache__/ 
-*.pyc 
-twitter_cookies.pkl 
-.env 
+# Python
+__pycache__/
+*.pyc
+
+# Sensitive files
+twitter_cookies.pkl
+
+# Virtual environment (if you have one)
+venv/

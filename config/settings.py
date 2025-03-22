@@ -2,8 +2,8 @@
 DEFAULT_MODEL = "llama3"
 DEFAULT_TEMP = 0.7
 
-# Twitter/X credentials for goat-x
-TWITTER_USERNAME = "SomiXbt"
+# Twitter/X credentials for dynamic custom lib
+TWITTER_USERNAME = "DegenQXbt"
 TWITTER_PASSWORD = ""
 
 # Telegram credential

@@ -1,13 +1,17 @@
-# agents.py
 import ollama
 from config.settings import DEFAULT_MODEL, DEFAULT_TEMP
 import json
 import random
+import logging
+
+# Disable HTTP request logging from ollama - better end-user interaction
+logging.getLogger("http.client").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 class SomiAgent:
     def __init__(self, name):
         self.name = name
-        with open("config/characters.json", "r") as f:
+        with open("config/personalC.json", "r") as f:
             characters = json.load(f)
         character = characters.get(name, {})
         self.role = character.get("role", "assistant")
@@ -46,13 +50,11 @@ class SomiAgent:
                 f"{msg['role']}: {msg['content']}" for msg in recent_history
             )})
         messages.append({"role": "user", "content": prompt})
-        print(f"Messages sent to Ollama: {messages}")
         response = ollama.chat(
             model=self.model,
             messages=messages,
             options={"temperature": self.temperature}
         )
-        print(f"Ollama response: {response}")
         content = response.get("message", {}).get("content", "")
         if content:
             self.history.append({"role": "assistant", "content": content})
@@ -70,13 +72,13 @@ class SomiAgent:
             {"role": "user", "content": user_prompt}
         ]
         print(f"Messages sent to Ollama for tweet: {messages}")
-        max_length = 280
+        max_length = 280 #limits to tweet amount maximum to ensure smooth posting - can increase if account is premium
         attempts = 0
         while attempts < 3:
             response = ollama.chat(
                 model=self.model,
                 messages=messages,
-                options={"temperature": self.temperature, "max_tokens": 100}  # Limit tokens
+                options={"temperature": self.temperature, "max_tokens": 100}
             )
             content = response.get("message", {}).get("content", "")
             if content and len(content) <= max_length:
@@ -85,5 +87,4 @@ class SomiAgent:
                 content = "chalk dust’s got me stumped—check back after my coffee break!"
             print(f"Tweet length: {len(content)}. Too long or empty, retrying..." if len(content) > max_length else "Empty response, retrying...")
             attempts += 1
-        # Fallback: Truncate if all retries fail
         return content[:max_length] if content else "short tweet fail—blame the projector!"
