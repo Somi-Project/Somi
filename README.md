@@ -59,5 +59,45 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
  --study websites
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
+
+## Commands summary
+python somi.py gencookies
+
+python somi.py aichat --name <agent> --model <model> --temp <temp> --use-studies
+
+python somi.py devpost --message "<message>"
+
+python somi.py aipost --name <agent> --use-studies
+
+python somi.py aiautopost --name <agent>
+
+python somi.py aireply --name <agent> --limit <limit>
+
+python somi.py aiautoreply --name <agent> --limit <limit>
+
+python somi.py telegram --name <agent> --use-studies
+
+python somi.py study --name <agent> --study pdfs --study websites
+
+python somi.py clearstudies
+
+Agent-Specific Options
+--name <agent> (e.g., degenia)
+
+--model <model> (e.g., llama3, default: llama3)
+
+--temp <temp> (e.g., 0.9, default: 0.7)
+
+--limit <limit> (e.g., 3, default: 2)
+
+RAG-Specific Options
+--use-studies (enables RAG for aichat, aipost, telegram)
+
+--study pdfs (studies PDFs for RAG)
+
+--study websites (studies websites for RAG)
+
+
+
 ## Fin
 I've added comments throughout the code to highlight relevant parts for now 
