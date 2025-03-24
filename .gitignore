@@ -1,9 +1,14 @@
-# Python
+# Python-specific ignores
 __pycache__/
 *.pyc
-
-# Sensitive files
-twitter_cookies.pkl
-
-# Virtual environment (if you have one)
+*.pyo
+*.pyd
+.Python
+env/
 venv/
+.env
+
+# Project-specific ignores
+rag_data/
+twitter_cookies.json
+telegram_cache.json

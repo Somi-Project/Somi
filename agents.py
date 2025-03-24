@@ -3,14 +3,16 @@ from config.settings import DEFAULT_MODEL, DEFAULT_TEMP
 import json
 import random
 import logging
+import faiss
+from rag import RAGHandler
 
-# Disable HTTP request logging from ollama - better end-user interaction
 logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 class SomiAgent:
-    def __init__(self, name):
+    def __init__(self, name, use_studies=False):  # Changed from use_rag to use_studies
         self.name = name
+        self.use_studies = use_studies  # Changed variable name
         with open("config/personalC.json", "r") as f:
             characters = json.load(f)
         character = characters.get(name, {})
@@ -24,6 +26,24 @@ class SomiAgent:
         self.behaviors = character.get("behaviors", [])
         self.model = DEFAULT_MODEL
         self.history = []
+        self.rag = RAGHandler() if use_studies else None  # Updated condition
+        if self.use_studies and self.rag:  # Updated condition
+            self._load_rag_data()
+
+    def _load_rag_data(self):
+        """Load existing RAG data from files if available"""
+        if self.rag.vector_file.exists() and self.rag.text_file.exists() and self.rag.text_file.stat().st_size > 0:
+            try:
+                self.rag.index = faiss.read_index(str(self.rag.vector_file))
+                with open(self.rag.text_file, "r") as f:
+                    self.rag.texts = json.load(f)
+                logging.info(f"Loaded RAG data for {self.name}: {len(self.rag.texts)} entries")
+            except Exception as e:
+                logging.error(f"Failed to load RAG data: {str(e)}")
+                self.rag.index = None
+                self.rag.texts = []
+        else:
+            logging.warning("No valid RAG data files found to load.")
 
     def generate_system_prompt(self):
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
@@ -49,6 +69,13 @@ class SomiAgent:
             messages.append({"role": "system", "content": "Recent conversation:\n" + "\n".join(
                 f"{msg['role']}: {msg['content']}" for msg in recent_history
             )})
+
+        if self.use_studies and self.rag:  # Updated condition
+            rag_context = self.rag.retrieve(prompt)
+            if rag_context:
+                context_text = "\n".join(f"Source: {item['source']}\nContent: {item['content'][:200]}..." for item in rag_context)
+                messages.append({"role": "system", "content": f"RAG Context:\n{context_text}"})
+
         messages.append({"role": "user", "content": prompt})
         response = ollama.chat(
             model=self.model,
@@ -71,8 +98,13 @@ class SomiAgent:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
         ]
-        print(f"Messages sent to Ollama for tweet: {messages}")
-        max_length = 280 #limits to tweet amount maximum to ensure smooth posting - can increase if account is premium
+        if self.use_studies and self.rag:  # Updated condition
+            rag_context = self.rag.retrieve(hobby)
+            if rag_context:
+                context_text = "\n".join(f"Source: {item['source']}\nContent: {item['content'][:200]}..." for item in rag_context)
+                messages.append({"role": "system", "content": f"RAG Context:\n{context_text}"})
+
+        max_length = 280
         attempts = 0
         while attempts < 3:
             response = ollama.chat(

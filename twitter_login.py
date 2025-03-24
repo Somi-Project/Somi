@@ -2,14 +2,14 @@ from playwright.sync_api import sync_playwright
 import time
 import json
 import os
-import random  # Added this import
+import random
 from config.settings import TWITTER_USERNAME, TWITTER_PASSWORD
 
 class TwitterHandler:
     def __init__(self):
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(
-            headless=False,  # Set to True for production
+            headless=False,
             args=['--no-sandbox', '--disable-dev-shm-usage']
         )
         self.context = self.browser.new_context(viewport={'width': 1920, 'height': 1080})

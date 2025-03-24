@@ -1,6 +1,7 @@
 import click
 from agents import SomiAgent
 from handlers.twitter import TwitterHandler
+from handlers.telegram import TelegramHandler
 from config.settings import DEFAULT_MODEL, DEFAULT_TEMP
 import re
 from twitter_scraper import TwitterScraper
@@ -8,6 +9,8 @@ import asyncio
 import time
 import random
 from functools import wraps
+import os
+from pathlib import Path
 
 # Makes async functions work with click by running them in a new event loop
 def async_command(f):
@@ -33,13 +36,14 @@ async def gencookies():
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
 @click.option("--model", default=DEFAULT_MODEL, help="Ollama model to use")
 @click.option("--temp", default=DEFAULT_TEMP, help="Temperature for generation")
-def aichat(name, model, temp):
+@click.option("--use-studies", is_flag=True, help="Enable studied data for responses")
+def aichat(name, model, temp, use_studies):
     """Chat continuously with the agent"""
-    agent = SomiAgent(name)
+    agent = SomiAgent(name, use_studies=use_studies)
     if model != DEFAULT_MODEL or temp != DEFAULT_TEMP:
         agent.model = model
         agent.temperature = temp
-    click.echo(f"Chatting with {name}. Type 'quit' to exit.")
+    click.echo(f"Chatting with {name}{' using studies' if use_studies else ''}. Type 'quit' to exit.")
     while True:
         try:
             prompt = input(f"You: ")
@@ -63,75 +67,131 @@ async def devpost(message):
 
 @somi.command()
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
+@click.option("--use-studies", is_flag=True, help="Enable studied data for tweet generation")
 @async_command
-async def aipost(name):
+async def aipost(name, use_studies):
     """Generate and post a tweet once"""
-    agent = SomiAgent(name)
+    agent = SomiAgent(name, use_studies=use_studies)
     handler = TwitterHandler()
     message = agent.generate_tweet()
     display_message = re.sub(r'[^\x00-\x7F]+', '[emoji]', message)
     result = await handler.post(message)
-    click.echo(f"Generated tweet: {display_message}")
+    click.echo(f"Generated tweet{' with studies' if use_studies else ''}: {display_message}")
     click.echo(result)
 
-# Auto-posts tweets every 10 minutes using the AI agent
-@somi.command()
-@click.option("--name", required=True, help="Name of the agent from personalC.json")
-@async_command
-# Auto-posts tweets every 10 minutes using the AI agent
 @somi.command()
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
 @async_command
 async def aiautopost(name):
     """Generate and post a tweet initially, then every 10 minutes for stress testing"""
-    agent = SomiAgent(name)  # AI agent for tweet generation
-    while True:  # Infinite loop for continuous posting
+    agent = SomiAgent(name)
+    while True:
         try:
-            handler = TwitterHandler()  # Fresh handler each loop
-            message = agent.generate_tweet()  # Generates tweet content
-            display_message = re.sub(r'[^\x00-\x7F]+', '[emoji]', message)  # Replaces non-ASCII
-            result = await handler.post(message)  # Posts to Twitter
+            handler = TwitterHandler()
+            message = agent.generate_tweet()
+            display_message = re.sub(r'[^\x00-\x7F]+', '[emoji]', message)
+            result = await handler.post(message)
             click.echo(f"Generated tweet: {display_message}")
             click.echo(result)
-            delay_minutes = 10  # Fixed 10-minute delay
+            delay_minutes = 10
             delay_seconds = delay_minutes * 60
             click.echo(f"Waiting {delay_minutes} minutes for next tweet...")
-            await asyncio.sleep(delay_seconds)  # Async wait
+            await asyncio.sleep(delay_seconds)
         except Exception as e:
-            click.echo(f"Error in autopost: {str(e)}")  # Error handling
-            await asyncio.sleep(60)  # Retry after 1 minute
+            click.echo(f"Error in autopost: {str(e)}")
+            await asyncio.sleep(60)
 
-# Replies to a set number of mentions once
 @somi.command()
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
-@click.option("--limit", default=2, help="Number of mentions to reply to")  # Default limit is 2
+@click.option("--limit", default=2, help="Number of mentions to reply to")
 @async_command
 async def aireply(name, limit):
     """Fetch latest mentions and reply using the agent's personality"""
-    scraper = await TwitterScraper.create(character_name=name)  # Creates scraper instance
-    await scraper.reply_to_mentions(limit=limit)  # Processes mentions
+    scraper = await TwitterScraper.create(character_name=name)
+    await scraper.reply_to_mentions(limit=limit)
     click.echo(f"Processed {limit} mentions.")
 
-# Auto-replies to mentions every 4 hours with configurable delay
 @somi.command()
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
-@click.option("--limit", default=2, help="Number of mentions to reply to")  # Default limit is 2
+@click.option("--limit", default=2, help="Number of mentions to reply to")
 @async_command
 async def aiautoreply(name, limit):
     """Auto scrape mentions and reply every 4 hours"""
-    while True:  # Infinite loop for continuous operation
+    while True:
         try:
-            scraper = await TwitterScraper.create(character_name=name)  # Fresh scraper each cycle
-            await scraper.reply_to_mentions(limit=limit)  # Replies to mentions
-            delay_hours = 4  # Fixed 4-hour delay (configurable here)
-            delay_seconds = delay_hours * 60 * 60  # Converts hours to seconds (14400 for 4 hours)
+            scraper = await TwitterScraper.create(character_name=name)
+            await scraper.reply_to_mentions(limit=limit)
+            delay_hours = 4
+            delay_seconds = delay_hours * 60 * 60
             click.echo(f"Processed {limit} mentions. Waiting {delay_hours} hours...")
-            await asyncio.sleep(delay_seconds)  # Waits 4 hours
+            await asyncio.sleep(delay_seconds)
         except Exception as e:
-            click.echo(f"Error in autoreply: {str(e)}")  # Error handling
-            await asyncio.sleep(60)  # Retry after 1 minute
+            click.echo(f"Error in autoreply: {str(e)}")
+            await asyncio.sleep(60)
 
-# Debug: Shows all available commands
+@somi.command()
+@click.option("--name", required=True, help="Name of the agent from personalC.json")
+@click.option("--use-studies", is_flag=True, help="Enable studied data for Telegram responses")
+@async_command
+async def telegram(name, use_studies):
+    """Run the Telegram bot for chat interaction and scraping"""
+    bot = TelegramHandler(character_name=name, use_studies=use_studies)
+    await bot.start()
+    click.echo(f"Telegram bot for {name}{' using studies' if use_studies else ''} is running. Press Ctrl+C to stop.")
+    try:
+        while True:
+            await asyncio.sleep(60)
+    except KeyboardInterrupt:
+        await bot.stop()
+        click.echo("Telegram bot stopped.")
+
+@somi.command()
+@click.option("--name", required=True, help="Name of the agent from personalC.json")
+@click.option("--study", multiple=True, help="Data to study: 'pdfs', 'websites', or both", type=click.Choice(['pdfs', 'websites']))
+@async_command
+async def study(name, study):
+    """Study data for RAG (PDFs and/or websites)"""
+    from rag import RAGHandler
+    if not study:
+        click.echo("No study material specified. Use --study pdfs and/or --study websites.")
+        return
+
+    rag = RAGHandler()
+    if "pdfs" in study:
+        await rag.ingest_pdfs()
+    if "websites" in study:
+        await rag.ingest_websites()
+    click.echo(f"Studied data for {name}: {', '.join(study)}")
+
+@somi.command()
+def clearstudies():
+    """Clear all studied RAG data"""
+    storage_path = Path("rag_data")
+    vector_file = storage_path / "rag_vectors.faiss"
+    text_file = storage_path / "rag_texts.json"
+
+    # Check and delete the vector file
+    if vector_file.exists():
+        try:
+            os.remove(vector_file)
+            click.echo(f"Deleted {vector_file}")
+        except Exception as e:
+            click.echo(f"Error deleting {vector_file}: {str(e)}")
+    else:
+        click.echo(f"No vector file found at {vector_file}")
+
+    # Check and delete the text file
+    if text_file.exists():
+        try:
+            os.remove(text_file)
+            click.echo(f"Deleted {text_file}")
+        except Exception as e:
+            click.echo(f"Error deleting {text_file}: {str(e)}")
+    else:
+        click.echo(f"No text file found at {text_file}")
+
+    click.echo("RAG data cleared. Run 'study' to add new data.")
+
 print("Registered commands:", [cmd.name for cmd in somi.commands.values()])
 
 if __name__ == "__main__":

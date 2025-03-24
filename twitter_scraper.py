@@ -9,7 +9,7 @@ import traceback
 import json
 import argparse
 from playwright.async_api import async_playwright
-from agents import SomiAgent
+from agents import SomiAgent  # Adjusted to match your tree
 from config.settings import TWITTER_USERNAME, TWITTER_PASSWORD
 import asyncio
 
@@ -17,12 +17,11 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 class TwitterScraper:
-    # Async factory method to create and initialize the scraper
     @classmethod
     async def create(cls, character_name: str):
-        instance = cls(character_name)  # Creates instance synchronously
-        await instance._setup_playwright()  # Sets up Playwright
-        return instance  # Returns initialized scraper
+        instance = cls(character_name)
+        await instance._setup_playwright()
+        return instance
 
     def __init__(self, character_name: str):
         if character_name is None:
@@ -33,7 +32,7 @@ class TwitterScraper:
         self.cookie_file = "twitter_cookies.json"
         self.authenticated = False
         self.character_name = character_name
-        self.agent = SomiAgent(character_name)  # AI agent for responses
+        self.agent = SomiAgent(character_name)
         self.personalC_path = os.path.join("config", "personalC.json")
         if not os.path.exists(self.personalC_path):
             raise FileNotFoundError(f"personalC.json not found at {self.personalC_path}")
@@ -43,21 +42,20 @@ class TwitterScraper:
             raise ValueError(f"Character '{character_name}' not found in {self.personalC_path}")
         self.character_params = self.character_data[character_name]
 
-    # Sets up Playwright browser and authenticates
     async def _setup_playwright(self):
         logger.info("Setting up Playwright with Chromium.")
         try:
-            self.playwright = await async_playwright().start()  # Starts Playwright
+            self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
-                headless=False,  # Visible for debugging (set True for production)
-                args=['--no-sandbox', '--disable-dev-shm-usage']  # Browser options
+                headless=False,
+                args=['--no-sandbox', '--disable-dev-shm-usage']
             )
             context = await self.browser.new_context(viewport={'width': 1920, 'height': 1080})
             self.page = await context.new_page()
             if os.path.exists(self.cookie_file):
-                await self._load_cookies()  # Uses existing cookies
+                await self._load_cookies()
             else:
-                await self._login_and_save_cookies()  # Logs in if no cookies
+                await self._login_and_save_cookies()
         except Exception as e:
             logger.error("Error setting up Playwright: %s", e)
             await self._cleanup()
@@ -109,7 +107,6 @@ class TwitterScraper:
         for char in text:
             await locator.type(char, delay=random.uniform(delay / 2, delay * 1.5))
 
-    # Cleans AI responses by removing mentions, hashtags, and special characters
     def _clean_response(self, response, username):
         logger.debug("Raw response from Ollama: %s", repr(response))
         response = response.strip()
@@ -125,28 +122,26 @@ class TwitterScraper:
         logger.debug("Cleaned response: %s", response)
         return response
 
-    # Main function to scrape mentions and reply
     async def reply_to_mentions(self, limit: int = 2):
-        if not self.authenticated:  # Ensures authentication before proceeding
+        if not self.authenticated:
             logger.warning("Not authenticated. Attempting to load cookies.")
             await self._load_cookies()
             if not self.authenticated:
                 raise Exception("Authentication failed.")
 
-        for mention_index in range(limit):  # Loops through specified number of mentions
+        for mention_index in range(limit):
             try:
                 await self.page.goto("https://x.com/notifications/mentions", timeout=60000)
                 await self.page.wait_for_selector("article[data-testid='tweet']", timeout=15000)
                 logger.info("Mentions page loaded.")
 
                 mentions = await self.page.query_selector_all("article[data-testid='tweet']")
-                if mention_index >= len(mentions):  # Stops if no more mentions
+                if mention_index >= len(mentions):
                     logger.info("No more mentions to process.")
                     break
 
                 logger.info("Processing mention %d.", mention_index + 1)
 
-                # JavaScript click to open tweet (avoids profile link)
                 clicked = await self.page.evaluate(
                     """(index) => {
                         const mentions = document.querySelectorAll("article[data-testid='tweet']");
@@ -168,7 +163,6 @@ class TwitterScraper:
                 tweet_url = self.page.url
                 logger.info("Tweet page loaded. Current URL: %s", tweet_url)
 
-                # Extracts username and tweet text
                 element = await self.page.query_selector("a[role='link'][href^='/']")
                 if element:
                     username = (await element.inner_text()).lstrip('@')
@@ -183,7 +177,6 @@ class TwitterScraper:
                 
                 logger.info("Scraped mention from @%s: %s", username, text)
 
-                # Builds prompt with character traits for AI response
                 description = self.character_params.get("description", "")
                 physicality = ", ".join(self.character_params.get("physicality", []))
                 memories = ", ".join(self.character_params.get("memories", []))
@@ -203,21 +196,20 @@ class TwitterScraper:
                     f"reflecting your personality and traits, ensuring the response ends naturally with a complete thought or sentence, "
                     f"Do not use any special characters in your reply, message: '{text}'"
                 )
-                response = self.agent.generate_response(prompt)  # Generates AI reply
-                reply_message = self._clean_response(response, username)  # Cleans response
+                response = self.agent.generate_response(prompt)
+                reply_message = self._clean_response(response, username)
 
-                if len(reply_message) > 270:  # Truncates if over 270 characters
+                if len(reply_message) > 270:
                     reply_message = reply_message[:270].rsplit(' ', 1)[0]
 
                 logger.info("Generated reply: %s (length: %d)", reply_message, len(reply_message))
 
-                # Types and posts the reply
                 reply_box = await self.page.wait_for_selector("div[role='textbox']", timeout=15000)
                 await reply_box.click()
                 await self._type_slowly(self.page.locator("div[role='textbox']"), reply_message)
                 logger.info("Typed reply: %s", reply_message)
 
-                await asyncio.sleep(2)  # Brief delay to ensure stability
+                await asyncio.sleep(2)
                 try:
                     overlay = await self.page.query_selector("div[data-testid='sheetDialog']")
                     if overlay:
@@ -226,7 +218,6 @@ class TwitterScraper:
                 except:
                     logger.info("No overlay detected.")
 
-                # Attempts native click, falls back to JavaScript
                 reply_button = await self.page.wait_for_selector("//button[@data-testid='tweetButtonInline']", timeout=15000)
                 try:
                     await reply_button.click()
@@ -237,7 +228,6 @@ class TwitterScraper:
                     logger.info("JavaScript click executed on reply button.")
                 await asyncio.sleep(3)
 
-                # Verifies the reply was posted
                 logger.info("Verifying reply was sent...")
                 await self.page.goto(tweet_url, timeout=60000)
                 await self.page.wait_for_selector("div[data-testid='tweetText']", timeout=15000)
@@ -259,16 +249,15 @@ class TwitterScraper:
             except Exception as e:
                 logger.error("Failed to process mention %d: %s", mention_index + 1, traceback.format_exc())
                 with open("debug_reply_page.html", "w", encoding="utf-8") as f:
-                    f.write(await self.page.content())  # Saves page for debugging
+                    f.write(await self.page.content())
                 logger.error("Page source saved to debug_reply_page.html.")
                 print(f"Error replying to mention {mention_index + 1}: {traceback.format_exc()}")
 
             logger.info("Returning to mentions page.")
 
         logger.info("Processed %d mentions.", min(limit, len(mentions)))
-        await self._cleanup()  # Cleans up resources
+        await self._cleanup()
 
-    # Cleans up Playwright resources
     async def _cleanup(self):
         try:
             if self.browser:
@@ -279,7 +268,6 @@ class TwitterScraper:
         except Exception as e:
             logger.error("Error during cleanup: %s", e)
 
-# Standalone script entry point
 async def main():
     parser = argparse.ArgumentParser(description="Twitter Scraper for replying to mentions")
     parser.add_argument("--name", type=str, required=True, help="Name of the character to use (e.g., degenia)")
