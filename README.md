@@ -1,4 +1,4 @@
-## Somi - AI-Powered Twitter Automation
+## Somi - AI-Powered Automation
 
 Somi is a Python-based CLI tool for automating Twitter interactions using an AI agent. It can post tweets, reply to mentions, and chat interactively, all driven by customizable character personalities stored in `personalC.json`.
 
