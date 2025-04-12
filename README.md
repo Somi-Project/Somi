@@ -22,12 +22,42 @@ Before running Somi, ensure you have the following installed:
    git clone https://github.com/Somi-Project/Somi.git
    cd Somi
 
-## Dependancies install with commands
-1. **Click** pip install click
-2. **playwright** pip install playwright
-3. **playwright browsers** playwright install
-4. **requests** pip install requests
-5. **faiss** pip install faiss-cpu
+Dependencies Install with Commands
+**click**
+pip install click
+CLI framework for running commands like gencookies and aipost in somi.py.
+
+**python-telegram-bot**
+pip install python-telegram-bot==13.7
+Runs the Telegram bot for chat and message caching, using version 13.7 for compatibility.
+
+**playwright**
+pip install playwright
+Automates browser tasks for Twitter/X login, posting, and scraping, plus website ingestion for RAG.
+
+**playwright browsers**
+playwright install
+Installs browser binaries (Chromium, Firefox, WebKit) needed for Playwright automation.
+
+**pdfplumber**
+pip install pdfplumber
+Extracts text from PDFs for the Retrieval-Augmented Generation (RAG) system.
+
+**sentence-transformers**
+pip install sentence-transformers
+Creates text embeddings for RAG using all-MiniLM-L6-v2 to vectorize documents.
+
+**faiss-cpu**
+pip install faiss-cpu
+Stores and searches vectors for RAG to retrieve relevant studied data.
+
+**numpy**
+pip install numpy
+Manages array operations for RAG embeddings.
+
+**ollama**
+pip install ollama
+Connects to the Ollama server for generating responses with the llama3 model.
 
 
 ## Edit Login
