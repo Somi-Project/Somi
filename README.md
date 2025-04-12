@@ -22,7 +22,7 @@ Before running Somi, ensure you have the following installed:
    git clone https://github.com/Somi-Project/Somi.git
    cd Somi
 
-Dependencies Install with Commands
+## Dependencies Install with Commands
 **click**
 pip install click
 CLI framework for running commands like gencookies and aipost in somi.py.
@@ -88,8 +88,9 @@ e.g. python somi.py aichat --name degenia
 Edit setting.py to reflect intended ingestion websites then use the following commands to ingest into a FAISS system
 If you want to add PDFS simply put the intended pdfs in the pdf folder of root directory then:
 ```bash
- --study pdfs
+ --study pdfs (studies those placed in the PDF folder
  --study websites (static scraping only)
+ --use-studies (uses the RAG data in the LLM processing) 
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
 
