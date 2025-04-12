@@ -27,6 +27,8 @@ Before running Somi, ensure you have the following installed:
 2. **playwright** pip install playwright
 3. **playwright browsers** playwright install
 4. **requests** pip install requests
+5. **faiss** pip install faiss-cpu
+
 
 ## Edit Login
 folder: config/settings.py
