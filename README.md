@@ -42,13 +42,13 @@ default name is degenia with defining parameters - edit as you see fit but keep 
 Begin by typing python somi.py <command> --name <agent name>
 e.g. python somi.py aichat --name degenia 
 ```bash
-  aiautopost   Generate and post a tweet initially, then every 10 minutes...
+  gencookies   Generates Twitter cookies (recommend doing first)
+  aiautopost   Generate and post a tweet initially, then every 10 minutes...(Can edit this in the code - 10 minutes has been for testing - edit in somi.py delay minutes = 10)
   aiautoreply  Auto scrape mentions and reply every 4 hours
   aichat       Chat continuously with the agent
   aipost       Generate and post a tweet once
   aireply      Fetch latest mentions and reply using the agent's personality
   devpost      Post a message to Twitter
-  gencookies   Generates Twitter cookies
 ```
 
 ## Retrieval Augmentation thinking 
@@ -56,7 +56,7 @@ Edit setting.py to reflect intended ingestion websites then use the following co
 If you want to add PDFS simply put the intended pdfs in the pdf folder of root directory then:
 ```bash
  --study pdfs
- --study websites
+ --study websites (static scraping only)
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
 
