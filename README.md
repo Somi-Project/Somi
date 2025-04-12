@@ -13,7 +13,7 @@ Before running Somi, ensure you have the following installed:
 - **Git**: [Install Git](https://git-scm.com/downloads)
 - **Node.js** (optional, for Playwright): [Download Node.js](https://nodejs.org/) if not using pre-installed Playwright binaries.
 - **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/settings.py`.
-- **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/).
+- **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/). - must run ollama while running the agent and pull the relevant model via command - ollama pull <model name>
 
 ## Installation
 1. **Clone the Repository**:
