@@ -28,7 +28,8 @@ pip install click
 CLI framework for running commands like gencookies and aipost in somi.py.
 
 **python-telegram-bot**
-pip install python-telegram-bot==13.7
+pip install python-telegram-bot==20.7
+
 Runs the Telegram bot for chat and message caching, using version 13.7 for compatibility.
 
 **playwright**
