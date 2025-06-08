@@ -24,10 +24,11 @@ Before running Somi, ensure you have the following installed:
    Ollama pull phi4-mini
    Ollama pull codegemma:2b
    Ollama pull gemma3:4b (optional for vision analysis model)
+   ```
 
 ## Edit Login
 folder: config/settings.py
-
+```bash
 TWITTER_USERNAME = "your_twitter_username"
 TWITTER_PASSWORD = "your_twitter_password"
 TWITTER_API = "your developer api - can get for free on developer X"
@@ -36,7 +37,7 @@ TELEGRAM BOT TOKEN = "your bot token from telegram bot father"
 TELEGRAM USERNAME = "your set username for the bot"
 DEFAULT MODEL = "Ollama model you wish to use - defaulted to a low requirement model"
 other settings self explanatory 
-
+```
 
 ## Edit Personality Construct
 folder: config/personalC.json
