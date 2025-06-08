@@ -9,7 +9,7 @@ Somi is a Python-based CLI tool for automating Twitter interactions using an AI 
 
 ## Prerequisites
 Before running Somi, ensure you have the following installed:
-- **Python 3.8+**: [Download Python](https://www.python.org/downloads/)
+- **Python 3.11.0+**: [Download Python](https://www.python.org/downloads/release/python-3110/)
 - **Git**: [Install Git](https://git-scm.com/downloads)
 - **Node.js** (optional, for Playwright): [Download Node.js](https://nodejs.org/) if not using pre-installed Playwright binaries.
 - **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/settings.py`.
@@ -19,36 +19,45 @@ Before running Somi, ensure you have the following installed:
 1. **Clone the Repository**:
    ```bash
    git clone https://github.com/Somi-Project/Somi.git
-   cd Somi
-
-## Dependancies install with commands
-1. **Click** pip install click
-2. **playwright** pip install playwright
-3. **playwright browsers** playwright install
-4. **requests** pip install requests
+   cd path/Somi
+   pip install -r requirements.txt
+   Ollama pull phi4-mini
+   Ollama pull codegemma:2b
+   Ollama pull gemma3:4b (optional for vision analysis model)
 
 ## Edit Login
 folder: config/settings.py
 
 TWITTER_USERNAME = "your_twitter_username"
 TWITTER_PASSWORD = "your_twitter_password"
+TWITTER_API = "your developer api - can get for free on developer X"
+TWITTER TIME INTERVALS = Time you wish to post materials with bound limits for organic activity
+TELEGRAM BOT TOKEN = "your bot token from telegram bot father"
+TELEGRAM USERNAME = "your set username for the bot"
+DEFAULT MODEL = "Ollama model you wish to use - defaulted to a low requirement model"
+other settings self explanatory 
+
 
 ## Edit Personality Construct
 folder: config/personalC.json
 
-default name is degenia with defining parameters - edit as you see fit but keep major functions intact i.e. memories,inhibitions,hobbies etc. 
+default name is somi with defining parameters - edit as you see fit
 
 ## Agent Commands 
 Begin by typing python somi.py <command> --name <agent name>
-e.g. python somi.py aichat --name degenia 
+e.g. python somi.py <command> --name somi
 ```bash
   aiautopost   Generate and post a tweet initially, then every 10 minutes...
   aiautoreply  Auto scrape mentions and reply every 4 hours
   aichat       Chat continuously with the agent
-  aipost       Generate and post a tweet once
-  aireply      Fetch latest mentions and reply using the agent's personality
-  devpost      Post a message to Twitter
-  gencookies   Generates Twitter cookies
+  aipost       Generate and post a tweet once by personality
+  aireply      Fetch latest mentions and reply = can use --limit added parameter
+  devpost      Post a message to Twitter as a developer via agent
+  gencookies   Generates Twitter cookies 
+  telegram     Starts the Telegram bot
+  speech       Audio I/O
+  vba          Gui
+  Persona      Personality editor
 ```
 
 ## Retrieval Augmentation thinking 
@@ -57,6 +66,7 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
 ```bash
  --study pdfs
  --study websites
+ --clearstudies deletes the above db
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
 ## Fin
