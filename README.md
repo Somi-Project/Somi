@@ -47,7 +47,7 @@ default name is somi with defining parameters - edit as you see fit
 Begin by typing python somi.py <command> --name <agent name>
 e.g. python somi.py <command> --name somi
 ```bash
-  aiautopost   Generate and post a tweet initially, then every 10 minutes...
+  aiautopost   Generate and post a tweet initially, then every interval +/-bound minutes...
   aiautoreply  Auto scrape mentions and reply every 4 hours
   aichat       Chat continuously with the agent
   aipost       Generate and post a tweet once by personality
