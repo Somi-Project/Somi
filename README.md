@@ -1,7 +1,6 @@
-## Somi - AI-Powered Automation
+## Somi - AI-Powered Twitter Automation
 
-Somi is a Python-based CLI tool for social interactions using an AI agent. It can post tweets, reply to mentions, and chat interactively, all driven by customizable character personalities stored in `personalC.json`.
-This current version can also perform Retrieval Augmentation Generation with Faiss to add PDF data or static website data to the feed (Do not recommend crypto. prices via this route - recommend API integration which is coming soon)
+Somi is a Python-based CLI tool for automating Twitter interactions using an AI agent. It can post tweets, reply to mentions, and chat interactively, all driven by customizable character personalities stored in `personalC.json`.
 
 ## Overview
 - **Tweet Posting**: Generate and post tweets manually or automatically every 10 minutes.
@@ -14,7 +13,7 @@ Before running Somi, ensure you have the following installed:
 - **Git**: [Install Git](https://git-scm.com/downloads)
 - **Node.js** (optional, for Playwright): [Download Node.js](https://nodejs.org/) if not using pre-installed Playwright binaries.
 - **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/settings.py`.
-- **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/). - must run ollama while running the agent and pull the relevant model via command - ollama pull <model name>
+- **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/).
 
 ## Installation
 1. **Clone the Repository**:
@@ -22,44 +21,11 @@ Before running Somi, ensure you have the following installed:
    git clone https://github.com/Somi-Project/Somi.git
    cd Somi
 
-## Dependencies Install with Commands
-**click**
-pip install click
-CLI framework for running commands like gencookies and aipost in somi.py.
-
-**python-telegram-bot**
-pip install python-telegram-bot==20.7
-
-Runs the Telegram bot for chat and message caching, using version 13.7 for compatibility.
-
-**playwright**
-pip install playwright
-Automates browser tasks for Twitter/X login, posting, and scraping, plus website ingestion for RAG.
-
-**playwright browsers**
-playwright install
-Installs browser binaries (Chromium, Firefox, WebKit) needed for Playwright automation.
-
-**pdfplumber**
-pip install pdfplumber
-Extracts text from PDFs for the Retrieval-Augmented Generation (RAG) system.
-
-**sentence-transformers**
-pip install sentence-transformers
-Creates text embeddings for RAG using all-MiniLM-L6-v2 to vectorize documents.
-
-**faiss-cpu**
-pip install faiss-cpu
-Stores and searches vectors for RAG to retrieve relevant studied data.
-
-**numpy**
-pip install numpy
-Manages array operations for RAG embeddings.
-
-**ollama**
-pip install ollama
-Connects to the Ollama server for generating responses with the llama3 model.
-
+## Dependancies install with commands
+1. **Click** pip install click
+2. **playwright** pip install playwright
+3. **playwright browsers** playwright install
+4. **requests** pip install requests
 
 ## Edit Login
 folder: config/settings.py
@@ -76,63 +42,22 @@ default name is degenia with defining parameters - edit as you see fit but keep 
 Begin by typing python somi.py <command> --name <agent name>
 e.g. python somi.py aichat --name degenia 
 ```bash
-  gencookies   Generates Twitter cookies (recommend doing first)
-  aiautopost   Generate and post a tweet initially, then every 10 minutes...(Can edit this in the code - 10 minutes has been for testing - edit in somi.py delay minutes = 10)
+  aiautopost   Generate and post a tweet initially, then every 10 minutes...
   aiautoreply  Auto scrape mentions and reply every 4 hours
   aichat       Chat continuously with the agent
   aipost       Generate and post a tweet once
   aireply      Fetch latest mentions and reply using the agent's personality
   devpost      Post a message to Twitter
+  gencookies   Generates Twitter cookies
 ```
 
 ## Retrieval Augmentation thinking 
 Edit setting.py to reflect intended ingestion websites then use the following commands to ingest into a FAISS system
 If you want to add PDFS simply put the intended pdfs in the pdf folder of root directory then:
 ```bash
- --study pdfs (studies those placed in the PDF folder
- --study websites (static scraping only)
- --use-studies (uses the RAG data in the LLM processing) 
+ --study pdfs
+ --study websites
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
-
-## Commands summary
-python somi.py gencookies
-
-python somi.py aichat --name <agent> --model <model> --temp <temp> --use-studies
-
-python somi.py devpost --message "<message>"
-
-python somi.py aipost --name <agent> --use-studies
-
-python somi.py aiautopost --name <agent>
-
-python somi.py aireply --name <agent> --limit <limit>
-
-python somi.py aiautoreply --name <agent> --limit <limit>
-
-python somi.py telegram --name <agent> --use-studies
-
-python somi.py study --name <agent> --study pdfs --study websites
-
-python somi.py clearstudies
-
-Agent-Specific Options
---name <agent> (e.g., degenia)
-
---model <model> (e.g., llama3, default: llama3)
-
---temp <temp> (e.g., 0.9, default: 0.7)
-
---limit <limit> (e.g., 3, default: 2)
-
-RAG-Specific Options
---use-studies (enables RAG for aichat, aipost, telegram)
-
---study pdfs (studies PDFs for RAG)
-
---study websites (studies websites for RAG)
-
-
-
 ## Fin
 I've added comments throughout the code to highlight relevant parts for now 
