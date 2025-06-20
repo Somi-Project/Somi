@@ -1,11 +1,21 @@
 ## Somi - AI-Powered Everyday Automation
 
-Somi is a Python-based A.i. Agent framework for automating interactions using an AI agent stored and operated on your computer. It can direct chat window like chatgpt, post tweets, reply to mentions on twitter, telegram chat, websearch news, weather, asset prices, general queries, play word games and audio interface (Alexai) all driven by customizable character personalities stored in `personalC.json` i.e. Give the A.i. Its own name and personality construct. No data is leaked or uploaded. It is only limited by your hardware.
+Somi is an A.I. Agent framework for automating interactions using an AI agent stored and operated on your computer. No data is leaked or uploaded elsewhere allowing you to control your information. Only limited by your hardware, the framework can perform a variety of tasks highlighted below. 
 
-## Overview
-- **Tweet Posting**: Generate and post tweets manually or automatically every 10 minutes.
-- **Mention Replies**: Reply to Twitter mentions once or auto-reply every 4 hours.
-- **Chat**: Interact with the AI agent in the terminal.
+## Features Overview
+- **Personality Construct**: Give your agent its own personality for unique responses
+- **Chat**: Interact with the AI agent in the terminal
+- **Telegram**: Telegram Agent interactable and image analysis abilities
+- **Tweet Posting**: Generate and post tweets manually or automatically every determined interval in settings
+- **Twitter Replies**: Reply to Twitter mentions once or auto-reply every determined interval in settings
+- **Speech**: An experimental Input/Output mixture of models for a speech interface (Hardware speed dependant)
+- **Modularity**: Change Models depending on your available hardware
+- **Unrestricted**: Framework does not restrict behaviors this is handled by Large Language Model guardrails (if any)
+- **Graphical User Interface**: For easy, convenient use of buttons
+- **Study Injection**: Add Specific/New data to achieve better responses
+- **Image Analysis**: Built into Telegram and Ai chat windows, dependant on visual Large Language Model chosen
+- **Persistent Memories**: Database for important personal memories
+- **Websearch**: Search for specific queries such as common asset prices, news headlines, weather, general web searches
 
 ## Prerequisites
 Before running Somi, ensure you have the following installed:
@@ -13,6 +23,7 @@ Before running Somi, ensure you have the following installed:
 - **Git**: [Install Git](https://git-scm.com/downloads)
 - **Node.js** (optional, for Playwright): [Download Node.js](https://nodejs.org/) if not using pre-installed Playwright binaries.
 - **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/settings.py`.
+- **Telegram Token**: Install Telegram, message @Botfather send the message "/newbot" and setup to get a Name and Bot Token
 - **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/).
 
 ## Installation
@@ -56,6 +67,11 @@ e.g. python somi.py <command> --name somi
   devpost      Post a message to Twitter as a developer via agent
   gencookies   Generates Twitter cookies 
   telegram     Starts the Telegram bot
+```
+
+Independant commands
+Begin by typing python <insertscriptname>.py
+```base
   speech       Audio I/O
   vba          Gui
   Persona      Personality editor
@@ -71,4 +87,3 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
 ## Fin
-I've added comments throughout the code to highlight relevant parts for now 
