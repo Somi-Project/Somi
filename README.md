@@ -1,4 +1,4 @@
-## Somi - AI-Powered Everyday Automation
+## S.O.M.I. - AI-Powered Everyday Automation
 
 Somi is an A.I. Agent framework for automating interactions using an AI agent stored and operated on your computer. No data is leaked or uploaded elsewhere allowing you to control your information. Only limited by your hardware, the framework can perform a variety of tasks highlighted below. 
 
