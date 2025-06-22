@@ -2,6 +2,7 @@ import logging
 import asyncio
 import ollama
 import traceback
+import re
 from duckduckgo_search import DDGS
 from config.settings import DEFAULT_MODEL, SYSTEM_TIMEZONE
 import pytz
@@ -22,14 +23,12 @@ class NewsHandler:
         """Search news using DuckDuckGo news search with LLM query refinement."""
         current_time = self.get_system_time()
         prompt = f"""
-You are part of the SomiAgent AI framework, a versatile system with capabilities including web search, time awareness, and memory storage. The current time and date is {current_time}. Your internal knowledge and memories are outdated for this news query. You must rely solely on the web search results provided to generate an accurate response. Do not conflict your internal knowledge or memories with the search results. If no web search results are found, do not generate news headlines; instead, report that no results are available.
-
-Refine the following news query to make it specific and suitable for a DuckDuckGo news search. Focus on recent news (e.g., today, this week) and include any specific topic or source (e.g., BBC) mentioned. Use the term 'today' to ensure recency instead of a specific date. Return only the refined query string with no additional text, explanation, or quotation marks.
+Output EXACTLY the refined query string for a DuckDuckGo news search, using "today" for recency. Do NOT use thinking mode, reasoning, explanations, or tags like <think> or **Answer**. Do NOT output anything other than the refined query string.
 
 Examples:
-- Input: "latest news" -> news today
-- Input: "Ukraine news" -> Ukraine news today
-- Input: "whats the latest bbc news today" -> BBC news today
+- Input: latest news -> news today
+- Input: Ukraine news -> Ukraine news today
+- Input: whats the latest bbc news today -> BBC news today
 
 Query: {query}
 """
@@ -37,13 +36,33 @@ Query: {query}
             response = ollama.chat(
                 model=DEFAULT_MODEL,
                 messages=[{"role": "user", "content": prompt}],
-                options={"temperature": 0.2}
+                options={"temperature": 0.2, "think": False}  # Disable thinking mode
             )
-            refined_query = response.get("message", {}).get("content", query).strip()
+            raw_output = response.get("message", {}).get("content", query).strip()
+            logger.debug(f"Raw LLM output for query refinement '{query}': {raw_output}")
+
+            # Extract refined query from potentially verbose output
+            refined_query = raw_output
+            # Match "Answer: New York news today" or similar
+            match = re.search(r'\b(?:Answer|Refined)\s*:\s*(.+)', raw_output, re.IGNORECASE)
+            if match:
+                refined_query = match.group(1).strip()
+            else:
+                # Take the last line as fallback
+                lines = [line.strip() for line in raw_output.split('\n') if line.strip()]
+                refined_query = lines[-1] if lines else query
+
+            # Clean and validate refined query
+            refined_query = re.sub(r'<[^>]+>', '', refined_query).strip()  # Remove tags
+            invalid_terms = ['think', 'answer', 'reasoning', 'category']
+            if not refined_query or any(term in refined_query.lower() for term in invalid_terms) or len(refined_query) > 100:
+                logger.warning(f"Invalid refined query '{refined_query}' for '{query}'. Using default.")
+                refined_query = f"{query.replace('whats the latest', '').strip()} today"
+
             logger.info(f"Refined news query: '{refined_query}'")
         except Exception as e:
-            logger.error(f"Error refining news query '{query}': {str(e)}")
-            refined_query = f"{query} today"
+            logger.error(f"Error refining news query '{query}': {str(e)}\nStack trace: {traceback.format_exc()}")
+            refined_query = f"{query.replace('whats the latest', '').strip()} today"
             logger.info(f"Falling back to default news query: '{refined_query}'")
 
         for attempt in range(retries):

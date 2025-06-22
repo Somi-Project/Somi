@@ -136,13 +136,9 @@ class SomiAIGUI(QMainWindow):
             audio_frame.setLayout(audio_layout)
             main_layout.addWidget(audio_frame)
 
-            self.alex_start_button = QPushButton("Alex-AI Start")
-            self.alex_start_button.clicked.connect(lambda: [self.refresh_agent_names(), speechgui.alex_ai_start(self)])
-            audio_layout.addWidget(self.alex_start_button)
-
-            self.alex_stop_button = QPushButton("Alex-AI Stop")
-            self.alex_stop_button.clicked.connect(lambda: speechgui.alex_ai_stop(self))
-            audio_layout.addWidget(self.alex_stop_button)
+            self.alex_toggle_button = QPushButton("Alex-AI Start")
+            self.alex_toggle_button.clicked.connect(lambda: [self.refresh_agent_names(), speechgui.alex_ai_toggle(self)])
+            audio_layout.addWidget(self.alex_toggle_button)
 
             audio_settings_button = QPushButton("Audio Settings")
             audio_settings_button.clicked.connect(lambda: speechgui.audio_settings(self))
@@ -265,51 +261,14 @@ class SomiAIGUI(QMainWindow):
         return name in self.agent_keys
 
     def toggle_ai_model(self):
-        """Placeholder for toggling AI model."""
-        logger.info("Toggling AI model...")
-        self.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] AI Model toggle not implemented.")
-        self.output_area.ensureCursorVisible()
-
-    def run_personality_editor(self):
-        """Placeholder for personality editor."""
-        logger.info("Opening personality editor...")
-        self.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Personality editor not implemented.")
-        self.output_area.ensureCursorVisible()
-
-    def show_model_selections(self):
-        """Placeholder for model selections."""
-        logger.info("Showing model selections...")
-        self.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Model selections not implemented.")
-        self.output_area.ensureCursorVisible()
-
-    def closeEvent(self, event):
-        """Handle application close event to terminate processes."""
-        for process in [self.telegram_process, self.twitter_autotweet_process, self.twitter_autoresponse_process, self.alex_process, self.ai_model_process]:
-            if process and process.poll() is None:
-                try:
-                    os.kill(process.pid, signal.SIGTERM)
-                    process.wait(timeout=5)
-                except:
-                    process.kill()
-        event.accept()
-
-    def load_agent_names(self):
-        """Load agent names from config/personalC.json."""
-        try:
-            with open("config/personalC.json", "r") as f:
-                characters = json.load(f)
-            keys = list(characters.keys())
-            names = [key.replace("Name: ", "") for key in keys]
-            logger.info(f"Loaded agent keys: {keys}, display names: {names}")
-            return keys if keys else ["Name: Somi"], names if names else ["Somi"]
-        except Exception as e:
-            logger.error(f"Error loading personalC.json: {str(e)}")
-            return ["Name: Somi"], ["Somi"]
-
-    def refresh_agent_names(self):
-        """Refresh agent names and keys from config/personalC.json."""
-        self.agent_keys, self.agent_names = self.load_agent_names()
-        logger.info("Refreshed agent names and keys.")
+        """Toggle AI model start/stop."""
+        from gui import aicoregui
+        if not hasattr(self, 'ollama_process') or self.ollama_process is None or self.ollama_process.poll() is not None:
+            self.ai_model_start_button.setText("AI Model Stop")
+            aicoregui.ai_model_start_stop(self)
+        else:
+            self.ai_model_start_button.setText("AI Model Start")
+            aicoregui.ai_model_start_stop(self)
 
     def run_personality_editor(self):
         """Run the persona.py script as a separate process."""
@@ -330,6 +289,7 @@ class SomiAIGUI(QMainWindow):
 
     def read_settings(self):
         """Read model-related settings from config/settings.py."""
+        import re
         model_keys = ["DEFAULT_MODEL", "MEMORY_MODEL", "DEFAULT_TEMP", "VISION_MODEL"]
         settings = {
             "DEFAULT_MODEL": "dolphin3",
@@ -559,15 +519,6 @@ class SomiAIGUI(QMainWindow):
             logger.error(f"Error editing model settings: {str(e)}")
             QMessageBox.critical(self, "Error", f"Failed to edit model settings: {str(e)}")
 
-    def toggle_ai_model(self):
-        from gui import aicoregui
-        if not hasattr(self, 'ollama_process') or self.ollama_process is None or self.ollama_process.poll() is not None:
-            self.ai_model_start_button.setText("AI Model Stop")
-            aicoregui.ai_model_start_stop(self)
-        else:
-            self.ai_model_start_button.setText("AI Model Start")
-            aicoregui.ai_model_start_stop(self)
-
     def change_background(self):
         """Open file dialog to change the background image."""
         file_name, _ = QFileDialog.getOpenFileName(self, "Select Background Image", "", "Image Files (*.png *.jpg *.jpeg *.bmp)")
@@ -575,6 +526,17 @@ class SomiAIGUI(QMainWindow):
             self.background_path = file_name
             self.update_stylesheet()
             logger.info(f"Background changed to {self.background_path}")
+
+    def closeEvent(self, event):
+        """Handle application close event to terminate processes."""
+        for process in [self.telegram_process, self.twitter_autotweet_process, self.twitter_autoresponse_process, self.alex_process, self.ai_model_process]:
+            if process and process.poll() is None:
+                try:
+                    os.kill(process.pid, signal.SIGTERM)
+                    process.wait(timeout=5)
+                except Exception:
+                    process.kill()
+        event.accept()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)

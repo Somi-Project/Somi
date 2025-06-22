@@ -1,4 +1,3 @@
-# agents.py
 import ollama
 from config.settings import DEFAULT_MODEL, MEMORY_MODEL, DEFAULT_TEMP, VISION_MODEL, SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL
 import json
@@ -7,6 +6,7 @@ import logging
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.time_handler import TimeHandler
+from handlers.wordgame import WordGameHandler
 import asyncio
 import pytz
 import time
@@ -15,6 +15,7 @@ from datetime import datetime
 import numpy as np
 import faiss
 import sqlite3
+import os
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,12 +31,17 @@ logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 class Agent:
-    def __init__(self, name, use_studies=False):
+    def __init__(self, name, use_studies=False, use_flow=False):
         self.personality_config = "config/personalC.json"
-        self.default_agent_key = "Name: Somi"  # Fallback key if name resolution fails
-        self.use_studies = use_studies  # Store use_studies
+        self.default_agent_key = "Name: Somi"
+        self.use_studies = use_studies
+        self.use_flow = use_flow
+        self.current_mode = "normal"
+        self.story_iterations = 0
+        self.conversation_cache = []
+        self.story_file = "story.json"
+        self.game_file = "game.json"
         
-        # Load agents from personalC.json
         try:
             with open(self.personality_config, "r") as f:
                 self.characters = json.load(f)
@@ -55,18 +61,15 @@ class Agent:
                 }
             }
         
-        # Map aliases to agent keys
         self.alias_to_key = {}
         for key, config in self.characters.items():
             aliases = config.get("aliases", []) + [key, key.replace("Name: ", "")]
             for alias in aliases:
                 self.alias_to_key[alias.lower()] = key
         
-        # Resolve agent key from name or alias
         self.agent_key = self._resolve_agent_key(name)
         character = self.characters.get(self.agent_key, self.characters.get(self.default_agent_key, {}))
         
-        # Extract display name (e.g., "Somi" from "Name: Somi")
         self.name = self.agent_key.replace("Name: ", "")
         self.role = character.get("role", "assistant")
         self.temperature = character.get("temperature", DEFAULT_TEMP)
@@ -83,12 +86,14 @@ class Agent:
         self.rag = RAGHandler()
         self.websearch = WebSearchHandler()
         self.time_handler = TimeHandler(default_timezone=SYSTEM_TIMEZONE)
+        self.wordgame = WordGameHandler(game_file=self.game_file)
         self._setup_memory_storage()
         if self.use_studies:
             self._load_rag_data()
+        
+        self._load_mode_files()
 
     def _resolve_agent_key(self, name):
-        """Resolve the agent key from name or alias."""
         if not name:
             return self.default_agent_key
         name_lower = name.lower()
@@ -101,7 +106,7 @@ class Agent:
 
     def _setup_memory_storage(self):
         self.db_path = "memories.db"
-        self.sqlite_conn = sqlite3.connect(self.db_path)
+        self.sqlite_conn = sqlite3.connect(self.db_path, check_same_thread=False)  # Allow thread safety
         self.sqlite_cursor = self.sqlite_conn.cursor()
         self.sqlite_cursor.execute("""
             CREATE TABLE IF NOT EXISTS memories (
@@ -142,15 +147,38 @@ class Agent:
         else:
             logger.info("No RAG data available. Run rag.py to ingest PDFs or websites.")
 
+    def _load_mode_files(self):
+        try:
+            if os.path.exists(self.story_file):
+                with open(self.story_file, "r") as f:
+                    data = json.load(f)
+                    if data.get("summary"):
+                        self.current_mode = "story"
+                        self.story_iterations = data.get("iterations", 0)
+                        logger.info(f"Loaded story state: {self.story_iterations} iterations")
+        except Exception as e:
+            logger.error(f"Error loading {self.story_file}: {e}")
+        
+        if os.path.exists(self.game_file):
+            self.current_mode = "game"
+            self.wordgame.load_game_state()
+
     def _sanitize_text(self, text):
         return ''.join(char for char in text if ord(char) < 128)
 
     def process_memory(self, input_text, output_text, user_id):
-        if DISABLE_MEMORY_FOR_FINANCIAL:
-            financial_keywords = ["price", "stock", "bitcoin", "crypto", "market", "dollar", "euro"]
-            if any(keyword in input_text.lower() for keyword in financial_keywords):
-                logger.info(f"Memory storage skipped for financial input: {input_text}")
-                return False, None, None
+        if self.current_mode == "game":  # Skip memory processing during game mode
+            logger.info(f"Memory storage skipped for game mode input: {input_text}")
+            return False, None, None
+
+        if self.current_mode == "story":
+            logger.info(f"Memory storage skipped for story mode input: {input_text}")
+            return False, None, None
+
+        financial_keywords = ["price", "stock", "bitcoin", "crypto", "market", "dollar", "euro", "usd", "USD"]
+        if any(keyword in input_text.lower() for keyword in financial_keywords):
+            logger.info(f"Memory storage skipped for financial input: {input_text}")
+            return False, None, None
 
         weather_keywords = ["weather", "rain", "snow", "temperature", "sunny", "cloudy", "windy", "storm"]
         if any(keyword in input_text.lower() for keyword in weather_keywords):
@@ -171,7 +199,7 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
 - content (string or null): The content to store, must match the user input exactly, null if not stored.
 - reason (string): Why the decision was made.
 
-**Do NOT include any text outside the JSON object.** Do NOT include explanations or examples in your response. Just return the JSON object.
+**Do NOT include any text outside the JSON object**. Do NOT include explanations or examples in your response. Just return the JSON object.
 
 **Criteria**:
 - Store stable, user-relevant memories that enhance the user experience (e.g., personal facts, routines, significant events).
@@ -183,6 +211,7 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
 - Store memories helpful for future use or user enrichment, such as:
   - Significant events: e.g., "Arsenal won their 20th Premier League match in April 2025".
   - Personal facts/routines: e.g., "I take my pills at 8 AM", "My cousin’s name is Jeff".
+- Explicitly exclude any input containing financial terms like "price", "stock", "bitcoin", "crypto", "market", "dollar", "euro", "usd".
 
 **Input**: "{input_text}"
 """
@@ -229,36 +258,48 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
             return False, None, None
 
     def store_memory(self, content, user_id, memory_type):
+        self.sqlite_cursor.execute(
+            "SELECT id FROM memories WHERE content = ? AND user_id = ?",
+            (content, user_id)
+        )
+        if self.sqlite_cursor.fetchone():
+            logger.info(f"Skipping duplicate memory: {content}")
+            return False
+        
         try:
             embedding = self.embeddings.encode([content])[0]
             embedding_np = np.array([embedding], dtype=np.float32)
             
-            cursor = self.sqlite_cursor
-            cursor.execute(
-                """
-                INSERT INTO memories (user_id, content, memory_type, timestamp, category)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
-                    user_id,
-                    content,
-                    memory_type,
-                    datetime.utcnow().isoformat(),
-                    "dementia_assistant"
+            with self.sqlite_conn:  # Ensure transaction safety
+                self.sqlite_cursor.execute(
+                    """
+                    INSERT INTO memories (user_id, content, memory_type, timestamp, category)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        user_id,
+                        content,
+                        memory_type,
+                        datetime.utcnow().isoformat(),
+                        "dementia_assistant"
+                    )
                 )
-            )
-            memory_id = cursor.lastrowid
-            self.sqlite_conn.commit()
-            
+                memory_id = self.sqlite_cursor.lastrowid
+                
             self.faiss_index.add_with_ids(embedding_np, np.array([memory_id], dtype=np.int64))
             faiss.write_index(self.faiss_index, self.faiss_index_path)
             logger.info(f"Stored memory: {content} with ID {memory_id}, embedding norm: {np.linalg.norm(embedding)}")
             return True
         except Exception as e:
             logger.error(f"Error storing memory: {e}")
+            self.sqlite_conn.rollback()  # Rollback on error
             return False
 
     def retrieve_memory(self, query, user_id):
+        if self.current_mode == "game":  # Skip memory retrieval during game mode
+            logger.info(f"Memory retrieval skipped for game mode query: {query}")
+            return None
+        
         try:
             query_embedding = self.embeddings.encode([query])[0]
             query_embedding_np = np.array([query_embedding], dtype=np.float32)
@@ -274,12 +315,15 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
                     logger.info(f"Skipping memory with ID {idx}, distance {dist} exceeds threshold")
                     continue
                 cursor.execute(
-                    "SELECT content, memory_type FROM memories WHERE id = ? AND user_id = ?",
+                    "SELECT content, memory_type, timestamp FROM memories WHERE id = ? AND user_id = ?",
                     (int(idx), user_id)
                 )
                 row = cursor.fetchone()
                 if row:
-                    content, mem_type = row
+                    content, mem_type, timestamp = row
+                    if self.current_mode != "story" and mem_type == "episodic":
+                        logger.info(f"Skipping story-related memory: {content}")
+                        continue
                     logger.info(f"Retrieved memory: {content}, distance: {dist}")
                     if mem_type == "semantic":
                         results.append(content)
@@ -293,27 +337,207 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
     def generate_system_prompt(self):
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
-        experience = random.choice(self.experience) if self.experience else "no past experience"
         inhibition = random.choice(self.inhibitions) if self.inhibitions else "respond naturally"
+        
+        def format_game_context():
+            if self.current_mode == "game":
+                return self.wordgame.get_game_context()
+            return ""
+
+        mode_context = "No specific mode active."
+        if self.current_mode == "story":
+            if os.path.exists(self.story_file):
+                try:
+                    with open(self.story_file, "r") as f:
+                        story_data = json.load(f)
+                        mode_context = f"Continue the story: {story_data['summary']}. Aim for a cohesive narrative."
+                except Exception:
+                    mode_context = "Start a new random story." if self.story_iterations == 0 else "Continue the previous story based on prior interactions."
+            else:
+                mode_context = "Start a new random story."
+        elif self.current_mode == "game":
+            mode_context = f"Play the current game. Game context: {format_game_context()}"
+
         return (
-            f"You are {self.name}, a {behavior} {self.description}.\n"
-            f"Physicality: {physicality}\n"
-            f"Experience: {experience}\n"
-            f"Inhibition: {inhibition}\n"
-            f"Use stored memories to personalize responses when relevant."
+            f"""
+You are {self.name}, a {self.description} AI assistant with a {behavior} tone, designed to be {physicality}. Your role is {self.role}, and you {inhibition}. The current system time is {{current_time}}.
+Your task is to respond naturally based on these characteristics to the users inputs, if you are equipped with <thinking> DO NOT show the thinking methodology to the user at the response generation this is unecessary
+**Core Instructions**:
+1. **Response Tone**: Adopt a {behavior} tone, reflecting your personality ({self.description}) and physicality ({physicality}). For example, if behavior is 'witty,' use clever humor; if physicality is 'robotic,' use precise, mechanical phrasing.
+2. **Memory Usage**: Use stored memories ({{memory_context}}) to personalize responses for personal facts (e.g., family names, preferences) or past interactions, but NEVER for volatile data like prices, weather, or current events.
+3. **Web Search**: For queries requiring up-to-date information (e.g., finance, weather, news, sports), use only web search results ({{search_context}}). Do not rely on internal knowledge or memories for these.
+4. **Mode Handling**:
+   - Story Mode: {mode_context if self.current_mode == 'story' else 'Not active.'}
+   - Game Mode: {mode_context if self.current_mode == 'game' else 'Not active.'}
+   - Other Modes: Follow mode-specific instructions if provided, else respond naturally.
+5. **Response Length**:
+   - For general queries or small talk, keep responses concise (~50 words or 150 characters).
+   - For queries with 'explain', 'detail', 'in-depth', 'elaborate', 'analysis', or similar keywords, provide detailed responses (~500 words or 2000 characters).
+   - In Game Mode, keep responses concise (~50-100 words) unless explaining rules.
+6. **Special Cases**:
+   - Financial Queries: Use web search only. If no data, respond: "Can’t fetch price. Check CoinDesk."
+   - Weather Queries: Use web search only. If no data, respond: "Can’t fetch weather. Check a weather app."
+   - News/Sports: Provide concise responses (~50 words) as a list (up to 4 items). Cite sources as 'web:<id>' for news/sports only.
+   - Past Event Statements (e.g., 'I graduated in 2025'): Acknowledge and store as memory (e.g., 'That’s great! I’ll remember that.') without searching unless requested.
+7. **Game Mode Specifics**:
+   - Store questions, answers, and game state in {self.game_file}.
+   - Use the provided game context to generate the next question or response dynamically.
+   - For each game response, suggest an update to the game state (e.g., new question, updated guesses, or initial word/target) in JSON format: ```json\n<game_state_update>\n```.
+   - If the game ends, provide a conclusion (e.g., 'You won!' or 'Game over.') and reset the game state if appropriate.
+8. **Output Format**:
+   - Structure responses clearly with paragraphs or bullet points for readability.
+   - For lists, use '- Item' format.
+   - For code, use ```python\n<code>\n```.
+   - For game state updates, include a JSON snippet: ```json\n<game_state_update>\n```.
+   - Avoid speculative or unverified information.
+
+**Web Search Results**: {{search_context}}
+
+**User Prompt**: {{prompt}}
+"""
         )
 
-    async def generate_response(self, prompt, user_id="default_user", dementia_friendly=False):
+    def validate_price_results(self, formatted_results, asset_name):
+        price_pattern = r'\$[\d,]+(?:\.\d{2})?'
+        matches = re.findall(price_pattern, formatted_results)
+        if matches:
+            price = matches[0].replace(',', '')
+            try:
+                float(price[1:])
+                source_match = re.search(r'web:(\d+)|URL: (https?://[^\s]+)', formatted_results)
+                source_id = source_match.group(1) if source_match and source_match.group(1) else (
+                    "binance" if "binance.com" in formatted_results else "unknown"
+                )
+                return f"{asset_name} is {price} USD"
+            except ValueError:
+                logger.warning(f"Invalid price format in results: {matches[0]}")
+        
+        for line in formatted_results.split('\n'):
+            if 'USD' in line and any(char.isdigit() for char in line):
+                price_match = re.search(r'[\d,]+\.?\d*', line)
+                if price_match:
+                    price = f"${price_match.group(0)}"
+                    try:
+                        float(price[1:].replace(',', ''))
+                        source_id = "binance" if "binance.com" in formatted_results else "unknown"
+                        return f"{asset_name} is {price} USD"
+                    except ValueError:
+                        logger.warning(f"Invalid fallback price in line: {line}")
+        
+        logger.warning(f"No valid USD price found in results for {asset_name}")
+        return None
+
+    def _summarize_story(self, story_content):
+        try:
+            response = ollama.chat(
+                model="codegemma",
+                messages=[
+                    {"role": "system", "content": "Summarize the following story in 1000 characters or less."},
+                    {"role": "user", "content": story_content}
+                ],
+                options={"temperature": 0.0, "max_tokens": 200}
+            )
+            summary = response.get("message", {}).get("content", "")
+            if summary:
+                return summary[:1000]
+            logger.warning("No summary generated, using truncated story.")
+            return story_content[:1000]
+        except Exception as e:
+            logger.error(f"Error summarizing story: {e}")
+            return story_content[:1000]
+
+    def _save_mode_file(self, mode):
+        try:
+            if mode == "story":
+                with open(self.story_file, "w") as f:
+                    json.dump({"summary": self.history[-1]["content"], "iterations": self.story_iterations}, f)
+                logger.info(f"Saved story state to {self.story_file}")
+            elif mode == "game":
+                self.wordgame.save_game_state()
+        except Exception as e:
+            logger.error(f"Error saving {mode} file: {e}")
+
+    def _clear_mode_file(self, mode):
+        try:
+            if mode == "story" and os.path.exists(self.story_file):
+                os.remove(self.story_file)
+                logger.info(f"Cleared {self.story_file}")
+                self.sqlite_cursor.execute(
+                    "DELETE FROM memories WHERE memory_type = 'episodic' AND timestamp > ?",
+                    (datetime.utcnow().isoformat(),)
+                )
+                self.sqlite_conn.commit()
+                self.faiss_index = faiss.IndexFlatL2(self.embedding_dim)
+                self.faiss_index = faiss.IndexIDMap(self.faiss_index)
+                self.sqlite_cursor.execute("SELECT id, content FROM memories WHERE user_id = ?", ("default_user",))
+                for row in self.sqlite_cursor.fetchall():
+                    memory_id, content = row
+                    embedding = self.embeddings.encode([content])[0]
+                    self.faiss_index.add_with_ids(np.array([embedding], dtype=np.float32), np.array([memory_id], dtype=np.int64))
+                faiss.write_index(self.faiss_index, self.faiss_index_path)
+                logger.info("Rebuilt FAISS index after clearing story memories")
+            elif mode == "game":
+                self.wordgame.clear_game_state()
+        except Exception as e:
+            logger.error(f"Error clearing {mode} file: {e}")
+
+    def _clean_think_tags(self, text):
+        """Remove <think> tags and their contents from the text."""
+        return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
+    async def generate_response(self, prompt, user_id="default_user", dementia_friendly=False, long_form=False):
         start_total = time.time()
         
         if not prompt.strip():
             logger.info(f"Empty prompt received. Total time: {time.time() - start_total:.2f}s")
-            return "Hey, give me something to work with!"
+            return "Hey, give me something to work with!" if self.current_mode != "game" else "Please provide a valid input (e.g., 'yes' or 'no') to continue the game!"
 
         prompt = prompt.replace("white office", "White House").replace("White office", "White House")
         prompt_lower = prompt.lower().strip()
 
-        memory_context = None
+        if prompt_lower == "tell me a story" and self.current_mode != "game":
+            self.current_mode = "story"
+            self.story_iterations = 0
+            self._clear_mode_file("story")
+        elif any(phrase in prompt_lower for phrase in ["lets play a game", "let's play a game", "play a game", "game time", "start a game"]):
+            return "Sure, I can play! Hangman is available for now. To start, simply say 'let's play hangman' (case insensitive)."
+        elif any(hangman_trigger in prompt_lower for hangman_trigger in ["lets play hangman", "let's play hangman", "play hangman", "start hangman"]):
+            if self.wordgame.start_game("hangman"):
+                self.current_mode = "game"
+                logger.info("Initialized hangman game")
+            else:
+                return "Oops, something went wrong starting Hangman. Try again!"
+        elif any(stop in prompt_lower for stop in ["stop", "end", "forget", "quit"]) and self.current_mode == "game":
+            self._clear_mode_file("game")
+            self.current_mode = "normal"
+            return "Game ended. What's next?"
+        elif prompt_lower in ["stop story", "end story", "forget the story"] and self.current_mode == "story":
+            self._clear_mode_file("story")
+            self.current_mode = "normal"
+            self.story_iterations = 0
+            return "Story ended. What's next?"
+
+        if self.current_mode == "game":
+            game_response, game_ended = self.wordgame.process_game_input(prompt)
+            if game_response:
+                self.history.append({"role": "user", "content": prompt})
+                self.history.append({"role": "assistant", "content": game_response})
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "user", "content": prompt})
+                    self.conversation_cache.append({"role": "assistant", "content": game_response})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
+                if game_ended:
+                    self.current_mode = "normal"
+                logger.info(f"Game response generated: {game_response}")
+                logger.info(f"Total response time: {time.time() - start_total:.2f}s")
+                return game_response
+
+        detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
+        long_form = any(keyword in prompt_lower for keyword in detail_keywords) or self.current_mode == "story"
+
+        max_tokens = 500 if long_form or self.current_mode == "game" else 100
+
         web_search_keywords = [
             "current president", "current prime minister", "today", "recent", "latest", "current",
             "sports", "concerts", "events", "grammys", "awards", "election", "market", "trending",
@@ -337,6 +561,8 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
             should_search = False
 
         formatted_results = ""
+        search_context = "Not required for this query. Use internal knowledge."
+        memory_context = None
         if should_search:
             start_web_search = time.time()
             search_query = prompt_lower
@@ -345,21 +571,60 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
             formatted_results = self.websearch.format_results(search_results)[:1500]
             logger.info(f"Web search processing took {time.time() - start_web_search:.2f}s")
 
-            if not formatted_results.strip() or formatted_results == "No search results found." or "Error" in formatted_results:
+            if any(keyword in prompt_lower for keyword in ["price", "stock", "bitcoin", "crypto"]):
+                asset_name = "Bitcoin" if "bitcoin" in prompt_lower else "Ethereum" if "ethereum" in prompt_lower else "asset"
+                price_response = self.validate_price_results(formatted_results, asset_name)
+                if price_response:
+                    self.history.append({"role": "user", "content": prompt})
+                    self.history.append({"role": "assistant", "content": price_response})
+                    if self.use_flow and self.current_mode == "normal":
+                        self.conversation_cache.append({"role": "user", "content": prompt})
+                        self.conversation_cache.append({"role": "assistant", "content": price_response})
+                        if len(self.conversation_cache) > 5:
+                            self.conversation_cache = self.conversation_cache[-5:]
+                    logger.info(f"Total response time: {time.time() - start_total:.2f}s")
+                    return price_response
+                content = "Can’t fetch price. Check CoinDesk."
+                self.history.append({"role": "user", "content": prompt})
+                self.history.append({"role": "assistant", "content": content})
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "user", "content": prompt})
+                    self.conversation_cache.append({"role": "assistant", "content": content})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
+                logger.info(f"No valid price data found. Total response time: {time.time() - start_total:.2f}s")
+                return content
+            elif "weather" in prompt_lower:
+                if not formatted_results.strip() or formatted_results == "No search results found." or "Error" in formatted_results:
+                    content = "Can’t fetch weather. Check a weather app."
+                    self.history.append({"role": "user", "content": prompt})
+                    self.history.append({"role": "assistant", "content": content})
+                    if self.use_flow and self.current_mode == "normal":
+                        self.conversation_cache.append({"role": "user", "content": prompt})
+                        self.conversation_cache.append({"role": "assistant", "content": content})
+                        if len(self.conversation_cache) > 5:
+                            self.conversation_cache = self.conversation_cache[-5:]
+                    logger.info(f"No valid weather data found. Total response time: {time.time() - start_total:.2f}s")
+                    return content
+                search_context = formatted_results
+            elif not formatted_results.strip() or formatted_results == "No search results found." or "Error" in formatted_results:
                 query_type = "information"
                 if "sports" in prompt_lower or "scores" in prompt_lower:
                     query_type = "sports scores"
                 elif "concerts" in prompt_lower or "events" in prompt_lower:
                     query_type = "event information"
-                elif "price" in prompt_lower or "stock" in prompt_lower or "bitcoin" in prompt_lower or "crypto" in prompt_lower:
-                    query_type = "price information"
-                elif "weather" in prompt_lower:
-                    query_type = "weather information"
-                content = f"I could not retrieve the {query_type} at this time. Please try again later or check a reliable source."
+                content = f"I could not retrieve {query_type} at this time. Please try again later or check a reliable source."
                 self.history.append({"role": "user", "content": prompt})
                 self.history.append({"role": "assistant", "content": content})
-                logger.info(f"Total response time: {time.time() - start_total:.2f}s")
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "user", "content": prompt})
+                    self.conversation_cache.append({"role": "assistant", "content": content})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
+                logger.info(f"No valid search results found. Total response time: {time.time() - start_total:.2f}s")
                 return content
+            else:
+                search_context = formatted_results
         else:
             start_memory = time.time()
             memory_context = self.retrieve_memory(prompt, user_id)
@@ -371,56 +636,42 @@ You are a memory evaluation assistant for a dementia support AI. Your task is to
 
         messages = []
 
-        system_prompt = f"""
-You are a large language model being used inside of an AI agent framework.
-
-You are now {self.name}, a {self.description} AI with a {random.choice(self.behaviors) if self.behaviors else 'neutral'} tone.
-The current system time is: {current_time}.
-You were trained at an earlier date therefore any enquiries needing up to date knowledge MUST undergo a web search as your trained data may be erroneous.
-
-Your capabilities include:
-- **Memory**: Use stored memories to personalize responses, especially for personal facts (e.g., family names, preferences) and past interactions. Memories: {memory_context or 'No relevant memories found'}. NEVER use memories for price, stock, crypto, weather, or news queries.
-- **Time Queries**: Access the current date and time using the system clock (via pytz). The current system time is: {current_time}.
-- **Web Search**: Access real-time data via a web search API for up-to-date information.
-- **Internal Knowledge**: Use your training data for general knowledge, historical facts, mathematics, basic sciences, unless real-time data is needed.
-- **Conversational Flexibility**: Engage in open-ended conversations, answer general knowledge questions, perform calculations, or explain concepts.
-
-**Instructions**:
-- For time/date queries, use the provided system time.
-- For queries requiring up-to-date information (e.g., prices, news, sports, weather), rely ONLY on web search results.
-- Use stored memories to enhance personalization and continuity, but NEVER for volatile data like prices, weather, or current events.
-- If a memory is stored after this prompt, you MUST acknowledge it in your response (e.g., "I’ll remember that—your cousin’s name is Jeff.") and reflect the stored fact in your reply.
-- If the prompt is a statement about a past event (e.g., contains a year like 2025 and isn’t a question), treat it as a fact to acknowledge and store, NOT a query to search. For example, "Arsenal won their 20th Premier League match in April 2025" should be responded to with: "That’s great—Arsenal won their 20th Premier League match in April 2025! I’ll store that for you. Anything else about the game?" Do NOT search for more information unless explicitly requested.
-- Cite sources exactly as provided in the web search results.
-- For news queries, format as a list of up to 4 headlines, each under 50 words.
-- Keep responses under 500 words unless requested otherwise.
-- If you have received websearch - if it is a financial query do not under any circumstances use memories or internal training and return the data as "Asset" is currently "Price" USD  e.g. Mew is currently $42.22 USD (this is just an example)
-
-Your role is {self.role}. Respond in a {random.choice(self.behaviors) if self.behaviors else 'neutral'} tone, reflecting your personality: {self.description}.
-Physicality: {random.choice(self.physicality) if self.physicality else 'generic assistant'}.
-Inhibition: {random.choice(self.inhibitions) if self.inhibitions else 'respond naturally'}.
-
-**Web Search Results**:
-{formatted_results if should_search else 'Not required for this query. Use internal knowledge.'}
-
-User Prompt: {prompt}
-"""
+        memory_context = memory_context if memory_context is not None else "No relevant memories found"
+        system_prompt = self.generate_system_prompt().format(
+            current_time=current_time,
+            memory_context=memory_context,
+            search_context=search_context,
+            prompt=prompt
+        )
         messages.append({"role": "system", "content": system_prompt})
+
+        if self.current_mode == "game":
+            messages.append({"role": "system", "content": self.wordgame.get_game_context()})
 
         start_history = time.time()
         recent_history = self.history[-3:]
         if recent_history:
             history_text = "\n".join(f"{msg['role']}: {msg['content'][:200]}..." for msg in recent_history if len(msg['content']) > 0)
             messages.append({"role": "system", "content": f"Recent conversation (brief):\n{history_text}"})
+        
+        if self.use_flow and self.current_mode == "normal":
+            if self.conversation_cache:
+                cache_text = "\n".join(f"{msg['role']}: {msg['content'][:200]}..." for msg in self.conversation_cache)
+                messages.append({"role": "system", "content": f"Last 5 messages for conversational flow:\n{cache_text}"})
+        
         logger.info(f"History processing took {time.time() - start_history:.2f}s")
 
         is_brief_affirmation = prompt_lower in ["yes", "no", "yep", "nope", "yeah", "nah"]
-        if is_brief_affirmation and recent_history:
+        if is_brief_affirmation and recent_history and self.current_mode == "game":
+            messages.append({"role": "system", "content": "The user answered your previous yes/no question. Ask the next question based on their answer, the game state, and previous context. Do NOT answer for the user."})
+        elif is_brief_affirmation and recent_history:
             previous_message = recent_history[-1]["content"].lower()
-            if any(keyword in previous_message for keyword in ["play", "game", "20 questions"]):
+            if self.current_mode == "story" and "want more?" in previous_message:
+                messages.append({"role": "system", "content": "The user wants to continue the story. Generate the next part and end with 'Want more?'"})
+            elif any(keyword in previous_message for keyword in ["play", "game", "hangman"]):
                 messages.append({"role": "system", "content": "The user is continuing a game. Acknowledge their input and proceed with the game in a playful tone."})
             elif previous_message.endswith("?"):
-                messages.append({"role": "system", "content": "The user answered your previous question. Respond appropriately to continue the conversation."})
+                messages.append({"role": "system", "content": "The user answered your previous question. Respond appropriately to continue the game or conversation."})
             else:
                 messages.append({"role": "system", "content": "The user gave a brief affirmation. Continue the previous topic naturally."})
 
@@ -438,21 +689,26 @@ User Prompt: {prompt}
         logger.info(f"Messages sent to LLM:\n{json.dumps(messages, indent=2)}")
 
         self.history.append({"role": "user", "content": prompt})
+        if self.use_flow and self.current_mode == "normal":
+            self.conversation_cache.append({"role": "user", "content": prompt})
+        
         start_llm = time.time()
         try:
             response = ollama.chat(
                 model=self.model,
                 messages=messages,
-                options={"temperature": 0.0 if should_search else self.temperature}
+                options={"temperature": 0.0 if should_search else self.temperature, "max_tokens": max_tokens}
             )
             content = response.get("message", {}).get("content", "")
-            logger.info(f"Raw LLM response: {content}")
+            content = self._clean_think_tags(content)  # Clean <think> tags from the response
+            logger.info(f"Raw LLM response (after cleaning): {content}")
+            
             if should_search:
                 def normalize_number(text):
                     text = re.sub(r'[\$,]', '', text)
                     try:
                         num = float(text)
-                        return f"{num:.3f}"
+                        return f"{num:.2f}"
                     except ValueError:
                         return text
 
@@ -466,18 +722,56 @@ User Prompt: {prompt}
                             logger.warning(f"Potential hallucination detected: '{word}' not in web search results")
         except Exception as e:
             logger.error(f"Error in LLM call: {str(e)}")
-            content = ""
+            content = "Hmm, I’ve got nothing—maybe my coffee’s cold today!"
+            content = self._clean_think_tags(content)  # Clean <think> tags from fallback response
+
         logger.info(f"LLM call took {time.time() - start_llm:.2f}s")
+
+        if self.current_mode == "story" and os.path.exists(self.story_file):
+            if self.story_iterations < 10:
+                if not content.endswith("Want more?"):
+                    content = f"{content.rstrip()} Want more?"
+                self.story_iterations += 1
+                self.history.append({"role": "assistant", "content": content})
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "assistant", "content": content})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
+                summary = self._summarize_story(content)
+                self._save_mode_file("story")
+            else:
+                content = f"{content.rstrip()} And so, the story comes to an end! Hope you enjoyed it!"
+                self.history.append({"role": "assistant", "content": content})
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "assistant", "content": content})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
+                self._clear_mode_file("story")
+                self.current_mode = "normal"
+                self.story_iterations = 0
+        elif self.current_mode == "game":
+            content = self.wordgame.process_response(content, prompt)
+            self.history.append({"role": "assistant", "content": content})
+            if self.use_flow and self.current_mode == "normal":
+                self.conversation_cache.append({"role": "assistant", "content": content})
+                if len(self.conversation_cache) > 5:
+                    self.conversation_cache = self.conversation_cache[-5:]
+        else:
+            self.history.append({"role": "assistant", "content": content})
+            if self.use_flow and self.current_mode == "normal":
+                self.conversation_cache.append({"role": "assistant", "content": content})
+                if len(self.conversation_cache) > 5:
+                    self.conversation_cache = self.conversation_cache[-5:]
 
         if content:
             should_store, mem_type, mem_content = self.process_memory(prompt, content, user_id)
             if should_store:
                 self.store_memory(mem_content, user_id, mem_type)
-            self.history.append({"role": "assistant", "content": content})
+                if not long_form and self.current_mode == "normal":
+                    content = f"{content} (Stored: {mem_content})"
         else:
             content = "Hmm, I’ve got nothing—maybe my coffee’s cold today!"
-            self.history.append({"role": "assistant", "content": content})
-
+        
         logger.info(f"Total response time: {time.time() - start_total:.2f}s")
         return content
 
@@ -507,6 +801,7 @@ User Prompt: {prompt}
                 options={"temperature": self.temperature, "max_tokens": 100}
             )
             content = response.get("message", {}).get("content", "")
+            content = self._clean_think_tags(content)  # Clean <think> tags from tweet
             if content and len(content) <= max_length:
                 logger.info(f"Tweet generation took {time.time() - start_tweet:.2f}s")
                 return content
@@ -541,6 +836,7 @@ User Prompt: {prompt}
                     options={"temperature": self.temperature}
                 )
             content = response.get("message", {}).get("content", "")
+            content = self._clean_think_tags(content)  # Clean <think> tags from image analysis
             if content:
                 logger.info(f"Image analysis took {time.time() - start_image:.2f}s")
                 self.store_memory(
@@ -548,6 +844,11 @@ User Prompt: {prompt}
                     user_id,
                     "episodic"
                 )
+                if self.use_flow and self.current_mode == "normal":
+                    self.conversation_cache.append({"role": "user", "content": prompt})
+                    self.conversation_cache.append({"role": "assistant", "content": content})
+                    if len(self.conversation_cache) > 5:
+                        self.conversation_cache = self.conversation_cache[-5:]
                 return content
             content = "Well, I stared at this pic, but all I’ve got is a blank screen and a caffeine craving!"
             logger.info(f"Image analysis took {time.time() - start_image:.2f}s")
@@ -555,6 +856,7 @@ User Prompt: {prompt}
         except Exception as e:
             logger.error(f"Error in image analysis: {e}")
             content = "Oops, my image-analyzing goggles are on the fritz—give me a sec to reboot!"
+            content = self._clean_think_tags(content)  # Clean <think> tags from fallback response
             logger.info(f"Image analysis took {time.time() - start_image:.2f}s")
             return content
 
@@ -562,6 +864,8 @@ User Prompt: {prompt}
         try:
             self.sqlite_conn.close()
             faiss.write_index(self.faiss_index, self.faiss_index_path)
-            logger.info("Saved FAISS index and closed SQLite connection")
-        except:
-            logger.error("Error during cleanup")
+            self._clear_mode_file("story")
+            self._clear_mode_file("game")
+            logger.info("Saved FAISS index, closed SQLite connection, and cleared mode files")
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")

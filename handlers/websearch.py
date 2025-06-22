@@ -2,8 +2,9 @@ import logging
 import asyncio
 import ollama
 import traceback
+import re
 from duckduckgo_search import DDGS
-from config.settings import DEFAULT_MODEL, SYSTEM_TIMEZONE
+from config.settings import DEFAULT_MODEL, INSTRUCT_MODEL, SYSTEM_TIMEZONE
 from .finance import FinanceHandler
 from .news import NewsHandler
 from .weather import WeatherHandler
@@ -29,7 +30,7 @@ class WebSearchHandler:
         query_lower = query.lower().strip()
         logger.info(f"Processing query: '{query}'")
 
-        # Fallback for index, currency code, and forex term detection
+        # Fallback for index, currency code, forex, crypto, weather, and news term detection
         index_terms = ['dxy', 's&p 500', 'sp500', 'dow jones', 'nasdaq', 'nasdaq 100', 'vix', 'ftse', 'nikkei', 'hang seng', 'dax', 'cac', 'shanghai', 'sensex', 'asx', 'kospi']
         currency_codes = ['usd', 'eur', 'gbp', 'jpy', 'ttd', 'cad', 'aud', 'chf', 'nzd']
         forex_terms = [
@@ -37,53 +38,90 @@ class WebSearchHandler:
             'currency conversion', 'dollar yen', 'yen', 'euro dollar', 'pound dollar', 'aussie dollar',
             'kiwi dollar', 'loonie', 'swissie', 'yuan', 'rupee', 'peso', 'real', 'rand'
         ]
+        crypto_terms = ['bitcoin', 'ethereum', 'solana', 'crypto', 'coin', 'cryptocurrency']
+        weather_terms = ['weather', 'forecast', 'temperature', 'sunrise', 'sunset', 'moon phase', 'moon cycle']
+        news_terms = ['news', 'headlines', 'current events', 'latest news', 'bbc', 'cnn', 'breaking news']
 
-        # LLM prompt for classification
+        # Strict LLM prompt for single-word output
         prompt = f"""
-Classify the following query into one of these categories: "stock/commodity", "crypto", "forex", "weather", "news", or "general".
-- "stock/commodity": Queries about stock prices, company shares, commodities (e.g., gold, oil), or market indices (e.g., S&P 500, DXY, Nasdaq 100). Prioritize terms like "stock", "price", "ticker", "shares", "market", "index", "dxy", "nasdaq", "dow jones". Examples: "Apple stock price", "gold price today", "NVIDIA ticker", "crude oil market", "whats the price of DXY", "Nasdaq 100 price".
-- "crypto": Queries about cryptocurrencies. Prioritize terms like "crypto", "price", "coin", "sol", "bitcoin", "ethereum". Examples: "Bitcoin price", "Ethereum value", "Solana market cap", "whats the price of sol".
-- "forex": Queries about currency exchange rates or forex. Prioritize terms like "exchange rate", "conversion rate", "currency", "forex", "exchange", "convert", "rate", "currency conversion", "dollar yen", "yen", "euro dollar", "pound dollar", or currency pairs (e.g., USD/EUR, GBP to USD, TTD to USD, usdjpy, eurusd). Examples: "USD to EUR rate", "EUR/USD exchange", "whats the conversion rate of usdjpy", "whats the price of usdjpy", "TTD to USD exchange rate", "gbpusd rate", "euro conversion rate", "convert USD to JPY", "what's the exchange for usdjpy", "currency conversion USD to EUR", "dollar yen price", "yen exchange rate".
-- "weather": Queries about weather conditions. Examples: "New York weather", "London forecast", "temperature today".
-- "news": Queries about news or current events. Examples: "latest news", "Ukraine headlines", "BBC news today".
-- "general": Any query not fitting the above categories. Examples: "history of Rome", "best restaurants".
-Return **only** the category name (e.g., "stock/commodity", "crypto", "forex", "weather", "news", "general") with no additional text or explanation.
+You are a text classifier. Output EXACTLY ONE WORD from the following categories: stock/commodity, crypto, forex, weather, news, general. Do NOT use thinking mode, reasoning, explanations, or tags like <think> or **Answer**. Do NOT output anything other than the category name.
+
+Categories:
+- stock/commodity: Stock prices, commodities (gold, oil), or indices (S&P 500, DXY). Examples: "Apple stock", "gold price", "Nasdaq 100".
+- crypto: Cryptocurrencies. Examples: "Bitcoin price", "Ethereum value", "whats the price of sol".
+- forex: Currency exchange rates. Examples: "USD to EUR", "usdjpy rate", "currency conversion".
+- weather: Weather conditions or forecasts. Examples: "New York weather", "London forecast", "sunrise time".
+- news: News or current events. Examples: "latest news", "BBC news", "Ukraine headlines".
+- general: Other topics. Examples: "history of Rome", "best restaurants".
 
 Query: {query}
 """
         for attempt in range(retries):
             try:
                 response = ollama.chat(
-                    model=DEFAULT_MODEL,
+                    model=INSTRUCT_MODEL,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.0}  # Lower temperature for consistency
+                    options={"temperature": 0.0, "think": False}  # Disable thinking mode
                 )
-                query_type = response.get("message", {}).get("content", "general").strip()
-                query_type = query_type.strip('"').strip("'")
-                logger.info(f"Classified query '{query}' as '{query_type}'")
+                raw_output = response.get("message", {}).get("content", "general").strip()
+                logger.debug(f"Raw LLM output for '{query}' using {INSTRUCT_MODEL}: {raw_output}")
+
+                # Extract category from potentially verbose output
+                query_type = raw_output
+                # Try to match "Answer: crypto" or similar
+                match = re.search(r'\b(?:Answer|Category)\s*:\s*(\w+(?:/\w+)?)\b', raw_output, re.IGNORECASE)
+                if match:
+                    query_type = match.group(1).strip()
+                else:
+                    # Take the last word as fallback
+                    words = raw_output.split()
+                    query_type = words[-1].strip('"').strip("'") if words else "general"
+
+                # Validate query_type
+                valid_categories = ["stock/commodity", "crypto", "forex", "weather", "news", "general"]
+                if query_type not in valid_categories:
+                    logger.warning(f"Invalid category '{query_type}' for query '{query}'. Defaulting to 'general'.")
+                    query_type = "general"
+
+                logger.info(f"Classified query '{query}' as '{query_type}' using {INSTRUCT_MODEL}")
                 break
             except Exception as e:
                 if attempt < retries - 1:
-                    logger.warning(f"LLM classification attempt {attempt + 1} failed for '{query}': {str(e)}. Retrying...")
+                    logger.warning(f"LLM classification attempt {attempt + 1} failed for '{query}' using {INSTRUCT_MODEL}: {str(e)}. Retrying...")
                     await asyncio.sleep(backoff_factor * (2 ** attempt))
                 else:
-                    logger.error(f"All {retries} LLM classification attempts failed for '{query}': {str(e)}\nStack trace: {traceback.format_exc()}")
+                    logger.error(f"All {retries} LLM classification attempts failed for '{query}' using {INSTRUCT_MODEL}: {str(e)}\nStack trace: {traceback.format_exc()}")
                     return [{"title": "Error", "url": "", "description": "errors"}]
         else:
-            logger.error(f"All {retries} LLM classification attempts exhausted for '{query}'")
+            logger.error(f"All {retries} LLM classification attempts exhausted for '{query}' using {INSTRUCT_MODEL}")
             return [{"title": "Error", "url": "", "description": "errors"}]
 
-        # Normalize query for forex check (e.g., "usdjpy" -> "usdjpy", "usd/jpy" -> "usdjpy", "usd to jpy" -> "usdjpy")
+        # Normalize query for forex check
         normalized_query = query_lower.replace('/', '').replace(' to ', '').replace(' ', '')
         logger.debug(f"Normalized query for forex check: '{normalized_query}'")
         logger.debug(f"Forex check for '{query_lower}': forex_terms={any(term in query_lower for term in forex_terms)}, currency_codes={any(code in normalized_query for code in currency_codes)}, query_type={query_type}")
 
-        # Check for index terms to avoid misclassification
+        # Check for index terms
         if any(term in query_lower for term in index_terms):
             logger.info(f"Query '{query}' contains index terms: routing to stocks/commodities")
             return await self.finance_handler.search_stocks_commodities(query_lower)
 
-        # Force forex routing if forex terms or currency codes are present, regardless of LLM classification
+        # Force crypto routing if crypto terms are present and classification is not financial
+        if query_type not in ["stock/commodity", "crypto", "forex"] and any(term in query_lower for term in crypto_terms):
+            logger.info(f"Overriding classification '{query_type}' for '{query}' to 'crypto' due to crypto terms")
+            query_type = "crypto"
+
+        # Force weather routing if weather terms are present and classification is not weather
+        if query_type != "weather" and any(term in query_lower for term in weather_terms):
+            logger.info(f"Overriding classification '{query_type}' for '{query}' to 'weather' due to weather terms")
+            query_type = "weather"
+
+        # Force news routing if news terms are present and classification is not news
+        if query_type != "news" and any(term in query_lower for term in news_terms):
+            logger.info(f"Overriding classification '{query_type}' for '{query}' to 'news' due to news terms")
+            query_type = "news"
+
+        # Force forex routing
         is_forex_query = (
             any(term in query_lower for term in forex_terms) or
             any(code in normalized_query for code in currency_codes)
@@ -98,7 +136,7 @@ Query: {query}
         else:
             logger.info(f"Memory retrieval allowed for non-financial query type '{query_type}'")
 
-        # Route based on LLM classification (if not already routed to forex)
+        # Route based on LLM classification
         if query_type == "stock/commodity":
             logger.info(f"Query '{query}' routed to finance (Stocks/Commodities)")
             return await self.finance_handler.search_stocks_commodities(query)

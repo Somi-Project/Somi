@@ -1,4 +1,3 @@
-# somi.py
 import click
 from agents import Agent
 from handlers.twitter import TwitterHandler
@@ -18,9 +17,16 @@ import os
 from pathlib import Path
 import json
 import logging
+import logging.handlers
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
+handler = logging.handlers.TimedRotatingFileHandler('agent.log', when='midnight', interval=1, backupCount=7)
+handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
+logger.handlers = [handler]
+
+CHARACTERS = {}
+ALIAS_TO_KEY = {}
 
 def async_command(f):
     @wraps(f)
@@ -29,26 +35,26 @@ def async_command(f):
     return wrapper
 
 IMAGES_DIR = Path("images")
-
-# Load personalities from personalC.json for validation
 PERSONALITY_CONFIG = "config/personalC.json"
 
 def load_personalities():
-    try:
-        with open(PERSONALITY_CONFIG, "r") as f:
-            characters = json.load(f)
-        alias_to_key = {}
-        for key, config in characters.items():
-            aliases = config.get("aliases", []) + [key, key.replace("Name: ", "")]
-            for alias in aliases:
-                alias_to_key[alias.lower()] = key
-        return characters, alias_to_key
-    except FileNotFoundError:
-        click.echo(f"Error: {PERSONALITY_CONFIG} not found.")
-        return {}, {}
+    global CHARACTERS, ALIAS_TO_KEY
+    if not CHARACTERS:
+        try:
+            with open(PERSONALITY_CONFIG, "r") as f:
+                CHARACTERS = json.load(f)
+            ALIAS_TO_KEY = {}
+            for key, config in CHARACTERS.items():
+                aliases = config.get("aliases", []) + [key, key.replace("Name: ", "")]
+                for alias in aliases:
+                    ALIAS_TO_KEY[alias.lower()] = key
+        except FileNotFoundError:
+            click.echo(f"Error: {PERSONALITY_CONFIG} not found.")
+        except json.JSONDecodeError:
+            click.echo(f"Invalid JSON in {PERSONALITY_CONFIG}.")
+    return CHARACTERS, ALIAS_TO_KEY
 
 def validate_agent_name(name):
-    """Validate if the name or alias exists in personalC.json."""
     characters, alias_to_key = load_personalities()
     if not name:
         return None
@@ -58,20 +64,17 @@ def validate_agent_name(name):
     return None
 
 def get_randomized_interval(base_interval, lower_variation, upper_variation):
-    """Generate a randomized interval in minutes."""
     min_interval = max(1, base_interval - lower_variation)
     max_interval = base_interval + upper_variation
     return random.randint(min_interval, max_interval)
 
 @click.group(name="agent")
 def cli():
-    """Agent CLI"""
     pass
 
 @click.command()
 @async_command
 async def gencookies():
-    """Generates Twitter cookies"""
     handler = TwitterHandler()
     await handler.initialize()
     click.echo("Cookies generated and saved.")
@@ -83,7 +86,6 @@ async def gencookies():
 @click.option("--use-studies", is_flag=True, help="Enable studied data for responses")
 @async_command
 async def aichat(name, model, temp, use_studies):
-    """Chat continuously with the agent"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -110,7 +112,6 @@ async def aichat(name, model, temp, use_studies):
 @click.option("--message", prompt="Enter your tweet", help="Message to post on Twitter")
 @async_command
 async def devpost(message):
-    """Post a message to Twitter"""
     handler = TwitterHandler()
     result = await handler.post(message)
     click.echo(result)
@@ -120,7 +121,6 @@ async def devpost(message):
 @click.option("--use-studies", is_flag=True, help="Enable studied data for tweet generation")
 @async_command
 async def aipost(name, use_studies):
-    """Generate and post a tweet once"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -138,7 +138,6 @@ async def aipost(name, use_studies):
 @click.option("--use-studies", is_flag=True, help="Enable studied data for tweet generation")
 @async_command
 async def aiautopost(name, use_studies):
-    """Generate and post a tweet with randomized intervals from settings"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -175,7 +174,6 @@ async def aiautopost(name, use_studies):
 @click.option("--limit", default=2, help="Number of mentions to reply to")
 @async_command
 async def aireply(name, limit):
-    """Fetch latest mentions and reply using the agent's personality"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -191,7 +189,6 @@ async def aireply(name, limit):
 @click.option("--use-studies", is_flag=True, help="Enable studied data for reply generation")
 @async_command
 async def aiautoreply(name, limit, use_studies):
-    """Auto scrape mentions and reply with randomized intervals, fast-tracking active threads"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -200,37 +197,33 @@ async def aiautoreply(name, limit, use_studies):
     handler = TwitterHandler(character_name=display_name, use_studies=use_studies)
     try:
         await handler.initialize()
-        fast_track_replies = {}  # Track replies per thread to cap at 2/hour
+        fast_track_replies = {}
         while True:
             try:
-                # Check repcache for active threads (within last 6 hours)
                 current_time = time.time()
                 active_threads = [
                     conv_id for conv_id, messages in handler.repcache.items()
-                    if conv_id != "processed_tweets" and messages and (current_time - messages[-1]['timestamp'] < 3600)  # 1 hour
+                    if conv_id != "processed_tweets" and messages and (current_time - messages[-1]['timestamp'] < 3600)
                 ]
                 is_fast_track = bool(active_threads)
-                fast_track_interval = random.randint(5, 15) * 60  # 5-15 minutes in seconds
+                fast_track_interval = random.randint(5, 15) * 60
                 standard_interval = handler._get_randomized_interval(
                     AUTO_REPLY_INTERVAL_MINUTES,
                     AUTO_REPLY_INTERVAL_LOWER_VARIATION,
                     AUTO_REPLY_INTERVAL_UPPER_VARIATION
-                ) * 60  # Minutes to seconds
+                ) * 60
 
                 if is_fast_track:
                     click.echo(f"Active threads detected: {active_threads}. Checking mentions every {fast_track_interval // 60} minutes.")
                     mentions_processed = await handler.reply_to_mentions(limit=limit, cleanup=False)
                     if mentions_processed:
-                        # Update fast-track reply tracking
                         current_hour = time.strftime("%Y-%m-%d %H:00:00")
                         for conv_id in active_threads:
                             fast_track_replies.setdefault(current_hour, {}).setdefault(conv_id, 0)
                             fast_track_replies[current_hour][conv_id] += 1
-                            # Cap at 2 replies per thread per hour
                             if fast_track_replies[current_hour][conv_id] > 2:
                                 logger.info(f"Capped replies for thread {conv_id} at 2 this hour.")
                                 continue
-                        # Clean old fast-track data
                         fast_track_replies = {
                             hour: threads for hour, threads in fast_track_replies.items()
                             if hour == current_hour
@@ -256,7 +249,6 @@ async def aiautoreply(name, limit, use_studies):
 @click.option("--use-studies", is_flag=True, help="Enable studied data for Telegram responses")
 @async_command
 async def telegram(name, use_studies):
-    """Run the Telegram bot for chat interaction and scraping"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -277,7 +269,6 @@ async def telegram(name, use_studies):
 @click.option("--study", multiple=True, help="Data to study: 'pdfs', 'websites', or both", type=click.Choice(['pdfs', 'websites']))
 @async_command
 async def study(name, study):
-    """Study data for RAG (PDFs and/or websites)"""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -296,7 +287,6 @@ async def study(name, study):
 
 @click.command()
 def clearstudies():
-    """Clear all studied RAG data"""
     storage_path = Path("rag_data")
     vector_file = storage_path / "rag_vectors.faiss"
     text_file = storage_path / "rag_texts.json"
@@ -325,7 +315,6 @@ def clearstudies():
 @click.option("--name", required=True, help="Name of the agent from personalC.json")
 @async_command
 async def analyzeimages(name):
-    """Analyze all images in the images folder and print results."""
     agent_key = validate_agent_name(name)
     if not agent_key:
         click.echo("please enter a valid personality name")
@@ -349,7 +338,6 @@ async def analyzeimages(name):
         except Exception as e:
             click.echo(f"Error analyzing {image_file.name}: {str(e)}")
 
-# Register commands with the CLI group
 cli.add_command(gencookies)
 cli.add_command(aichat)
 cli.add_command(devpost)
