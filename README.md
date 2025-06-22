@@ -70,7 +70,7 @@ e.g. python somi.py <command> --name somi
 ```
 
 Independant commands
-Begin by typing python <insertscriptname>.py
+Begin by typing python insertscriptname.py
 ```base
   speech       Audio I/O
   vba          Gui
