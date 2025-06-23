@@ -1,6 +1,6 @@
 # config/settings.py
 DEFAULT_MODEL = "huihui_ai/qwen3-abliterated:1.7b"
-MEMORY_MODEL = "codegemm:2b"
+MEMORY_MODEL = "codegemma:2b"
 INSTRUCT_MODEL = "phi4-mini-reasoning:3.8b"
 DEFAULT_TEMP = 0.9
 DISABLE_MEMORY_FOR_FINANCIAL = True
