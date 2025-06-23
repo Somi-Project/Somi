@@ -26,7 +26,7 @@ AUTO_REPLY_INTERVAL_MINUTES = 240
 AUTO_REPLY_INTERVAL_LOWER_VARIATION = 20  # -20 minutes
 AUTO_REPLY_INTERVAL_UPPER_VARIATION = 30  # +30 minutes
 
-TELEGRAM_BOT_TOKEN = "placeholder
+TELEGRAM_BOT_TOKEN = "placeholder"
 TELEGRAM_BOT_USERNAME = "placeholdert"
 TELEGRAM_AGENT_ALIASES = ["placeholder", "placeholder", "placeholder", "placeholder"]
 
