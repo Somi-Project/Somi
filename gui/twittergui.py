@@ -321,7 +321,7 @@ def twitter_autoresponse_toggle(app):
         dialog.exec()
 
 def twitter_settings(app):
-    """Display and edit Twitter settings."""
+    """Display and edit Twitter settings from config/settings.py."""
     logger.info("Opening Twitter Settings dialog...")
     settings_dialog = QDialog(app)
     settings_dialog.setWindowTitle("Twitter Settings")
@@ -333,97 +333,229 @@ def twitter_settings(app):
         layout.addWidget(QLabel(settings.TWITTER_USERNAME))
         layout.addWidget(QLabel("Password:"))
         password_label = QLabel("********" if settings.TWITTER_PASSWORD else "Not set")
+        password_label.setWordWrap(True)
         layout.addWidget(password_label)
-        layout.addWidget(QLabel("API Key:"))
-        layout.addWidget(QLabel(settings.TWITTER_API))
+        layout.addWidget(QLabel("API Credentials:"))
+        api_label = QLabel(str(settings.TWITTER_API))
+        api_label.setWordWrap(True)
+        layout.addWidget(api_label)
         layout.addWidget(QLabel("Auto Post Interval (minutes):"))
         layout.addWidget(QLabel(str(settings.AUTO_POST_INTERVAL_MINUTES)))
+        layout.addWidget(QLabel("Auto Post Lower Variation (minutes):"))
+        layout.addWidget(QLabel(str(settings.AUTO_POST_INTERVAL_LOWER_VARIATION)))
+        layout.addWidget(QLabel("Auto Post Upper Variation (minutes):"))
+        layout.addWidget(QLabel(str(settings.AUTO_POST_INTERVAL_UPPER_VARIATION)))
         layout.addWidget(QLabel("Auto Reply Interval (minutes):"))
         layout.addWidget(QLabel(str(settings.AUTO_REPLY_INTERVAL_MINUTES)))
+        layout.addWidget(QLabel("Auto Reply Lower Variation (minutes):"))
+        layout.addWidget(QLabel(str(settings.AUTO_REPLY_INTERVAL_LOWER_VARIATION)))
+        layout.addWidget(QLabel("Auto Reply Upper Variation (minutes):"))
+        layout.addWidget(QLabel(str(settings.AUTO_REPLY_INTERVAL_UPPER_VARIATION)))
 
     display_settings()
 
     def edit_settings():
         edit_dialog = QDialog(settings_dialog)
         edit_dialog.setWindowTitle("Edit Twitter Settings")
-        edit_dialog.setGeometry(100, 100, 600, 400)
+        edit_dialog.setGeometry(100, 100, 600, 600)
         edit_layout = QVBoxLayout()
+
+        # Username
         edit_layout.addWidget(QLabel("Username:"))
         username_entry = QLineEdit(settings.TWITTER_USERNAME)
         edit_layout.addWidget(username_entry)
+
+        # Password
         edit_layout.addWidget(QLabel("Password:"))
         password_entry = QLineEdit(settings.TWITTER_PASSWORD)
         password_entry.setEchoMode(QLineEdit.EchoMode.Password)
         edit_layout.addWidget(password_entry)
+
+        # TWITTER_API dictionary fields
         edit_layout.addWidget(QLabel("API Key:"))
-        api_entry = QLineEdit(settings.TWITTER_API)
-        edit_layout.addWidget(api_entry)
+        api_key_entry = QLineEdit(settings.TWITTER_API.get("api_key", ""))
+        edit_layout.addWidget(api_key_entry)
+
+        edit_layout.addWidget(QLabel("API Secret:"))
+        api_secret_entry = QLineEdit(settings.TWITTER_API.get("api_secret", ""))
+        edit_layout.addWidget(api_secret_entry)
+
+        edit_layout.addWidget(QLabel("Access Token:"))
+        access_token_entry = QLineEdit(settings.TWITTER_API.get("access_token", ""))
+        edit_layout.addWidget(access_token_entry)
+
+        edit_layout.addWidget(QLabel("Access Token Secret:"))
+        access_token_secret_entry = QLineEdit(settings.TWITTER_API.get("access_token_secret", ""))
+        edit_layout.addWidget(access_token_secret_entry)
+
+        edit_layout.addWidget(QLabel("Bearer Token:"))
+        bearer_token_entry = QLineEdit(settings.TWITTER_API.get("bearer_token", ""))
+        edit_layout.addWidget(bearer_token_entry)
+
+        edit_layout.addWidget(QLabel("Client ID:"))
+        client_id_entry = QLineEdit(settings.TWITTER_API.get("client_id", ""))
+        edit_layout.addWidget(client_id_entry)
+
+        edit_layout.addWidget(QLabel("Client Secret:"))
+        client_secret_entry = QLineEdit(settings.TWITTER_API.get("client_secret", ""))
+        edit_layout.addWidget(client_secret_entry)
+
+        # Auto Post Interval and Variations
         edit_layout.addWidget(QLabel("Auto Post Interval (minutes):"))
         post_interval_entry = QLineEdit(str(settings.AUTO_POST_INTERVAL_MINUTES))
         edit_layout.addWidget(post_interval_entry)
+
+        edit_layout.addWidget(QLabel("Auto Post Lower Variation (minutes):"))
+        post_lower_variation_entry = QLineEdit(str(settings.AUTO_POST_INTERVAL_LOWER_VARIATION))
+        edit_layout.addWidget(post_lower_variation_entry)
+
+        edit_layout.addWidget(QLabel("Auto Post Upper Variation (minutes):"))
+        post_upper_variation_entry = QLineEdit(str(settings.AUTO_POST_INTERVAL_UPPER_VARIATION))
+        edit_layout.addWidget(post_upper_variation_entry)
+
+        # Auto Reply Interval and Variations
         edit_layout.addWidget(QLabel("Auto Reply Interval (minutes):"))
         reply_interval_entry = QLineEdit(str(settings.AUTO_REPLY_INTERVAL_MINUTES))
         edit_layout.addWidget(reply_interval_entry)
+
+        edit_layout.addWidget(QLabel("Auto Reply Lower Variation (minutes):"))
+        reply_lower_variation_entry = QLineEdit(str(settings.AUTO_REPLY_INTERVAL_LOWER_VARIATION))
+        edit_layout.addWidget(reply_lower_variation_entry)
+
+        edit_layout.addWidget(QLabel("Auto Reply Upper Variation (minutes):"))
+        reply_upper_variation_entry = QLineEdit(str(settings.AUTO_REPLY_INTERVAL_UPPER_VARIATION))
+        edit_layout.addWidget(reply_upper_variation_entry)
+
+        # Buttons
         button_layout = QHBoxLayout()
         save_button = QPushButton("Save")
         cancel_button = QPushButton("Cancel")
         button_layout.addWidget(save_button)
         button_layout.addWidget(cancel_button)
         edit_layout.addLayout(button_layout)
-        edit_dialog.setLayout(edit_layout)
+        edit_layout.addStretch()
 
         def save_settings():
             new_username = username_entry.text().strip()
             new_password = password_entry.text().strip()
-            new_api = api_entry.text().strip()
+            new_api = {
+                "api_key": api_key_entry.text().strip(),
+                "api_secret": api_secret_entry.text().strip(),
+                "access_token": access_token_entry.text().strip(),
+                "access_token_secret": access_token_secret_entry.text().strip(),
+                "bearer_token": bearer_token_entry.text().strip(),
+                "client_id": client_id_entry.text().strip(),
+                "client_secret": client_secret_entry.text().strip()
+            }
             try:
                 new_post_interval = int(post_interval_entry.text().strip())
+                new_post_lower_variation = int(post_lower_variation_entry.text().strip())
+                new_post_upper_variation = int(post_upper_variation_entry.text().strip())
                 new_reply_interval = int(reply_interval_entry.text().strip())
-                if new_post_interval <= 0 or new_reply_interval <= 0:
-                    raise ValueError("Intervals must be positive.")
+                new_reply_lower_variation = int(reply_lower_variation_entry.text().strip())
+                new_reply_upper_variation = int(reply_upper_variation_entry.text().strip())
+                if any(x <= 0 for x in [new_post_interval, new_post_lower_variation, new_post_upper_variation,
+                                        new_reply_interval, new_reply_lower_variation, new_reply_upper_variation]):
+                    raise ValueError("Intervals and variations must be positive.")
             except ValueError as e:
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Invalid interval: {str(e)}")
+                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Invalid interval or variation: {str(e)}")
                 app.output_area.ensureCursorVisible()
-                QMessageBox.critical(edit_dialog, "Error", f"Invalid interval: {str(e)}")
+                QMessageBox.critical(edit_dialog, "Error", f"Invalid interval or variation: {str(e)}")
                 return
-            if not new_username or not new_api:
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Username and API key must be filled.")
+
+            if not new_username or not all(new_api.values()):
+                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Username and all API fields must be filled.")
                 app.output_area.ensureCursorVisible()
-                QMessageBox.warning(edit_dialog, "Warning", "Username and API key must be filled.")
+                QMessageBox.warning(edit_dialog, "Warning", "Username and all API fields must be filled.")
                 return
+
             try:
                 settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "settings.py")
                 with open(settings_path, "r") as f:
                     lines = f.readlines()
+
+                # Initialize variables to track the state
                 new_lines = []
+                in_api_block = False
+                skip_lines = False
+
+                # Prepare new values
+                new_username_line = f'TWITTER_USERNAME = "{new_username}"\n'
+                new_password_line = f'TWITTER_PASSWORD = "{new_password}"\n'
+                new_api_lines = ["TWITTER_API = {\n"]
+                for key, value in new_api.items():
+                    new_api_lines.append(f'    "{key}": "{value}",\n')
+                new_api_lines.append("}\n")
+                new_post_interval_line = f'AUTO_POST_INTERVAL_MINUTES = {new_post_interval}\n'
+                new_post_lower_variation_line = f'AUTO_POST_INTERVAL_LOWER_VARIATION = {new_post_lower_variation}  # -{new_post_lower_variation} minutes\n'
+                new_post_upper_variation_line = f'AUTO_POST_INTERVAL_UPPER_VARIATION = {new_post_upper_variation}  # +{new_post_upper_variation} minutes\n'
+                new_reply_interval_line = f'AUTO_REPLY_INTERVAL_MINUTES = {new_reply_interval}\n'
+                new_reply_lower_variation_line = f'AUTO_REPLY_INTERVAL_LOWER_VARIATION = {new_reply_lower_variation}  # -{new_reply_lower_variation} minutes\n'
+                new_reply_upper_variation_line = f'AUTO_REPLY_INTERVAL_UPPER_VARIATION = {new_reply_upper_variation}  # +{new_reply_upper_variation} minutes\n'
+
+                # Process each line
                 for line in lines:
-                    if line.strip().startswith("TWITTER_USERNAME"):
-                        new_lines.append(f'TWITTER_USERNAME = "{new_username}"\n')
-                    elif line.strip().startswith("TWITTER_PASSWORD"):
-                        new_lines.append(f'TWITTER_PASSWORD = "{new_password}"\n')
-                    elif line.strip().startswith("TWITTER_API"):
-                        new_lines.append(f'TWITTER_API = "{new_api}"\n')
-                    elif line.strip().startswith("AUTO_POST_INTERVAL_MINUTES"):
-                        new_lines.append(f'AUTO_POST_INTERVAL_MINUTES = {new_post_interval}\n')
-                    elif line.strip().startswith("AUTO_REPLY_INTERVAL_MINUTES"):
-                        new_lines.append(f'AUTO_REPLY_INTERVAL_MINUTES = {new_reply_interval}\n')
+                    stripped_line = line.strip()
+
+                    if stripped_line.startswith("TWITTER_USERNAME"):
+                        new_lines.append(new_username_line)
+                        continue
+                    elif stripped_line.startswith("TWITTER_PASSWORD"):
+                        new_lines.append(new_password_line)
+                        continue
+                    elif stripped_line.startswith("TWITTER_API"):
+                        new_lines.extend(new_api_lines)
+                        in_api_block = True
+                        skip_lines = True
+                        continue
+                    elif in_api_block and stripped_line == "}":
+                        in_api_block = False
+                        skip_lines = False
+                        continue
+                    elif stripped_line.startswith("AUTO_POST_INTERVAL_MINUTES"):
+                        new_lines.append(new_post_interval_line)
+                        continue
+                    elif stripped_line.startswith("AUTO_POST_INTERVAL_LOWER_VARIATION"):
+                        new_lines.append(new_post_lower_variation_line)
+                        continue
+                    elif stripped_line.startswith("AUTO_POST_INTERVAL_UPPER_VARIATION"):
+                        new_lines.append(new_post_upper_variation_line)
+                        continue
+                    elif stripped_line.startswith("AUTO_REPLY_INTERVAL_MINUTES"):
+                        new_lines.append(new_reply_interval_line)
+                        continue
+                    elif stripped_line.startswith("AUTO_REPLY_INTERVAL_LOWER_VARIATION"):
+                        new_lines.append(new_reply_lower_variation_line)
+                        continue
+                    elif stripped_line.startswith("AUTO_REPLY_INTERVAL_UPPER_VARIATION"):
+                        new_lines.append(new_reply_upper_variation_line)
+                        continue
+                    elif skip_lines:
+                        continue
                     else:
                         new_lines.append(line)
+
+                # Write the updated content back to settings.py
                 with open(settings_path, "w") as f:
                     f.writelines(new_lines)
+
+                # Reload the settings module
                 importlib.reload(settings)
+
                 app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Twitter settings updated successfully.")
                 app.output_area.ensureCursorVisible()
                 QMessageBox.information(edit_dialog, "Success", "Twitter settings updated successfully!")
                 edit_dialog.close()
                 settings_dialog.close()
             except Exception as e:
+                logger.error(f"Error updating Twitter settings: {str(e)}")
                 app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error updating Twitter settings: {str(e)}")
                 app.output_area.ensureCursorVisible()
-                QMessageBox.critical(edit_dialog, "Error", f"Error updating Twitter settings: {str(e)}")
+                QMessageBox.critical(edit_dialog, "Error", f"Error updating settings: {str(e)}")
 
         save_button.clicked.connect(save_settings)
         cancel_button.clicked.connect(edit_dialog.close)
+        edit_dialog.setLayout(edit_layout)
         edit_dialog.exec()
 
     edit_button = QPushButton("Edit")

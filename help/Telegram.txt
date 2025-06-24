@@ -1,0 +1,9 @@
+Telegram 
+
+Visit Bot Father on telegram @BotFather
+Setup the Ai agent Bot Name and Get it's token
+Once the bot token is inserted into settings the buttons are self explanatory 
+Add the agent to your group and give it admin priveledges
+Use Telegram Settings to Edit the Aliases that triggers it's responses to avoid overcrowding
+
+Default Names: Somi, Retard

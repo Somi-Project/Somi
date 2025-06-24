@@ -39,12 +39,11 @@ class RagWorker(QThread):
         self.rag = None
         self.running = True
         self.initialized = False
-        self.use_gpu = False
 
     def run(self):
         asyncio.set_event_loop(self.loop)
         try:
-            self.update_signal.emit("RAG worker started. Use buttons to ingest data or search.\n")
+            self.initialize_rag()
             self.loop.run_forever()
         except Exception as e:
             self.error_signal.emit(f"Failed to start RAG worker: {str(e)}")
@@ -52,18 +51,17 @@ class RagWorker(QThread):
     def initialize_rag(self):
         if not self.initialized:
             try:
-                self.rag = RAGHandler(use_gpu=self.use_gpu)
+                self.rag = RAGHandler()
                 self.initialized = True
                 if not self.rag.index or not self.rag.texts:
                     self.update_signal.emit("No RAG data available. Use the buttons below to ingest PDFs or websites.\n")
                 else:
-                    self.update_signal.emit(f"Loaded {len(self.rag.texts)} RAG entries on CPU. Enter a query to search.\n")
+                    self.update_signal.emit(f"Loaded {len(self.rag.texts)} RAG entries. Enter a query to search.\n")
             except Exception as e:
                 self.error_signal.emit(f"Failed to initialize RAGHandler: {str(e)}")
                 self.initialized = False
 
     def ingest_data(self, source_type, custom_urls=None):
-        self.initialize_rag()
         if not self.rag or not self.isRunning():
             self.error_signal.emit("RAGHandler is not initialized or running.")
             return
@@ -76,7 +74,7 @@ class RagWorker(QThread):
                         async with async_playwright() as p:
                             browser = await p.chromium.launch(headless=True)
                             page = await browser.new_page()
-                            for url in custom_urls:
+                            for url in custom_urls or []:
                                 try:
                                     await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                                     content = await page.content()
@@ -87,7 +85,7 @@ class RagWorker(QThread):
                             await browser.close()
                     self.rag._load_indices()
                     if self.rag.index and self.rag.texts:
-                        self.update_signal.emit(f"Successfully ingested {source_type} on CPU. {len(self.rag.texts)} entries loaded.\nEnter a query to search.\n")
+                        self.update_signal.emit(f"Successfully ingested {source_type}. {len(self.rag.texts)} entries loaded.\nEnter a query to search.\n")
                     else:
                         self.update_signal.emit(f"No data ingested from {source_type}. Check the source files.\n")
                 except Exception as e:
@@ -98,7 +96,6 @@ class RagWorker(QThread):
             self.error_signal.emit(f"Error scheduling ingestion: {str(e)}")
 
     def search_rag(self, query):
-        self.initialize_rag()
         if not self.rag or not self.isRunning():
             self.error_signal.emit("RAGHandler is not initialized or running.")
             return
@@ -115,7 +112,6 @@ class RagWorker(QThread):
             self.error_signal.emit(f"Error retrieving results: {str(e)}")
 
     def clear_studies(self):
-        self.initialize_rag()
         if not self.rag or not self.isRunning():
             self.error_signal.emit("RAGHandler is not initialized or running.")
             return
@@ -131,7 +127,7 @@ class RagWorker(QThread):
                 os.remove(text_file)
                 files_deleted = True
             if files_deleted:
-                self.rag = RAGHandler(use_gpu=self.use_gpu)
+                self.rag = RAGHandler()
                 self.initialized = True
                 self.update_signal.emit("RAG data cleared. Use the buttons above to ingest new data.\n")
                 self.update_signal.emit("Success")
@@ -245,8 +241,7 @@ def ai_chat(app):
 
     chat_worker = None
     typing_timer = QTimer()
-    typing_timer.setInterval(10)  # Very fast typing speed (10ms per character)
-    # typing_timer.setInterval(50)  # Uncomment to test with slower speed
+    typing_timer.setInterval(10)
     dots_timer = QTimer()
     dots_timer.setInterval(500)
     current_response = ""
@@ -262,10 +257,10 @@ def ai_chat(app):
             chat_area.insertPlainText(current_response[response_index])
             response_index += 1
             chat_area.ensureCursorVisible()
-            QApplication.processEvents()  # Force UI update
+            QApplication.processEvents()
         else:
             typing_timer.stop()
-            chat_area.append(current_response[response_index:] + "\n\n")  # Append remaining text
+            chat_area.append(current_response[response_index:] + "\n\n")
             response_index = 0
             current_response = ""
             logger.info("Finished typing response")
@@ -458,13 +453,18 @@ def study_material(app):
     rag_worker.update_signal.connect(lambda msg: [
         results_area.append(msg),
         results_area.ensureCursorVisible(),
-        search_button.setEnabled(bool("Loaded" in msg or "Success" in msg))
+        search_button.setEnabled(bool("Loaded" in msg or "Success" in msg)),
+        ingest_pdfs_button.setEnabled(True),
+        ingest_websites_button.setEnabled(True),
+        clear_studies_button.setEnabled(True)
     ])
     rag_worker.error_signal.connect(lambda msg: [
         results_area.append(f"Error: {msg}\n"),
         results_area.ensureCursorVisible(),
-        QMessageBox.critical(study_window, "Error", msg) if "Error" in msg else None,
-        study_window.reject() if "Failed" in msg else None
+        QMessageBox.critical(study_window, "Error", msg),
+        ingest_pdfs_button.setEnabled(True),
+        ingest_websites_button.setEnabled(True),
+        clear_studies_button.setEnabled(True)
     ])
     rag_worker.start()
 
@@ -508,6 +508,10 @@ def study_material(app):
             rag_worker.error_signal.emit(f"Error updating settings.py: {str(e)}")
 
     def ingest_websites():
+        ingest_pdfs_button.setEnabled(False)
+        ingest_websites_button.setEnabled(False)
+        search_button.setEnabled(False)
+        clear_studies_button.setEnabled(False)
         websites_window = QDialog(study_window)
         websites_window.setWindowTitle("Enter Websites to Ingest")
         websites_window.setGeometry(100, 100, 600, 600)
@@ -558,6 +562,10 @@ def study_material(app):
         if not rag_worker.isRunning():
             rag_worker.error_signal.emit("RAGHandler is not running.")
             return
+        ingest_pdfs_button.setEnabled(False)
+        ingest_websites_button.setEnabled(False)
+        search_button.setEnabled(False)
+        clear_studies_button.setEnabled(False)
         rag_worker.ingest_data(source_type)
 
     def search_rag():
@@ -568,12 +576,20 @@ def study_material(app):
         if not query:
             QMessageBox.warning(study_window, "Warning", "Please enter a query.")
             return
+        ingest_pdfs_button.setEnabled(False)
+        ingest_websites_button.setEnabled(False)
+        search_button.setEnabled(False)
+        clear_studies_button.setEnabled(False)
         rag_worker.search_rag(query)
 
     def clear_studies():
         if not rag_worker.isRunning():
             rag_worker.error_signal.emit("RAGHandler is not running.")
             return
+        ingest_pdfs_button.setEnabled(False)
+        ingest_websites_button.setEnabled(False)
+        search_button.setEnabled(False)
+        clear_studies_button.setEnabled(False)
         rag_worker.clear_studies()
 
     def quit_study():

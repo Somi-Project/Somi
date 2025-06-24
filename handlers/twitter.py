@@ -106,7 +106,6 @@ class TwitterHandler:
         self.authenticated = False
         self.repcache = self._load_repcache()
         self._setup_memory_storage()
-        # Initialize tweepy client for API fallback
         try:
             self.api_client = tweepy.Client(
                 bearer_token=TWITTER_API.get("bearer_token"),
@@ -198,6 +197,10 @@ class TwitterHandler:
     def _sanitize_text(self, text):
         return ''.join(char for char in text if ord(char) < 128)
 
+    def _clean_think_tags(self, text):
+        """Remove <think> tags and their contents from the text."""
+        return re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL).strip()
+
     def process_memory(self, input_text, output_text, user_id):
         if DISABLE_MEMORY_FOR_FINANCIAL:
             financial_keywords = ["price", "stock", "bitcoin", "crypto", "market", "dollar", "euro"]
@@ -287,7 +290,7 @@ Input: "{input_text}"
             results = []
             cursor = self.sqlite_cursor
             for idx, dist in zip(indices[0], distances[0]):
-                if idx == -1 or dist > 1.0:
+                if idx == -1 or dist > 0.8:  # Tighter threshold for relevance
                     continue
                 cursor.execute(
                     "SELECT content, memory_type FROM memories WHERE id = ? AND user_id = ?",
@@ -297,11 +300,11 @@ Input: "{input_text}"
                 if row:
                     content, mem_type = row
                     logger.info(f"Retrieved memory: {content}, distance: {dist}")
-                    if mem_type == "semantic":
-                        results.append(content)
+                    if mem_type == "semantic" and query.lower() in content.lower():
+                        results.append(f"Personal fact: {content}")
                     elif mem_type == "episodic":
-                        results.append(f"Previous interaction: {content}")
-            return "\n".join(results) if results else None
+                        results.append(f"Past interaction: {content}")
+            return "\n".join(results[:2]) if results else None  # Limit to 2 memories
         except Exception as e:
             logger.error(f"Error retrieving memory: {e}")
             return None
@@ -311,23 +314,39 @@ Input: "{input_text}"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
         inhibition = random.choice(self.inhibitions) if self.inhibitions else "respond naturally"
         return (
-            f"You are {self.display_name}, a {behavior} {self.description} on Twitter.\n"
+            f"You are a {self.description} on Twitter, expressing thoughts as {self.display_name} would. "
+            f"Your personality is {behavior}, with traits: {', '.join(self.behaviors)}.\n"
             f"Physicality: {physicality}\n"
             f"Inhibition: {inhibition}\n"
-            f"Use stored memories to personalize responses when relevant."
+            f"Respond like a human sharing casual, authentic thoughts or replies, using memories for personalization if relevant.\n"
+            f"Exclude any reasoning, <thinking> tags, or formal prefixes (e.g., 'think', 'Okay')."
         )
 
     async def generate_tweet(self):
         system_prompt = self.generate_system_prompt()
-        hobby = random.choice(self.hobbies) if self.hobbies else "no hobby"
+        hobby = random.choice(self.hobbies) if self.hobbies else "life"
         user_id = "twitter_user"
         memory_context = self.retrieve_memory(hobby, user_id)
         current_time = self.time_handler.get_system_date_time()
+        thought_starters = {
+            "empathetic": ["Feeling like...", "Thinking of...", "Just imagining..."],
+            "playful": ["Just wondering...", "Why does everything...", "Is it just me or..."],
+            "analytical": ["Noticed that...", "Been crunching...", "Something about..."],
+            "neutral": ["Just thinking...", "Random thought...", "Today’s vibe is..."]
+        }
+        starter = random.choice(thought_starters.get(self.behaviors[0], ["Just thinking..."]))
         user_prompt = (
-            f"Generate a tweet about: {hobby}. Use memories: {memory_context or 'none'}.\n"
-            f"Current time: {current_time}.\n"
-            f"Keep it under 270 characters, conversational, reflecting your personality.\n"
-            f"Do NOT use emojis, hashtags, or mentions."
+            f"You're {self.display_name}, a {self.description} sharing a casual thought on Twitter.\n"
+            f"Reflect your personality ({random.choice(self.behaviors)}) and draw inspiration from "
+            f"your hobbies ({', '.join(self.hobbies)}) or experiences ({', '.join(self.experience)}).\n"
+            f"Current time: {current_time}. Memories: {memory_context or 'none'}.\n"
+            f"Task: Write a tweet (280 chars max) as if you're musing about a hobby, experience, or random thought, "
+            f"in a natural, human-like tone. Start with a phrase like '{starter}'.\n"
+            f"Instructions:\n"
+            f"- Output ONLY the tweet text.\n"
+            f"- Exclude your name, reasoning, <thinking> tags, or prefixes like 'think', 'Okay', 'Let me'.\n"
+            f"- Avoid emojis, hashtags, or mentions.\n"
+            f"- If stuck, return 'Can’t think of anything to tweet right now.'"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -338,25 +357,46 @@ Input: "{input_text}"
             if rag_context:
                 context_text = "\n".join(f"Source: {item['source']}\nContent: {item['content'][:200]}..." for item in rag_context)
                 messages.append({"role": "system", "content": f"RAG Context:\n{context_text}"})
-        max_length = 270
+        max_length = 280
         attempts = 0
         while attempts < 3:
-            response = ollama.chat(
-                model=self.model,
-                messages=messages,
-                options={"temperature": self.temperature, "max_tokens": 100}
-            )
-            content = response.get("message", {}).get("content", "").strip()
-            content = self._clean_response(content, "")
-            if content and len(content) <= max_length:
-                return content
-            if not content:
-                content = "Can’t think of a tweet—my coffee’s gone cold!"
-            logger.warning(f"Tweet length: {len(content)}. Retrying...")
-            attempts += 1
-        return content[:max_length] if content else "Tweet fail—blame the Wi-Fi!"
+            try:
+                response = ollama.chat(
+                    model=self.model,
+                    messages=messages,
+                    options={"temperature": self.temperature, "max_tokens": 100}
+                )
+                content = response.get("message", {}).get("content", "").strip()
+                content = self._clean_think_tags(content)
+                content = re.sub(
+                    r'^(?:think\s*)+|(?:Okay\s*)|(?:Let\s*me\s*)|(?:I\'m\s*thinking\s*)|(?:Generating\s*)|(?:Considering\s*)|(?:Analyzing\s*)|^' + re.escape(self.display_name) + r'\s*',
+                    '', content, flags=re.IGNORECASE | re.DOTALL
+                ).strip()
+                content = self._clean_response(content, "")
+                if content and len(content) <= max_length:
+                    return content
+                logger.warning(f"Tweet length: {len(content)}. Retrying...")
+                attempts += 1
+            except Exception as e:
+                logger.error(f"Error generating tweet (attempt {attempts + 1}): {str(e)}")
+                attempts += 1
+        fallback_tweets = {
+            "empathetic": "My mind’s wandering today. I’ll share a thought soon.",
+            "playful": "Brain’s on a playful break. Back with a quip in a bit!",
+            "analytical": "Data’s not sparking ideas yet. I’ll tweet soon.",
+            "neutral": "Can’t think of anything to tweet right now."
+        }
+        return fallback_tweets.get(self.behaviors[0], "Can’t think of anything to tweet right now.")
 
     async def generate_reply(self, tweet_text, username, user_id):
+        def detect_tone(tweet_text):
+            positive_keywords = ["great", "awesome", "love", "happy"]
+            negative_keywords = ["sad", "bad", "hate", "terrible"]
+            if any(word in tweet_text.lower() for word in positive_keywords):
+                return "positive"
+            if any(word in tweet_text.lower() for word in negative_keywords):
+                return "negative"
+            return "neutral"
         system_prompt = self.generate_system_prompt()
         current_time = self.time_handler.get_system_date_time()
         memory_context = self.retrieve_memory(tweet_text, user_id)
@@ -396,23 +436,24 @@ Input: "{input_text}"
         history_text = ""
         if thread_history:
             history_text = "\nThread history:\n" + "\n".join(
-                f"@{msg['user']}: {msg['text']}\nBot: {msg['reply']}"
+                f"@{msg['user']}: {msg['text']}\nReply: {msg['reply']}"
                 for msg in thread_history[-3:]
             )
+        tone = detect_tone(tweet_text)
         user_prompt = (
-            f"You are {self.display_name}, a {self.description} on Twitter.\n"
-            f"Current time: {current_time}.\n"
-            f"Reply to this tweet from @{username}: '{tweet_text}'.\n"
-            f"Infer the tone (positive, negative, neutral) and respond appropriately in under 270 characters.\n"
-            f"Use memories: {memory_context or 'none'}.\n"
-            f"Web search results: {formatted_results if should_search else 'Not required. Use internal knowledge.'}\n"
-            f"{history_text}\n"
+            f"You're {self.display_name}, a {self.description} on Twitter, replying to @{username}'s tweet: '{tweet_text}'.\n"
+            f"Match the tweet's tone ({tone}) and respond like a friend would, reflecting your personality ({random.choice(self.behaviors)}).\n"
+            f"Current time: {current_time}. Memories: {memory_context or 'none'}.\n"
+            f"Web results: {formatted_results if should_search else 'Use your knowledge.'}\n"
+            f"Thread history: {history_text or 'none'}\n"
+            f"Task: Write a reply (280 chars max) that feels natural and conversational.\n"
             f"Instructions:\n"
-            f"- Keep it conversational, reflecting your personality.\n"
-            f"- For volatile data (prices, news, weather), ONLY use web search results.\n"
-            f"- If the tweet is a statement about a past event, acknowledge it and store as a memory.\n"
-            f"- Do NOT use emojis, hashtags, or mentions.\n"
-            f"- Ensure the response ends with a complete thought."
+            f"- Output ONLY the reply text.\n"
+            f"- Exclude your name, reasoning, <thinking> tags, or prefixes like 'think', 'Okay', 'Let me'.\n"
+            f"- Avoid emojis, hashtags, or mentions.\n"
+            f"- For volatile data (prices, news, weather), use web results only.\n"
+            f"- Acknowledge past events and store as memories if relevant.\n"
+            f"- If stuck, return 'Not sure what to say to that one.'"
         )
         messages = [
             {"role": "system", "content": system_prompt},
@@ -424,7 +465,7 @@ Input: "{input_text}"
                 context_text = "\n".join(f"Source: {item['source']}\nContent: {item['content'][:200]}..." for item in rag_context)
                 messages.append({"role": "system", "content": f"RAG Context:\n{context_text}"})
         attempts = 0
-        max_length = 270
+        max_length = 280
         while attempts < 3:
             response = ollama.chat(
                 model=self.model,
@@ -432,6 +473,11 @@ Input: "{input_text}"
                 options={"temperature": 0.0 if should_search else self.temperature, "max_tokens": 100}
             )
             content = response.get("message", {}).get("content", "").strip()
+            content = self._clean_think_tags(content)
+            content = re.sub(
+                r'^(?:think\s*)+|(?:Okay\s*)|(?:Let\s*me\s*)|(?:I\'m\s*thinking\s*)|(?:Generating\s*)|(?:Considering\s*)|(?:Analyzing\s*)|^' + re.escape(self.display_name) + r'\s*',
+                '', content, flags=re.IGNORECASE | re.DOTALL
+            ).strip()
             content = self._clean_response(content, username)
             if content and len(content) <= max_length:
                 if should_search:
@@ -453,19 +499,29 @@ Input: "{input_text}"
                                 break
                 return content
             if not content:
-                content = f"Sorry, {self.display_name} is stumped! Let’s try again."
+                content = "Not sure what to say to that one."
             logger.warning(f"Reply length: {len(content)}. Retrying...")
             attempts += 1
-        return content[:max_length] if content else f"Oops, {self.display_name} dropped the ball!"
+        fallback_replies = {
+            "empathetic": "You’ve got me thinking! I’ll reply with something soon.",
+            "playful": "That one’s got me stumped! I’ll come back with a quip.",
+            "analytical": "Need to crunch that one a bit more. Back soon.",
+            "neutral": "Not sure what to say to that one."
+        }
+        return content[:max_length] if content else fallback_replies.get(self.behaviors[0], "Not sure what to say to that one.")
 
     async def analyze_image(self, image_path, caption, user_id):
         system_prompt = self.generate_system_prompt()
         memory_context = self.retrieve_memory(caption, user_id)
         prompt = (
+            f"You're {self.display_name}, a {self.description} on Twitter.\n"
             f"You’ve received an image with caption: '{caption}'.\n"
             f"Stored memories: {memory_context or 'none'}.\n"
-            f"Analyze the image and reply in a conversational tone, under 270 characters.\n"
-            f"Do NOT use emojis, hashtags, or mentions."
+            f"Analyze the image and reply in a conversational tone under 280 characters.\n"
+            f"Instructions:\n"
+            f"- Output ONLY the reply text. Do NOT include your name ({self.display_name}), any reasoning, explanations, <thinking> tags, or prefixes like 'think', 'Okay', or 'Let me'.\n"
+            f"- Do NOT use emojis, hashtags, or mentions.\n"
+            f"- If unable to analyze, return 'Failed to analyze image.'"
         )
         try:
             with open(image_path, "rb") as img_file:
@@ -475,17 +531,22 @@ Input: "{input_text}"
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": prompt, "images": [img_file.read()]}
                     ],
-                    options={"temperature": self.temperature}
+                    options={"temperature": 0.0}
                 )
             content = response.get("message", {}).get("content", "").strip()
+            content = self._clean_think_tags(content)
+            content = re.sub(
+                r'^(?:think\s*)+|(?:Okay\s*)|(?:Let\s*me\s*)|(?:I\'m\s*thinking\s*)|(?:Generating\s*)|(?:Considering\s*)|(?:Analyzing\s*)|^' + re.escape(self.display_name) + r'\s*',
+                '', content, flags=re.IGNORECASE | re.DOTALL
+            ).strip()
             content = self._clean_response(content, "")
-            if content and len(content) <= 270:
+            if content and len(content) <= 280:
                 self.store_memory(f"Image with caption: {caption}\nReply: {content}", user_id, "episodic")
                 return content
-            return content[:270] if content else "Can’t analyze the pic—my lenses are foggy!"
+            return content[:280] if content else "Failed to analyze image."
         except Exception as e:
             logger.error(f"Error analyzing image: {e}")
-            return "Oops, image analysis failed—try another pic!"
+            return "Failed to analyze image."
 
     async def initialize(self):
         try:
@@ -512,7 +573,7 @@ Input: "{input_text}"
                 await self.page.goto("https://x.com", timeout=60000)
                 with open(self.cookie_file, "r") as f:
                     cookies = json.load(f)
-                    await self.page.context.add_cookies(cookies)
+                    await self.context.add_cookies(cookies)
                 await self.page.goto("https://x.com", timeout=60000)
                 await asyncio.sleep(2)
                 if "login" in self.page.url.lower():
@@ -521,7 +582,7 @@ Input: "{input_text}"
                 logger.info("Cookies loaded into Playwright.")
                 break
             except Exception as e:
-                logger.error("Error loading cookies (attempt %d): %s", attempt + 1, e)
+                logger.error(f"Error loading cookies (attempt {attempt + 1}): {str(e)}")
                 if attempt == max_retries - 1:
                     await self._login_and_save_cookies()
                     break
@@ -538,14 +599,14 @@ Input: "{input_text}"
                 await self.page.wait_for_selector("input[name='password']", timeout=40000)
                 await self._type_slowly(self.page.locator("input[name='password']"), TWITTER_PASSWORD + "\n")
                 await self.page.wait_for_url(lambda url: "login" not in url.lower(), timeout=15000)
-                cookies = await self.page.context.cookies()
+                cookies = await self.context.cookies()
                 with open(self.cookie_file, 'w') as f:
                     json.dump(cookies, f)
                 self.authenticated = True
                 logger.info("Logged in and cookies saved.")
                 break
             except Exception as e:
-                logger.error("Login failed (attempt %d): %s", attempt + 1, e)
+                logger.error(f"Login failed (attempt {attempt + 1}): {str(e)}")
                 if attempt == max_retries - 1:
                     raise
                 await asyncio.sleep(5)
@@ -592,34 +653,50 @@ Input: "{input_text}"
             try:
                 element = await self.page.query_selector(selector)
                 if element:
-                    logger.warning(f"Popup detected: {await element.inner_text()[:50]}...")
+                    try:
+                        popup_text = await element.inner_text()
+                        logger.warning(f"Popup detected: {popup_text[:50]}...")
+                    except Exception as e:
+                        logger.warning(f"Failed to get popup text: {e}")
+                        popup_text = "Unknown popup"
                     for dismiss_selector in dismiss_button_selectors:
                         try:
                             button = await self.page.query_selector(dismiss_selector)
                             if button:
-                                await self.page.evaluate("element => element.click()", button)
+                                await button.click()
                                 logger.info(f"Dismissed popup with selector: {dismiss_selector}")
                                 await asyncio.sleep(2)
                                 return True
                         except Exception as e:
-                            logger.warning(f"Failed to dismiss with {dismiss_selector}: {str(e)}")
+                            logger.warning(f"Failed to dismiss with {dismiss_selector}: {e}")
                     logger.error("Failed to dismiss popup automatically. Refreshing page.")
                     await self._refresh_page()
                     return True
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Selector {selector} not found: {e}")
                 continue
         return False
 
     def _clean_response(self, response, username):
         response = response.strip()
-        response = re.sub(r'@\w+\s*', '', response)
+        # Remove mentions except the target username
+        response = re.sub(r'@(?!' + re.escape(username) + r')\w+\s*', '', response)
+        # Remove hashtags
+        response = re.sub(r'#\w+\s*', '', response)
+        # Remove emojis
         response = re.sub(
             r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF\U0001F680-\U0001F6FF\U0001F700-\U0001F77F\U0001F780-\U0001F7FF\U0001F800-\U0001F8FF\U0001F900-\U0001F9FF\U0001FA00-\U0001FA6F\U0001FA70-\U0001FAFF\U00002702-\U000027B0\U000024C2-\U0001F251]', 
             '', response
         )
-        response = re.sub(r'#\w+\s*', '', response)
-        response = re.sub(r'[^a-zA-Z0-9\s.,\'-]', '', response)
+        # Preserve common punctuation
+        response = re.sub(r'[^\w\s.,!?;\-\']', '', response)
+        # Normalize whitespace
         response = ' '.join(response.split())
+        # Remove agent name or prefixes
+        response = re.sub(
+            r'^(?:think\s*)+|(?:Okay\s*)|(?:Let\s*me\s*)|(?:I\'m\s*thinking\s*)|(?:Generating\s*)|(?:Considering\s*)|(?:Analyzing\s*)|^' + re.escape(self.display_name) + r'\s*',
+            '', response, flags=re.IGNORECASE
+        ).strip()
         return response
 
     def _get_randomized_interval(self, base_interval, lower_variation, upper_variation):
@@ -695,7 +772,7 @@ Input: "{input_text}"
             await asyncio.sleep(1)
             await self._check_for_prompts()
             post_button = await self.page.wait_for_selector(
-                "//button[@data-testid='tweetButtonInline']", timeout=15000
+                "button[data-testid='tweetButtonInline']", timeout=15000
             )
             for attempt in range(2):
                 try:
@@ -724,11 +801,11 @@ Input: "{input_text}"
                 await self._type_slowly(self.page.locator("div[role='textbox']"), message)
                 await asyncio.sleep(1)
                 post_button = await self.page.wait_for_selector(
-                    "//button[@data-testid='tweetButtonInline']", timeout=15000
+                    "button[data-testid='tweetButtonInline']", timeout=15000
                 )
                 for attempt in range(2):
                     try:
-                        await post_button.click(timeout=5000)
+                        post_button.click(timeout=5000)
                         break
                     except Exception as e:
                         logger.warning(f"Native click failed (retry attempt {attempt + 1}): {str(e)}")
@@ -849,8 +926,8 @@ Input: "{input_text}"
                         reply_message = await self.analyze_image(image_path, caption, user_id)
                     else:
                         reply_message = await self.generate_reply(text, username, user_id)
-                    if len(reply_message) > 270:
-                        reply_message = reply_message[:270].rsplit(' ', 1)[0]
+                    if len(reply_message) > 280:
+                        reply_message = reply_message[:280].rsplit(' ', 1)[0]
                     logger.info(f"Generated reply: {reply_message} (length: {len(reply_message)})")
 
                     if not api_mode:
@@ -878,7 +955,7 @@ Input: "{input_text}"
                                 self.store_memory(mem_content, user_id, mem_type)
                             await asyncio.sleep(2)
                             await self._check_for_prompts()
-                            reply_button = await self.page.wait_for_selector("//button[@data-testid='tweetButtonInline']", timeout=15000)
+                            reply_button = await self.page.wait_for_selector("button[data-testid='tweetButtonInline']", timeout=15000)
                             try:
                                 await reply_button.click()
                             except Exception as e:
@@ -985,8 +1062,8 @@ Input: "{input_text}"
             while True:
                 if post_limit > 0:
                     message = await self.generate_tweet()
-                    if len(message) > 270:
-                        message = message[:270].rsplit(' ', 1)[0]
+                    if len(message) > 280:
+                        message = message[:280].rsplit(' ', 1)[0]
                     result = await self.post(message, cleanup=False)
                     logger.info(f"Auto-post result: {result}")
                     print(result)

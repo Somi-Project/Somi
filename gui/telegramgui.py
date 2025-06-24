@@ -283,32 +283,48 @@ def telegram_settings(app):
                 with open(settings_path, "r") as f:
                     lines = f.readlines()
 
+                # Initialize variables to track the state
                 new_lines = []
-                in_aliases = False
-                for line in lines:
-                    if line.strip().startswith("TELEGRAM_BOT_TOKEN"):
-                        new_lines.append(f'TELEGRAM_BOT_TOKEN = "{new_token}"\n')
-                        continue
-                    if line.strip().startswith("TELEGRAM_BOT_USERNAME"):
-                        new_lines.append(f'TELEGRAM_BOT_USERNAME = "{new_username}"\n')
-                        continue
-                    if line.strip().startswith("TELEGRAM_AGENT_ALIASES"):
-                        in_aliases = True
-                        new_lines.append("TELEGRAM_AGENT_ALIASES = [\n")
-                        for alias in new_aliases:
-                            new_lines.append(f'    "{alias}",\n')
-                        new_lines[-1] = new_lines[-1].rstrip(",\n") + "\n"
-                        new_lines.append("]\n")
-                        continue
-                    if in_aliases:
-                        if line.strip() == "]":
-                            in_aliases = False
-                        continue
-                    new_lines.append(line)
+                in_aliases_block = False
+                skip_lines = False
 
+                # Prepare new values
+                new_token_line = f'TELEGRAM_BOT_TOKEN = "{new_token}"\n'
+                new_username_line = f'TELEGRAM_BOT_USERNAME = "{new_username}"\n'
+                new_aliases_lines = ["TELEGRAM_AGENT_ALIASES = [\n"]
+                for alias in new_aliases:
+                    new_aliases_lines.append(f'    "{alias}",\n')
+                new_aliases_lines.append("]\n")
+
+                # Process each line
+                for line in lines:
+                    stripped_line = line.strip()
+
+                    if stripped_line.startswith("TELEGRAM_BOT_TOKEN"):
+                        new_lines.append(new_token_line)
+                        continue
+                    elif stripped_line.startswith("TELEGRAM_BOT_USERNAME"):
+                        new_lines.append(new_username_line)
+                        continue
+                    elif stripped_line.startswith("TELEGRAM_AGENT_ALIASES"):
+                        new_lines.extend(new_aliases_lines)
+                        in_aliases_block = True
+                        skip_lines = True
+                        continue
+                    elif in_aliases_block and stripped_line == "]":
+                        in_aliases_block = False
+                        skip_lines = False
+                        continue
+                    elif skip_lines:
+                        continue
+                    else:
+                        new_lines.append(line)
+
+                # Write the updated content back to settings.py
                 with open(settings_path, "w") as f:
                     f.writelines(new_lines)
 
+                # Reload the settings module
                 importlib.reload(settings)
 
                 app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Telegram settings updated successfully.")

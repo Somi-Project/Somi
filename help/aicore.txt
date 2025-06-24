@@ -1,0 +1,21 @@
+Ai core readme 
+
+Ai chat
+-opens window
+-can change agent personality and name to one that exist
+-choose whether to use studies (Retrieval Augmentation Generation) if they exist
+-press the start button to begin chatting
+-if you wish to change the agent then select the new name and click apply agent
+
+Ai Model Start 
+-opens a subprocess for Ollama to run the default model as a server
+-reduces TTRG (time to response generation)
+
+Study
+-opens a study material window that allows you to study 
+-ingest pdfs placed in the projects PDF folder
+-ingest website links
+-clear the studies to remove unwanted data
+-data is place into FAISS for nearest neighbor use during response generation
+-bitcoin whitepaper inserted by default
+
