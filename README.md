@@ -32,9 +32,9 @@ Before running Somi, ensure you have the following installed:
    git clone https://github.com/Somi-Project/Somi.git
    cd path/Somi
    pip install -r requirements.txt
-   Ollama pull phi4-mini
+   Ollama pull phi4-mini-reasoning:3.8b
    Ollama pull codegemma:2b
-   Ollama pull gemma3:4b (optional for vision analysis model)
+   Ollama pull qwen2.5vl:3b (optional for vision analysis model)
    ```
 
 ## Edit Login
@@ -55,7 +55,16 @@ folder: config/personalC.json
 
 default name is somi with defining parameters - edit as you see fit
 
-## Agent Commands 
+## GUI ease of use
+Start the gui to make things easier
+```bash
+  python somicontroller.py
+```
+known issues may include repopulation of settings field when savings settings
+no image upload for chat cli as yet only image analysis on telegram so far
+delay in qThread by 3 seconds so for ai chat and RAG please wait 3 seconds for initialization
+
+## Direct Agent Commands 
 Begin by typing python somi.py <command> --name <agent name>
 e.g. python somi.py <command> --name somi
 ```bash
