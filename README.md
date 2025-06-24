@@ -82,7 +82,6 @@ Independant commands
 Begin by typing python insertscriptname.py
 ```base
   speech       Audio I/O
-  vba          Gui
   Persona      Personality editor
 ```
 
