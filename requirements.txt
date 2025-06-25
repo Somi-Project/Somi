@@ -32,4 +32,4 @@ pyttsx3==2.90
 huggingface-hub==0.20.0
 ffmpeg-python==0.2.0
 pyttsx3==2.98
-Torchvision
+torchvision==0.19.1
