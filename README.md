@@ -37,7 +37,7 @@ Before running Somi, ensure you have the following installed:
    Ollama pull qwen2.5vl:3b (optional for vision analysis model)
    ```
  
-   For Gpu use and faster response times install cuda for your gou via https://developer.nvidia.com/cuda-downloads
+   For Gpu use and faster response times install cuda for your gpu via https://developer.nvidia.com/cuda-downloads
    
 Please note switch pytorch and torchvision to gpu modes with cuda enabled. Replace cu121 with your relevant cuda version in the command example below
 ```bash
