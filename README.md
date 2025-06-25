@@ -100,7 +100,7 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
  --clearstudies deletes the above db
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
+
+ ##Other add-ons
+ Type python somi.py - - help to see the available lists if interested 
 ## Fin
- Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
-## Fin
-I've added comments throughout the code to highlight relevant parts for now 
