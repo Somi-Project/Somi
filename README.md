@@ -46,27 +46,7 @@ pip install torch==2.4.1+cu121 torchvision==0.19.1+cu121 --index-url https://dow
 
 All features are designed for **self-hosting** — no cloud, no subscriptions, full control.
 
-You can apply a manual approach as below or skip to GUI section for easier interface
-
-Enjoy your sovereign A.I. companion — built by you, for you.
-## Edit Login
-folder: config/settings.py
-```bash
-TWITTER_USERNAME = "your_twitter_username"
-TWITTER_PASSWORD = "your_twitter_password"
-TWITTER developer inserts  = "your developer apis which are MANY - can get for free tier on developer X"
-TWITTER TIME INTERVALS = Time you wish to post materials with bound limits for organic activity
-TELEGRAM BOT TOKEN = "your bot token from telegram bot father"
-TELEGRAM USERNAME = "your set username for the bot"
-DEFAULT MODEL = "Ollama model you wish to use - defaulted to a low requirement model"
-other settings self explanatory 
-```
-
-## Edit Personality Construct
-folder: config/personalC.json
-
-default name is somi with defining parameters - edit as you see fit
-
+You can apply a manual approach as below or use the GUI section for easier interface - both are supplied below
 ## GUI ease of use
 Start the gui to make things easier
 ```bash
@@ -76,41 +56,6 @@ known issues may include repopulation of settings field when savings settings
 no image upload for chat cli as yet only image analysis on telegram so far
 delay in qThread by 3 seconds so for ai chat and RAG please wait 3 seconds for initialization
 
-## Direct Agent Commands 
-Begin by typing python somi.py <command> --name <agent name>
-e.g. python somi.py <command> --name somi
-```bash
-  aiautopost   Generate and post a tweet initially, then every interval +/-bound minutes...
-  aiautoreply  Auto scrape mentions and reply every 4 hours
-  aichat       Chat continuously with the agent
-  aipost       Generate and post a tweet once by personality
-  aireply      Fetch latest mentions and reply = can use --limit added parameter
-  devpost      Post a message to Twitter as a developer via agent
-  gencookies   Generates Twitter cookies 
-  telegram     Starts the Telegram bot
-```
-
-Independant commands
-Begin by typing python insertscriptname.py
-```base
-  speech       Audio I/O
-  Persona      Personality editor
-```
-
-## Retrieval Augmentation thinking 
-Edit setting.py to reflect intended ingestion websites then use the following commands to ingest into a FAISS system
-If you want to add PDFS simply put the intended pdfs in the pdf folder of root directory then:
-```bash
- --study pdfs
- --study websites
- --clearstudies deletes the above db
- ```
- Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
-
- ##Other add-ons
- Type python somi.py - - help to see the available lists if interested 
-
- ## Gui Guide
 Start by running the command to initiate the gui 
 ```bash
 python somicontroller.py
@@ -135,7 +80,7 @@ Powerful Retrieval-Augmented Generation (RAG) tool:
 - Data stored in FAISS vector database for fast, accurate context retrieval
 - Bitcoin Whitepaper included by default
 
-### Social Media Agent
+### Social Media Agent Button
 Central hub for automated posting and interaction:
 - Controls both **Twitter** and **Telegram** bots
 - All help documentation available inside (and below)
@@ -176,6 +121,60 @@ Customize core A.I. behavior:
 - Adjust temperature (creativity vs accuracy)
 - Set vision model for image understanding
 
----
 
-## Fin
+
+Enjoy your sovereign A.I. companion — built by you, for you.
+## Edit Login
+folder: config/settings.py
+```bash
+TWITTER_USERNAME = "your_twitter_username"
+TWITTER_PASSWORD = "your_twitter_password"
+TWITTER developer inserts  = "your developer apis which are MANY - can get for free tier on developer X"
+TWITTER TIME INTERVALS = Time you wish to post materials with bound limits for organic activity
+TELEGRAM BOT TOKEN = "your bot token from telegram bot father"
+TELEGRAM USERNAME = "your set username for the bot"
+DEFAULT MODEL = "Ollama model you wish to use - defaulted to a low requirement model"
+other settings self explanatory 
+```
+
+## Edit Personality Construct
+folder: config/personalC.json
+
+default name is somi with defining parameters - edit as you see fit
+
+## Direct Agent Commands 
+Begin by typing python somi.py <command> --name <agent name>
+e.g. python somi.py <command> --name somi
+```bash
+  aiautopost   Generate and post a tweet initially, then every interval +/-bound minutes...
+  aiautoreply  Auto scrape mentions and reply every 4 hours
+  aichat       Chat continuously with the agent
+  aipost       Generate and post a tweet once by personality
+  aireply      Fetch latest mentions and reply = can use --limit added parameter
+  devpost      Post a message to Twitter as a developer via agent
+  gencookies   Generates Twitter cookies 
+  telegram     Starts the Telegram bot
+```
+
+Independant commands
+Begin by typing python insertscriptname.py
+```base
+  speech       Audio I/O
+  Persona      Personality editor
+```
+
+## Retrieval Augmentation thinking 
+Edit setting.py to reflect intended ingestion websites then use the following commands to ingest into a FAISS system
+If you want to add PDFS simply put the intended pdfs in the pdf folder of root directory then:
+```bash
+ --study pdfs
+ --study websites
+ --clearstudies deletes the above db
+ ```
+ Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
+
+ ##Other add-ons
+ Type python somi.py - - help to see the available lists if interested 
+
+ ## Fin
+
