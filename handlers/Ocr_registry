@@ -1,0 +1,169 @@
+# handlers/ocr_registry.py — FINAL WITH PHONE NUMBER (Dec 2025)
+
+import base64
+import requests
+import os
+import pandas as pd
+from datetime import datetime
+import re
+import tempfile
+
+MODEL_NAME = "qwen2.5vl:7b"
+
+def _call_qwen(image_path: str) -> str:
+    try:
+        with open(image_path, "rb") as f:
+            image_b64 = base64.b64encode(f.read()).decode('utf-8')
+
+        prompt = """Extract ALL patients from the medical registry form.
+
+IMPORTANT RULES:
+- Patient IDs always end with N (e.g. A-001N, X99N)
+- Keep full medication details with dosage/route/frequency
+- Extract Phone Number exactly as written (mobile, landline, with or without spaces/dashes)
+
+EXAMPLE OF PERFECT OUTPUT (for reference only — DO NOT copy this data):
+PATIENT 1
+Name: Sarah Johnson
+Date of Birth: 12/06/1992
+Phone Number: 474-0184
+ID: S-019N
+Age at Diagnosis: 8
+Seizure Type: Generalized tonic-clonic
+CT: Normal
+MRI: Normal
+EEG: Generalized spike-wave
+Previous Surgeries: None
+Current Meds: Sodium Valproate 500mg bd, Clobazam 10mg ON
+Complications: None
+
+NOW EXTRACT THE REAL PATIENTS USING THIS CLEAN FORMAT:
+
+PATIENT 1
+Name: 
+Date of Birth: 
+Phone Number: 
+ID: 
+Age at Diagnosis: 
+Seizure Type: 
+CT: 
+MRI: 
+EEG: 
+Previous Surgeries: 
+Current Meds: 
+Complications: 
+
+PATIENT 2
+Name: 
+Date of Birth: 
+Phone Number: 
+ID: 
+Age at Diagnosis: 
+Seizure Type: 
+CT: 
+MRI: 
+EEG: 
+Previous Surgeries: 
+Current Meds: 
+Complications: 
+
+Continue until all patients extracted. One blank line between patients.
+Use "—" only for truly missing fields.
+NO extra text, NO thinking, NO markdown."""
+
+        payload = {
+            "model": MODEL_NAME,
+            "messages": [{"role": "user", "content": prompt, "images": [image_b64]}],
+            "stream": False,
+            "options": {
+                "temperature": 0.0,
+                "top_p": 1.0,
+                "top_k": 1,
+                "num_ctx": 8192,
+                "num_predict": 4096,
+                "seed": 42
+            }
+        }
+
+        print(f"[OCR] Sending — Phone Number + N-ID + full meds")
+        r = requests.post("http://127.0.0.1:11434/api/chat", json=payload, timeout=600)
+        r.raise_for_status()
+        raw = r.json()["message"]["content"].strip()
+
+        result = raw if raw and len(raw) > 50 else "No patient data detected."
+        print(f"[OCR] SUCCESS — {len(result)} chars (with phone)")
+        return result
+
+    except Exception as e:
+        print(f"OCR Error: {e}")
+        return f"OCR Error: {e}\n\nTry again with clearer photo."
+
+
+async def send_excel_version(raw_text: str, update):
+    if not raw_text or "PATIENT" not in raw_text:
+        return
+
+    patients = []
+    for block in re.finditer(r'PATIENT \d+\n(.*?)(?=\n\nPATIENT \d+|\Z)', raw_text, re.DOTALL):
+        p = {}
+        for line in block.group(1).split('\n'):
+            if ':' not in line: continue
+            key, val = line.split(':', 1)
+            key = key.strip()
+            val = val.strip().replace('—', '').strip()
+
+            if key == "Name": p["Name"] = val
+            if key == "Date of Birth": p["Date of Birth"] = val
+            if key == "Phone Number": p["Phone Number"] = val
+            if key == "ID":
+                clean_id = val.rstrip('Nn')
+                p["ID"] = clean_id if clean_id else val
+            if key == "Age at Diagnosis": p["Age at Diagnosis"] = val
+            if key == "Seizure Type": p["Seizure Type"] = val
+            if key == "CT": p["CT"] = val
+            if key == "MRI": p["MRI"] = val
+            if key == "EEG": p["EEG"] = val
+            if key == "Previous Surgeries":
+                p["Previous Surgeries"] = val.replace(',', ' | ')
+            if key == "Current Meds":
+                p["Current Meds"] = val.replace(', ', ' | ')
+            if key == "Complications": p["Complications"] = val
+        if p: patients.append(p)
+
+    if not patients: return
+
+    df = pd.DataFrame(patients)
+    cols = ["Name", "Date of Birth", "Phone Number", "ID", "Age at Diagnosis",
+            "Seizure Type", "CT", "MRI", "EEG", "Previous Surgeries",
+            "Current Meds", "Complications"]
+    df = df.reindex(columns=cols, fill_value="")
+
+    temp_dir = tempfile.gettempdir()
+    filename = f"Medical_Registry_{datetime.now():%Y%m%d_%H%M%S}.xlsx"
+    path = os.path.join(temp_dir, filename)
+
+    try:
+        df.to_excel(path, index=False, engine='openpyxl')
+        with open(path, 'rb') as f:
+            await update.message.reply_document(
+                document=f,
+                filename=filename,
+                caption="Now with Phone Number | Full meds | Clean IDs"
+            )
+        print(f"[Excel] Sent {len(df)} patients with phone numbers")
+    except Exception as e:
+        print(f"[Excel] Failed: {e}")
+    finally:
+        try: os.remove(path)
+        except: pass
+
+
+async def process_registry_photo(image_path: str, update, context):
+    await update.message.reply_text("Analyzing registry — now extracting Phone Number too…")
+    result = _call_qwen(image_path)
+
+    await update.message.reply_text(result, parse_mode=None)
+    await send_excel_version(result, update)
+
+    try: os.remove(image_path)
+    except: pass
