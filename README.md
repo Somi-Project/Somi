@@ -49,9 +49,7 @@ All features are designed for **self-hosting** — no cloud, no subscriptions, f
 You can apply a manual approach as below or use the GUI section for easier interface - both are supplied below
 ## GUI ease of use
 Start the gui to make things easier
-```bash
-  python somicontroller.py
-```
+
 known issues may include repopulation of settings field when savings settings
 no image upload for chat cli as yet only image analysis on telegram so far
 delay in qThread by 3 seconds so for ai chat and RAG please wait 3 seconds for initialization
