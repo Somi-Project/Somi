@@ -173,7 +173,7 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
  ```
  Simply add --use-studies at the end of your Agent Commands to use the added data analyzed to its thinking
 
- ##Other add-ons
+ ## Other
  Type python somi.py - - help to see the available lists if interested 
 
  ## Fin
