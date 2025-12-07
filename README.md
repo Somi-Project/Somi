@@ -43,6 +43,12 @@ Please note switch pytorch and torchvision to gpu modes with cuda enabled. Repla
 ```bash
 pip install torch==2.4.1+cu121 torchvision==0.19.1+cu121 --index-url https://download.pytorch.org/whl/cu121 
 ```
+
+All features are designed for **self-hosting** — no cloud, no subscriptions, full control.
+
+You can apply a manual approach as below or skip to GUI section for easier interface
+
+Enjoy your sovereign A.I. companion — built by you, for you.
 ## Edit Login
 folder: config/settings.py
 ```bash
@@ -103,4 +109,73 @@ If you want to add PDFS simply put the intended pdfs in the pdf folder of root d
 
  ##Other add-ons
  Type python somi.py - - help to see the available lists if interested 
+
+ ## Gui Guide
+Start by running the command to initiate the gui 
+```bash
+python somicontroller.py
+```
+
+### Initiate Agent
+Starts the Ollama server in the background and loads your selected A.I. model (set in **General Settings**) into RAM/VRAM.  
+Once running, all chat, voice, and RAG features become active.
+
+### A.I. Chat
+Opens the main chat window where you can:
+- Select any agent from your `personalC.json`
+- Enable/disable **Studies (RAG)** for knowledge-enhanced responses
+- Click **Start Chat** to begin
+- Change agents mid-session using **Apply Agent**
+
+### Study Injection
+Powerful Retrieval-Augmented Generation (RAG) tool:
+- Automatically ingests all PDFs from the `PDFs/` folder
+- Add websites via the **Ingest Websites** button
+- Clear all studied data with one click
+- Data stored in FAISS vector database for fast, accurate context retrieval
+- Bitcoin Whitepaper included by default
+
+### Social Media Agent
+Central hub for automated posting and interaction:
+- Controls both **Twitter** and **Telegram** bots
+- All help documentation available inside (and below)
+
+### Telegram Bot Setup
+1. Message `@BotFather` on Telegram
+2. Create a new bot → get your **Bot Token**
+3. Paste token into **Telegram Settings**
+4. Add bot to your group and grant admin rights
+5. Use **Telegram Settings** to customize trigger aliases (default: `Somi`, `Retard`)
+
+### Twitter / X Automation
+Automated posting and smart replies using your agent’s personality.
+
+**Features:**
+- Auto-tweets at configurable intervals
+- Auto-replies to mentions
+- Manual **DevPost** for instant posting
+
+**Setup (Free Tier):**
+1. Go to https://developer.x.com → Projects & Apps
+2. Create a project → enable **Read + Write + Direct Messages**
+3. Generate and copy:
+   - API Key & Secret
+   - Access Token & Secret
+   - Bearer Token
+   - Client ID & Secret
+4. Fill in **Twitter Settings** in the app
+
+**Pro Tips:**
+- New accounts: Post ~12 tweets + 6 replies manually first
+- Switch account to **Bot Mode** in settings to avoid shadowbans
+- Fill in username/password for better compliance (optional but recommended)
+
+### General Settings
+Customize core A.I. behavior:
+- Change default model (`gemma3:4b`, `llama3.1`, etc.)
+- Adjust temperature (creativity vs accuracy)
+- Set vision model for image understanding
+
+---
+
 ## Fin
