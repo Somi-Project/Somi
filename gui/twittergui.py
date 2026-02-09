@@ -1,5 +1,8 @@
 # gui/twittergui.py
-from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QLineEdit, QMessageBox, QCheckBox
+from PyQt6.QtWidgets import (
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QComboBox, QLineEdit, QMessageBox, QCheckBox
+)
 from PyQt6.QtCore import Qt, QTimer
 import subprocess
 import queue
@@ -15,6 +18,13 @@ from config import settings
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def _find_button(app, partial_text):
+    """Safely find a button in the main window by partial text match."""
+    for btn in app.findChildren(QPushButton):
+        if partial_text in btn.text():
+            return btn
+    return None
 
 def twitter_developer_tweet(app):
     """Send a single tweet using the devpost command."""
@@ -47,7 +57,6 @@ def twitter_developer_tweet(app):
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         try:
-            # Run devpost with input piped
             process = subprocess.Popen(
                 cmd,
                 stdin=subprocess.PIPE,
@@ -86,23 +95,19 @@ def twitter_developer_tweet(app):
 def twitter_autotweet_toggle(app):
     """Toggle the Twitter Autotweet process."""
     logger.info("Initiating Twitter Autotweet Toggle...")
-    
+
+    # Find the button in the Social Media Agent window
+    autotweet_btn = _find_button(app, "Autotweet")
+
     if app.twitter_autotweet_process and app.twitter_autotweet_process.poll() is None:
         # Stop the process
         logger.info("Stopping Twitter Autotweet...")
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopping Twitter Autotweet...")
         app.output_area.ensureCursorVisible()
 
-        if not app.twitter_autotweet_process:
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] No Twitter Autotweet is running.")
-            app.output_area.ensureCursorVisible()
-            app.twitter_autotweet_toggle_button.setText("Twitter Autotweet Start")
-            return
-
         try:
             termination_signal = signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM
             os.kill(app.twitter_autotweet_process.pid, termination_signal)
-            logger.info(f"Sent termination signal {termination_signal} to PID {app.twitter_autotweet_process.pid}")
             app.twitter_autotweet_process.wait(timeout=5)
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Twitter Autotweet stopped successfully.")
             app.output_area.ensureCursorVisible()
@@ -113,14 +118,14 @@ def twitter_autotweet_toggle(app):
             app.twitter_autotweet_process.wait(timeout=2)
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Twitter Autotweet forcefully stopped.")
             app.output_area.ensureCursorVisible()
-            QMessageBox.information(app, "Success", "Twitter Autotweet forcefully stopped!")
         except Exception as e:
             logger.error(f"Error stopping Twitter Autotweet: {str(e)}")
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error stopping Twitter Autotweet: {str(e)}")
             app.output_area.ensureCursorVisible()
-            QMessageBox.critical(app, "Error", f"Error stopping Twitter Autotweet: {str(e)}")
+
         app.twitter_autotweet_process = None
-        app.twitter_autotweet_toggle_button.setText("Twitter Autotweet Start")
+        if autotweet_btn:
+            autotweet_btn.setText("Twitter Autotweet Start")
         if hasattr(app, 'twitter_autotweet_timer'):
             app.twitter_autotweet_timer.stop()
             del app.twitter_autotweet_timer
@@ -134,7 +139,8 @@ def twitter_autotweet_toggle(app):
         layout.addWidget(label)
         name_combo = QComboBox()
         name_combo.addItems(app.agent_names)
-        name_combo.setCurrentText(app.agent_names[0])
+        if app.agent_names:
+            name_combo.setCurrentText(app.agent_names[0])
         layout.addWidget(name_combo)
         use_studies_check = QCheckBox("Use Studies (RAG)")
         use_studies_check.setChecked(False)
@@ -149,19 +155,20 @@ def twitter_autotweet_toggle(app):
 
         def start_autotweet():
             selected_name = name_combo.currentText()
-            agent_key = app.agent_keys[app.agent_names.index(selected_name)]
-            if not app.validate_agent_name(agent_key):
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Invalid agent name: {selected_name}")
-                app.output_area.ensureCursorVisible()
-                QMessageBox.critical(dialog, "Error", f"Invalid agent name: {selected_name}")
-                dialog.close()
+            try:
+                agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+            except (ValueError, IndexError):
+                QMessageBox.critical(dialog, "Error", "Invalid or missing agent.")
                 return
+
             use_studies = use_studies_check.isChecked()
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Twitter Autotweet with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
+
             cmd = ["python", "somi.py", "aiautopost", "--name", agent_key] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+
             try:
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
                 app.twitter_autotweet_process = subprocess.Popen(
@@ -174,21 +181,23 @@ def twitter_autotweet_toggle(app):
                     env=env,
                     creationflags=creationflags
                 )
-                logger.info(f"Started Twitter Autotweet process with PID {app.twitter_autotweet_process.pid}")
                 app.stderr_queue = queue.Queue()
                 threading.Thread(target=read_stderr, args=(app.twitter_autotweet_process, app.stderr_queue), daemon=True).start()
                 app.twitter_autotweet_timer = QTimer(app)
                 app.twitter_autotweet_timer.timeout.connect(lambda: check_stderr_queue(app, app.stderr_queue))
                 app.twitter_autotweet_timer.start(100)
                 QTimer.singleShot(1000, lambda: check_process_status(app, selected_name, 'Twitter Autotweet'))
-                app.twitter_autotweet_toggle_button.setText("Twitter Autotweet Stop")
+
+                if autotweet_btn:
+                    autotweet_btn.setText("Twitter Autotweet Stop")
             except Exception as e:
-                logger.error(f"Unexpected error starting Twitter Autotweet: {str(e)}")
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error: {str(e)}")
+                logger.error(f"Error starting Twitter Autotweet: {str(e)}")
+                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {str(e)}")
                 app.output_area.ensureCursorVisible()
-                QMessageBox.critical(app, "Error", f"Unexpected error: {str(e)}")
+                QMessageBox.critical(app, "Error", str(e))
                 app.twitter_autotweet_process = None
-                app.twitter_autotweet_toggle_button.setText("Twitter Autotweet Start")
+                if autotweet_btn:
+                    autotweet_btn.setText("Twitter Autotweet Start")
             dialog.close()
 
         start_button.clicked.connect(start_autotweet)
@@ -198,41 +207,35 @@ def twitter_autotweet_toggle(app):
 def twitter_autoresponse_toggle(app):
     """Toggle the Twitter Autoresponse process."""
     logger.info("Initiating Twitter Autoresponse Toggle...")
-    
+
+    autoresponse_btn = _find_button(app, "Autoresponse")
+
     if app.twitter_autoresponse_process and app.twitter_autoresponse_process.poll() is None:
         # Stop the process
         logger.info("Stopping Twitter Autoresponse...")
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopping Twitter Autoresponse...")
         app.output_area.ensureCursorVisible()
 
-        if not app.twitter_autoresponse_process:
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] No Twitter Autoresponse is running.")
-            app.output_area.ensureCursorVisible()
-            app.twitter_autoresponse_toggle_button.setText("Twitter Autoresponse Start")
-            return
-
         try:
             termination_signal = signal.CTRL_BREAK_EVENT if sys.platform == 'win32' else signal.SIGTERM
             os.kill(app.twitter_autoresponse_process.pid, termination_signal)
-            logger.info(f"Sent termination signal {termination_signal} to PID {app.twitter_autoresponse_process.pid}")
             app.twitter_autoresponse_process.wait(timeout=5)
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Twitter Autoresponse stopped successfully.")
             app.output_area.ensureCursorVisible()
             QMessageBox.information(app, "Success", "Twitter Autoresponse stopped successfully!")
         except subprocess.TimeoutExpired:
-            logger.warning("Twitter Autoresponse process did not terminate gracefully, killing...")
             app.twitter_autoresponse_process.kill()
             app.twitter_autoresponse_process.wait(timeout=2)
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Twitter Autoresponse forcefully stopped.")
             app.output_area.ensureCursorVisible()
-            QMessageBox.information(app, "Success", "Twitter Autoresponse forcefully stopped!")
         except Exception as e:
             logger.error(f"Error stopping Twitter Autoresponse: {str(e)}")
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error stopping Twitter Autoresponse: {str(e)}")
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {str(e)}")
             app.output_area.ensureCursorVisible()
-            QMessageBox.critical(app, "Error", f"Error stopping Twitter Autoresponse: {str(e)}")
+
         app.twitter_autoresponse_process = None
-        app.twitter_autoresponse_toggle_button.setText("Twitter Autoresponse Start")
+        if autoresponse_btn:
+            autoresponse_btn.setText("Twitter Autoresponse Start")
         if hasattr(app, 'twitter_autoresponse_timer'):
             app.twitter_autoresponse_timer.stop()
             del app.twitter_autoresponse_timer
@@ -240,21 +243,21 @@ def twitter_autoresponse_toggle(app):
         # Start the process
         dialog = QDialog(app)
         dialog.setWindowTitle("Select Twitter Autoresponse Agent")
-        dialog.setGeometry(100, 100, 400, 250)
+        dialog.setGeometry(100, 100, 400, 300)
         layout = QVBoxLayout()
-        label = QLabel("Agent Name:")
-        layout.addWidget(label)
+        layout.addWidget(QLabel("Agent Name:"))
         name_combo = QComboBox()
         name_combo.addItems(app.agent_names)
-        name_combo.setCurrentText(app.agent_names[0])
+        if app.agent_names:
+            name_combo.setCurrentText(app.agent_names[0])
         layout.addWidget(name_combo)
         use_studies_check = QCheckBox("Use Studies (RAG)")
         use_studies_check.setChecked(False)
         layout.addWidget(use_studies_check)
-        limit_label = QLabel("Mentions Limit:")
-        layout.addWidget(limit_label)
+        layout.addWidget(QLabel("Mentions Limit:"))
         limit_entry = QLineEdit("2")
         layout.addWidget(limit_entry)
+
         button_layout = QHBoxLayout()
         start_button = QPushButton("Start")
         cancel_button = QPushButton("Cancel")
@@ -265,28 +268,28 @@ def twitter_autoresponse_toggle(app):
 
         def start_autoresponse():
             selected_name = name_combo.currentText()
-            agent_key = app.agent_keys[app.agent_names.index(selected_name)]
-            if not app.validate_agent_name(agent_key):
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Invalid agent name: {selected_name}")
-                app.output_area.ensureCursorVisible()
-                QMessageBox.critical(dialog, "Error", f"Invalid agent name: {selected_name}")
-                dialog.close()
+            try:
+                agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+            except (ValueError, IndexError):
+                QMessageBox.critical(dialog, "Error", "Invalid agent.")
                 return
+
             try:
                 limit = int(limit_entry.text().strip())
                 if limit <= 0:
-                    raise ValueError("Limit must be positive.")
-            except ValueError as e:
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Invalid limit: {str(e)}")
-                app.output_area.ensureCursorVisible()
-                QMessageBox.critical(dialog, "Error", f"Invalid limit: {str(e)}")
+                    raise ValueError()
+            except:
+                QMessageBox.critical(dialog, "Error", "Invalid limit.")
                 return
+
             use_studies = use_studies_check.isChecked()
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Twitter Autoresponse with {selected_name} {'using studies' if use_studies else ''}, limit {limit}...")
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Twitter Autoresponse with {selected_name}...")
             app.output_area.ensureCursorVisible()
+
             cmd = ["python", "somi.py", "aiautoreply", "--name", agent_key, "--limit", str(limit)] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+
             try:
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
                 app.twitter_autoresponse_process = subprocess.Popen(
@@ -299,21 +302,23 @@ def twitter_autoresponse_toggle(app):
                     env=env,
                     creationflags=creationflags
                 )
-                logger.info(f"Started Twitter Autoresponse process with PID {app.twitter_autoresponse_process.pid}")
                 app.stderr_queue = queue.Queue()
                 threading.Thread(target=read_stderr, args=(app.twitter_autoresponse_process, app.stderr_queue), daemon=True).start()
                 app.twitter_autoresponse_timer = QTimer(app)
                 app.twitter_autoresponse_timer.timeout.connect(lambda: check_stderr_queue(app, app.stderr_queue))
                 app.twitter_autoresponse_timer.start(100)
                 QTimer.singleShot(1000, lambda: check_process_status(app, selected_name, 'Twitter Autoresponse'))
-                app.twitter_autoresponse_toggle_button.setText("Twitter Autoresponse Stop")
+
+                if autoresponse_btn:
+                    autoresponse_btn.setText("Twitter Autoresponse Stop")
             except Exception as e:
-                logger.error(f"Unexpected error starting Twitter Autoresponse: {str(e)}")
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Unexpected error: {str(e)}")
+                logger.error(f"Error starting Twitter Autoresponse: {str(e)}")
+                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {str(e)}")
                 app.output_area.ensureCursorVisible()
-                QMessageBox.critical(app, "Error", f"Unexpected error: {str(e)}")
+                QMessageBox.critical(app, "Error", str(e))
                 app.twitter_autoresponse_process = None
-                app.twitter_autoresponse_toggle_button.setText("Twitter Autoresponse Start")
+                if autoresponse_btn:
+                    autoresponse_btn.setText("Twitter Autoresponse Start")
             dialog.close()
 
         start_button.clicked.connect(start_autoresponse)
@@ -351,6 +356,7 @@ def twitter_settings(app):
         layout.addWidget(QLabel(str(settings.AUTO_REPLY_INTERVAL_LOWER_VARIATION)))
         layout.addWidget(QLabel("Auto Reply Upper Variation (minutes):"))
         layout.addWidget(QLabel(str(settings.AUTO_REPLY_INTERVAL_UPPER_VARIATION)))
+
 
     display_settings()
 

@@ -5,7 +5,6 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QTextCursor, QFont
 import asyncio
-import threading
 import subprocess
 import time
 from datetime import datetime
@@ -21,6 +20,8 @@ from pathlib import Path
 import psutil
 import importlib
 import torch
+import sys
+import signal
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -251,7 +252,6 @@ def ai_chat(app):
 
     def type_response():
         nonlocal response_index, current_response
-        logger.info(f"Typing response, index: {response_index}, response length: {len(current_response)}")
         if response_index < len(current_response):
             chat_area.moveCursor(QTextCursor.MoveOperation.End)
             chat_area.insertPlainText(current_response[response_index])
@@ -263,7 +263,6 @@ def ai_chat(app):
             chat_area.append(current_response[response_index:] + "\n\n")
             response_index = 0
             current_response = ""
-            logger.info("Finished typing response")
 
     def update_dots():
         nonlocal dot_index
@@ -277,11 +276,9 @@ def ai_chat(app):
         chat_area.append(f"{selected_name}: {dot_states[dot_index]}")
         chat_area.ensureCursorVisible()
         dot_index = (dot_index + 1) % len(dot_states)
-        logger.info(f"Updated typing indicator: {dot_states[dot_index]}")
 
     def start_typing(user_input, ai_response, agent_name):
         nonlocal current_response, response_index
-        logger.info(f"Starting typing for prompt: {user_input}")
         dots_timer.stop()
         cursor = chat_area.textCursor()
         for state in dot_states:
@@ -296,14 +293,17 @@ def ai_chat(app):
         current_response = ai_response if ai_response else "No response received."
         response_index = 0
         typing_timer.start()
-        logger.info("Typing animation started")
 
     def start_chat():
         nonlocal chat_worker
         selected_name = name_combo.currentText()
-        agent_key = app.agent_keys[app.agent_names.index(selected_name)] if app.agent_names else ""
-        if not app.validate_agent_name(agent_key):
-            QMessageBox.critical(chat_window, "Error", f"Invalid agent name: {selected_name}")
+        if not app.agent_names:
+            QMessageBox.critical(chat_window, "Error", "No agents loaded. Check personalC.json.")
+            return
+        try:
+            agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+        except ValueError:
+            QMessageBox.critical(chat_window, "Error", f"Agent '{selected_name}' not found.")
             return
 
         if chat_worker and chat_worker.isRunning():
@@ -311,11 +311,11 @@ def ai_chat(app):
             chat_worker.wait()
 
         chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-        chat_worker.response_signal.connect(lambda user_input, ai_response: start_typing(user_input, ai_response, selected_name))
+        chat_worker.response_signal.connect(lambda u, r: start_typing(u, r, selected_name))
         chat_worker.error_signal.connect(lambda msg: [
             chat_area.append(f"Error: {msg}\n"),
             chat_area.ensureCursorVisible(),
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {msg}\n"),
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat Error: {msg}\n"),
             app.output_area.ensureCursorVisible(),
             QMessageBox.critical(chat_window, "Error", msg)
         ])
@@ -323,14 +323,15 @@ def ai_chat(app):
         send_button.setEnabled(True)
         prompt_entry.setEnabled(True)
         apply_agent_button.setEnabled(True)
-        logger.info("Chat worker started")
 
     def apply_agent():
         nonlocal chat_worker
         selected_name = name_combo.currentText()
-        agent_key = app.agent_keys[app.agent_names.index(selected_name)] if app.agent_names else ""
-        if not app.validate_agent_name(agent_key):
-            QMessageBox.critical(chat_window, "Error", f"Invalid agent name: {selected_name}")
+        if not app.agent_names:
+            return
+        try:
+            agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+        except ValueError:
             return
 
         if chat_worker and chat_worker.isRunning():
@@ -338,27 +339,24 @@ def ai_chat(app):
                 chat_area.append(f"Agent unchanged: {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
                 return
             chat_area.clear()
-            chat_area.append(f"Chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
+            chat_area.append(f"Switched to {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
         else:
             if chat_worker:
                 chat_worker.stop()
                 chat_worker.wait()
             chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-            chat_worker.response_signal.connect(lambda user_input, ai_response: start_typing(user_input, ai_response, selected_name))
+            chat_worker.response_signal.connect(lambda u, r: start_typing(u, r, selected_name))
             chat_worker.error_signal.connect(lambda msg: [
                 chat_area.append(f"Error: {msg}\n"),
-                chat_area.ensureCursorVisible(),
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error: {msg}\n"),
-                app.output_area.ensureCursorVisible(),
+                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat Error: {msg}\n"),
                 QMessageBox.critical(chat_window, "Error", msg)
             ])
             chat_worker.start()
             chat_area.clear()
-            chat_area.append(f"Chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
-        logger.info(f"Agent applied: {selected_name}")
+            chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
 
     def show_typing_indicator():
-        nonlocal chat_worker, dot_index
+        nonlocal chat_worker
         if not chat_worker or not chat_worker.isRunning():
             QMessageBox.warning(chat_window, "Warning", "Please start the chat first.")
             return
@@ -381,7 +379,6 @@ def ai_chat(app):
         dots_timer.start()
         chat_worker.process_prompt(prompt)
         prompt_entry.clear()
-        logger.info(f"Processing prompt: {prompt}")
 
     def quit_chat():
         nonlocal chat_worker
@@ -393,8 +390,6 @@ def ai_chat(app):
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat session ended.\n")
         app.output_area.ensureCursorVisible()
         chat_window.reject()
-        app.update()
-        logger.info("Chat session ended")
 
     start_button = QPushButton("Start Chat")
     start_button.clicked.connect(start_chat)
@@ -628,72 +623,85 @@ def study_material(app):
     study_window.exec()
 
 def ai_model_start_stop(app, mode="CPU (Default)"):
-    def is_ollama_running():
-        try:
-            for proc in psutil.process_iter(['name']):
-                if proc.info['name'].lower() == 'ollama':
-                    return True
-        except Exception:
-            pass
-        return False
+    """One-click Ollama control: Start + load model / Stop + free RAM"""
+    
+    # Only trust our own process handle
+    ollama_running = (
+        hasattr(app, 'ollama_process') and
+        app.ollama_process is not None and
+        app.ollama_process.poll() is None
+    )
 
     use_gpu = mode == "GPU (CUDA)" and torch.cuda.is_available()
     mode_info = "GPU (CUDA)" if use_gpu else "CPU"
-    logger.info(f"Starting Ollama with mode: {mode}, use_gpu: {use_gpu}, mode_info: {mode_info}")
 
-    if not is_ollama_running() and (not hasattr(app, 'ollama_process') or app.ollama_process is None):
-        app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Ollama with model {settings.DEFAULT_MODEL} on {mode_info}...\n")
+    if ollama_running:
+        # === STOP OLLAMA + FREE RAM ===
+        app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopping Ollama and freeing memory...")
         app.output_area.ensureCursorVisible()
-        app.update()
 
         try:
-            env = os.environ.copy()
-            if use_gpu:
-                env["CUDA_VISIBLE_DEVICES"] = "0"
-                logger.info("Set CUDA_VISIBLE_DEVICES=0 in subprocess environment")
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Environment CUDA_VISIBLE_DEVICES: {env.get('CUDA_VISIBLE_DEVICES', 'Not set')}\n")
+            if sys.platform == 'win32':
+                app.ollama_process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
-                if "CUDA_VISIBLE_DEVICES" in env:
-                    del env["CUDA_VISIBLE_DEVICES"]
-                logger.info("Cleared CUDA_VISIBLE_DEVICES in subprocess environment")
-
-            if os.name == 'nt':
-                cmd = f'start "ollama" cmd /k ollama run {settings.DEFAULT_MODEL}'
-                app.ollama_process = subprocess.Popen(cmd, shell=True, env=env)
-            else:
-                cmd = ["ollama", "run", settings.DEFAULT_MODEL]
-                app.ollama_process = subprocess.Popen(cmd, shell=False, env=env)
-            app.ai_model_start_button.setText("AI Model Stop")
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Ollama started with model {settings.DEFAULT_MODEL} on {mode_info}.\n")
-            app.output_area.ensureCursorVisible()
-            app.ai_model_start_button.setEnabled(True)
+                app.ollama_process.terminate()
+            app.ollama_process.wait(timeout=8)
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Ollama stopped — model unloaded, RAM/VRAM freed.")
+        except subprocess.TimeoutExpired:
+            app.ollama_process.kill()
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Ollama forcefully stopped — memory freed.")
         except Exception as e:
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error starting Ollama: {str(e)}\n")
-            app.output_area.ensureCursorVisible()
-            QMessageBox.critical(app, "Error", f"Error starting Ollama: {str(e)}", QMessageBox.StandardButton.Ok)
-            app.ai_model_start_button.setText("AI Model Start")
-            app.ai_model_start_button.setEnabled(True)
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error stopping Ollama: {e}")
+        finally:
             app.ollama_process = None
+
+        # Update main button
+        for btn in app.findChildren(QPushButton):
+            if btn.text() in ["Stop Ollama", "Stop Agent Running"]:
+                btn.setText("Initiate Agent")
+                break
+
     else:
-        app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Stopping Ollama...\n")
+        # === START OLLAMA + LOAD MODEL ===
+        app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Ollama with {settings.DEFAULT_MODEL} on {mode_info}...")
         app.output_area.ensureCursorVisible()
-        app.update()
+
+        env = os.environ.copy()
+        if use_gpu:
+            env["CUDA_VISIBLE_DEVICES"] = "0"
+
+        cmd = ["ollama", "run", settings.DEFAULT_MODEL]
 
         try:
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Please close the 'ollama' command window to stop Ollama.\n")
-            app.output_area.ensureCursorVisible()
-            QMessageBox.information(app, "Info", "Please manually close the 'ollama' command window to stop Ollama.", QMessageBox.StandardButton.Ok)
-            app.ai_model_start_button.setText("AI Model Start")
-            app.ollama_process = None
-            app.ai_model_start_button.setEnabled(True)
-        except Exception as e:
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Error prompting to stop Ollama: {str(e)}\n")
-            app.output_area.ensureCursorVisible()
-            QMessageBox.critical(app, "Error", f"Error prompting to stop Ollama: {str(e)}", QMessageBox.StandardButton.Ok)
-            app.ai_model_start_button.setEnabled(True)
-            app.ollama_process = None
+            if sys.platform == 'win32':
+                app.ollama_process = subprocess.Popen(
+                    cmd,
+                    creationflags=subprocess.CREATE_NEW_CONSOLE,  # Opens visible terminal
+                    env=env
+                )
+            else:
+                app.ollama_process = subprocess.Popen(cmd, env=env)
 
-    app.update()
+            # Update button
+            for btn in app.findChildren(QPushButton):
+                if btn.text() == "Initiate Agent":
+                    btn.setText("Stop Ollama")
+                    break
+
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Success! {settings.DEFAULT_MODEL} is now loaded and ready.")
+            app.output_area.append(f"   → You can now chat, use RAG, voice, etc.")
+            app.output_area.ensureCursorVisible()
+
+        except FileNotFoundError:
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR: Ollama not found!")
+            app.output_area.append("   → Please install Ollama from https://ollama.com")
+            app.output_area.ensureCursorVisible()
+            QMessageBox.critical(app, "Ollama Not Found", "Ollama is not installed or not in PATH.\nDownload: https://ollama.com")
+        except Exception as e:
+            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Failed to start Ollama: {e}")
+            app.output_area.ensureCursorVisible()
+            QMessageBox.critical(app, "Error", f"Could not start Ollama:\n{e}")
+            app.ollama_process = None
 
 def ai_guide():
     QMessageBox.information(None, "AI Guide", "This is a placeholder for the AI Guide.")
