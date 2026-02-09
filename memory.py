@@ -1,373 +1,848 @@
-import psycopg2
-from typing import List, Dict
-import logging
-import json
-import requests
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from psycopg2 import pool
-from datetime import datetime
+# memory.py
+# Crash-resistant memory system for Somi:
+# - JSONL per category (append-only)
+# - Snapshot index for fast retrieval (items + embeddings)
+# - Same-turn recall staging (RAM buffer)
+# - LLM categorization (MEMORY_MODEL) with strict JSON
+#
+# Upgrades (Feb 2026):
+# - Snapshot rebuild from JSONL tail when snapshot missing/empty or embedding mismatch
+# - Zero-vector embeddings to keep snapshot alignment safe
+# - "Forget tombstones" enforced at retrieval time
+# - Telegram support methods: list_recent_memories, pin_instruction, forget_phrase
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from __future__ import annotations
+
+import asyncio
+import hashlib
+import json
+import logging
+import os
+import re
+import time
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime, timedelta, date
+from typing import Any, Dict, List, Optional, Tuple
+
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
-class MemoryHandler:
-    BLACKLIST = [
-        "price", "stock", "crypto", "weather", "news", "sports", "score",
-        "concert", "event", "award", "grammy", "election", "market", "trending"
-    ]
 
-    def __init__(self, db_params: Dict[str, str], agent_name: str):
-        self.db_params = db_params
-        self.agent_name = agent_name
-        self.conn_pool = None
-        self.embedding_model = None
-        self.llm_url = "http://127.0.0.1:11434/api/chat"
+VOLATILE_KEYWORDS = [
+    "price", "stock", "bitcoin", "crypto", "ethereum", "solana", "market",
+    "weather", "forecast", "current time", "today", "breaking", "news", "scores",
+    "live", "now", "latest"
+]
+
+FORGET_PREFIXES = ("FORGET:", "FORGET ", "DO NOT USE:", "DONT USE:", "DON'T USE:")
+
+
+@dataclass
+class MemoryItem:
+    ts: str
+    content: str
+    memory_type: str
+    source: str
+    hash: str
+
+
+class MemoryManager:
+    """
+    Memory categories (files):
+      - preferences.jsonl
+      - facts.jsonl
+      - instructions.jsonl
+      - episodic.jsonl (short-lived)
+    Plus:
+      - snapshot.json (compact, latest top-N items + embeddings)
+
+    Retrieval:
+      - same-turn RAM staging first
+      - then snapshot vector similarity
+      - then keyword fallback
+      - then "forget tombstone" filtering
+    """
+
+    def __init__(
+        self,
+        embedding_model,
+        ollama_client,
+        memory_model_name: str,
+        user_id: str = "default_user",
+        base_dir: str = "sessions",
+        disable_financial_memory: bool = True,
+    ):
+        self.embedding_model = embedding_model
+        self.ollama_client = ollama_client
+        self.memory_model = memory_model_name
+        self.user_id = str(user_id or "default_user")
+        self.base_dir = base_dir
+        self.disable_financial_memory = disable_financial_memory
+
+        # Storage paths
+        self.session_dir = os.path.join(self.base_dir, self.user_id)
+        self.memory_dir = os.path.join(self.session_dir, "memory")
+        os.makedirs(self.memory_dir, exist_ok=True)
+
+        self.files = {
+            "preferences": os.path.join(self.memory_dir, "preferences.jsonl"),
+            "facts": os.path.join(self.memory_dir, "facts.jsonl"),
+            "instructions": os.path.join(self.memory_dir, "instructions.jsonl"),
+            "episodic": os.path.join(self.memory_dir, "episodic.jsonl"),
+        }
+
+        self.snapshot_path = os.path.join(self.memory_dir, "snapshot.json")
+        self.chronicle_path = os.path.join(self.session_dir, "chronicle.md")
+        self.daily_logs_dir = os.path.join(self.session_dir, "daily_logs")
+        os.makedirs(self.daily_logs_dir, exist_ok=True)
+        self.today_log_path = os.path.join(self.daily_logs_dir, f"{date.today().isoformat()}.md")
+
+        if not os.path.exists(self.chronicle_path):
+            with open(self.chronicle_path, "w", encoding="utf-8") as f:
+                f.write(f"# Somi Memory Chronicle (User: {self.user_id})\n")
+                f.write(f"Started: {date.today().isoformat()}\n\n")
+
+        if not os.path.exists(self.today_log_path):
+            with open(self.today_log_path, "w", encoding="utf-8") as f:
+                f.write(f"# Daily Interactions - {date.today().isoformat()}\n\n")
+
+        # Embedding dimension detection
+        self.embedding_dim = 384
         try:
-            self._initialize_resources()
-        except Exception as e:
-            logger.error(f"MemoryHandler initialization failed: {str(e)}")
-            raise
+            test_emb = self.embedding_model.encode(["test"])[0]
+            self.embedding_dim = int(len(test_emb))
+        except Exception:
+            self.embedding_dim = 384
 
-    def _initialize_resources(self):
+        # Snapshot state
+        self._snapshot_items: List[Dict[str, Any]] = []
+        self._snapshot_embs: Optional[np.ndarray] = None  # shape (N, dim)
+        self._snapshot_lock = asyncio.Lock()
+        self._snapshot_needs_save = False
+
+        # Same-turn recall buffer
+        self._ephemeral = defaultdict(list)  # user_id -> list[dict]
+        self._ephemeral_ttl_seconds = 120
+        self._ephemeral_max_per_user = 25
+
+        # Maintenance knobs
+        self.max_snapshot_items = 800
+        self.max_line_items_per_file = 4000
+        self.episodic_ttl_days = 30
+
+        # Load snapshot; rebuild if empty/mismatched
+        loaded_ok = self._load_snapshot()
+        if not loaded_ok or not self._snapshot_items:
+            self._rebuild_snapshot_from_jsonl_tail()
+        else:
+            # Even if snapshot exists, ensure dims/alignment remain sane
+            self._ensure_snapshot_alignment()
+
+    # -------------------------
+    # Utility / safety helpers
+    # -------------------------
+
+    def _atomic_write_json(self, path: str, data: Any) -> None:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+        os.replace(tmp, path)
+
+    def _safe_append_jsonl(self, path: str, obj: Dict[str, Any]) -> None:
+        line = json.dumps(obj, ensure_ascii=False)
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+
+    def _normalize_embedding(self, vec: np.ndarray) -> Optional[np.ndarray]:
+        v = np.asarray(vec, dtype=np.float32)
+        v = np.nan_to_num(v, nan=0.0, posinf=0.0, neginf=0.0)
+        n = float(np.linalg.norm(v))
+        if n <= 1e-10:
+            return None
+        return v / n
+
+    def _hash(self, s: str) -> str:
+        return hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()
+
+    def _is_volatile(self, text: str) -> bool:
+        t = (text or "").lower()
+        return any(k in t for k in VOLATILE_KEYWORDS)
+
+    def _tokenize(self, text: str) -> set[str]:
+        text = (text or "").lower()
+        text = re.sub(r"[^a-z0-9\s:]+", " ", text)
+        toks = [t for t in text.split() if len(t) > 1]
+        return set(toks[:64])
+
+    def _zero_vec(self) -> np.ndarray:
+        v = np.zeros((self.embedding_dim,), dtype=np.float32)
+        return v
+
+    # -------------------------
+    # Snapshot load/save/rebuild
+    # -------------------------
+
+    def _load_snapshot(self) -> bool:
+        if not os.path.exists(self.snapshot_path):
+            self._snapshot_items = []
+            self._snapshot_embs = None
+            return False
+
         try:
-            self.conn_pool = psycopg2.pool.SimpleConnectionPool(minconn=1, maxconn=5, **self.db_params)
-            logger.info("Initialized PostgreSQL connection pool")
-        except Exception as e:
-            logger.error(f"Failed to initialize connection pool: {str(e)}")
-            raise
+            with open(self.snapshot_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
 
-        try:
-            self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-            logger.info("Loaded SentenceTransformer model")
-        except Exception as e:
-            logger.error(f"Failed to load SentenceTransformer: {str(e)}")
-            raise
+            items = data.get("items", [])
+            embs = data.get("embeddings", [])
+            dim = int(data.get("dim", 0) or 0)
 
-        self._ensure_tables()
+            if not isinstance(items, list):
+                items = []
+            if not isinstance(embs, list):
+                embs = []
 
-    def _get_connection(self):
-        try:
-            conn = self.conn_pool.getconn()
-            return conn
-        except Exception as e:
-            logger.error(f"Failed to get connection: {str(e)}")
-            raise
+            # If embedding dim changed, rebuild from JSONL tail
+            if dim and dim != self.embedding_dim:
+                logger.warning(f"[Memory] Snapshot dim {dim} != current dim {self.embedding_dim}. Rebuilding.")
+                self._snapshot_items = []
+                self._snapshot_embs = None
+                return False
 
-    def _release_connection(self, conn):
-        try:
-            self.conn_pool.putconn(conn)
-        except Exception as e:
-            logger.error(f"Failed to release connection: {str(e)}")
-            raise
+            self._snapshot_items = items
 
-    def _ensure_tables(self):
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS memories (
-                        id SERIAL PRIMARY KEY,
-                        agent_name VARCHAR(50) NOT NULL,
-                        context VARCHAR(100) NOT NULL,
-                        value TEXT NOT NULL,
-                        user_input TEXT NOT NULL,
-                        relevance_score FLOAT DEFAULT 10.0,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        CONSTRAINT memories_unique UNIQUE (agent_name, context, value, user_input)
-                    );
-                """)
-
-                cursor.execute("""
-                    CREATE TABLE IF NOT EXISTS chat_history (
-                        id SERIAL PRIMARY KEY,
-                        agent_name VARCHAR(50) NOT NULL,
-                        session_id VARCHAR(36) NOT NULL,
-                        message_type VARCHAR(20) NOT NULL,
-                        content TEXT NOT NULL,
-                        embedding VECTOR(384),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                """)
-                conn.commit()
-                logger.info("Ensured memories and chat_history tables exist")
-        except Exception as e:
-            logger.error(f"Failed to ensure tables: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            self._release_connection(conn)
-
-    def _call_llm(self, messages: List[Dict[str, str]]) -> str:
-        try:
-            response = requests.post(
-                self.llm_url,
-                json={
-                    "model": "llama3.2-vision:11b",
-                    "messages": messages,
-                    "stream": False
-                }
-            )
-            response.raise_for_status()
-            return response.json()["message"]["content"]
-        except Exception as e:
-            logger.error(f"LLM call failed: {str(e)}")
-            return ""
-
-    def update_relevance_decay(self):
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    UPDATE memories
-                    SET relevance_score = GREATEST(relevance_score - (EXTRACT(EPOCH FROM (NOW() - created_at)) / 86400) * 0.1, 0)
-                    WHERE agent_name = %s;
-                """, (self.agent_name,))
-                conn.commit()
-                logger.info(f"Updated relevance decay for {self.agent_name} in memories table")
-        except Exception as e:
-            logger.error(f"Failed to update relevance decay: {str(e)}")
-            conn.rollback()
-        finally:
-            self._release_connection(conn)
-
-    def store_memory(self, context: str, value: str, user_input: str, session_id: str):
-        if not isinstance(context, str) or not isinstance(value, str) or not isinstance(user_input, str):
-            logger.error(f"Invalid memory types: context={type(context)}, value={type(value)}, user_input={type(user_input)}")
-            return
-        if any(keyword in context.lower() or keyword in value.lower() or keyword in user_input.lower() for keyword in self.BLACKLIST):
-            logger.info(f"Skipping memory storage: context='{context}', value='{value}', user_input='{user_input}'")
-            return
-
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO memories (agent_name, context, value, user_input, relevance_score)
-                    VALUES (%s, %s, %s, %s, %s)
-                    ON CONFLICT ON CONSTRAINT memories_unique
-                    DO UPDATE SET updated_at = CURRENT_TIMESTAMP, relevance_score = 10.0;
-                """, (self.agent_name, context, value, user_input, 10.0))
-                conn.commit()
-                logger.info(f"Stored memory in memories: context='{context}', value='{value}', user_input='{user_input}'")
-        except Exception as e:
-            logger.error(f"Failed to store memory in memories: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            self._release_connection(conn)
-
-        message_text = f"User's {context.replace('user_', '').replace('_', ' ')}: {value}"
-        embedding = self.embedding_model.encode([message_text])[0].tolist()
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO chat_history (agent_name, session_id, message_type, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s::vector);
-                """, (self.agent_name, session_id, "human", message_text, embedding))
-                conn.commit()
-                logger.info(f"Stored memory in chat_history: context='{context}', value='{value}'")
-        except Exception as e:
-            logger.error(f"Failed to store in chat_history: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            self._release_connection(conn)
-
-    def store_message(self, message_type: str, content: str, session_id: str):
-        if not isinstance(content, str):
-            logger.error(f"Invalid message content type: {type(content)}")
-            return
-        embedding = self.embedding_model.encode([content])[0].tolist()
-        conn = self._get_connection()
-        try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    INSERT INTO chat_history (agent_name, session_id, message_type, content, embedding)
-                    VALUES (%s, %s, %s, %s, %s::vector);
-                """, (self.agent_name, session_id, message_type, content, embedding))
-                conn.commit()
-                logger.info(f"Stored {message_type} message in chat_history: {content[:50]}...")
-        except Exception as e:
-            logger.error(f"Failed to store message in chat_history: {str(e)}")
-            conn.rollback()
-            raise
-        finally:
-            self._release_connection(conn)
-
-    def extract_memories(self, input_text: str) -> List[Dict[str, str]]:
-        if any(keyword in input_text.lower() for keyword in self.BLACKLIST):
-            logger.info(f"Skipping memory extraction: input='{input_text}'")
-            return []
-
-        prompt = f"""
-You are a memory extraction assistant. Your task is to determine if the following user input explicitly states a personal fact about a relationship that should be stored as a memory. The input must clearly indicate a relationship (e.g., "my cousin is Jeff", "Jeff is my cousin"). If it does, extract the context and value in the format specified below. Do NOT store any information containing blacklisted keywords: {', '.join(self.BLACKLIST)}.
-
-Input: "{input_text}"
-
-If the input explicitly states a personal fact about a relationship, return a JSON object like:
-{{
-  "context": "user_cousin",
-  "value": "Jeff"
-}}
-
-Possible contexts are: user_cousin, user_favorite_food, user_pet, user_sibling, user_friend.
-
-If the input does not explicitly state a relationship or contains blacklisted keywords, return:
-{{
-  "context": "",
-  "value": ""
-}}
-
-Examples:
-- "my cousin is Jeff" → {{"context": "user_cousin", "value": "Jeff"}}
-- "who is Jeff" → {{"context": "", "value": ""}}
-- "Jeff is my other cousin" → {{"context": "user_cousin", "value": "Jeff"}}
-- "I like to hang out with Jeff" → {{"context": "", "value": ""}}
-
-Respond ONLY with the JSON object.
-"""
-
-        messages = [{"role": "user", "content": prompt}]
-        response = self._call_llm(messages)
-        try:
-            result = json.loads(response)
-            if result["context"] and result["value"]:
-                memories = [{"context": result["context"], "value": result["value"]}]
-                logger.info(f"Extracted memories: {memories}")
-                return memories
+            if embs:
+                arr = np.asarray(embs, dtype=np.float32)
+                if arr.ndim == 2 and arr.shape[1] == self.embedding_dim:
+                    self._snapshot_embs = arr
+                else:
+                    self._snapshot_embs = None
             else:
-                logger.info(f"No memories extracted from input: '{input_text}'")
-                return []
+                self._snapshot_embs = None
+
+            return True
         except Exception as e:
-            logger.error(f"Failed to parse LLM response for memory extraction: {str(e)}")
-            return []
+            logger.warning(f"[Memory] Snapshot load failed: {e}")
+            self._snapshot_items = []
+            self._snapshot_embs = None
+            return False
 
-    def identify_context(self, query: str) -> str:
-        if any(keyword in query.lower() for keyword in self.BLACKLIST):
-            logger.info(f"Skipping context identification: query='{query}'")
-            return ""
+    def _ensure_snapshot_alignment(self) -> None:
+        """
+        Guarantees that:
+        - _snapshot_embs exists
+        - shape[0] == len(_snapshot_items)
+        - each row is a usable vector (zero vec allowed)
+        """
+        n = len(self._snapshot_items)
+        if n <= 0:
+            self._snapshot_embs = None
+            return
 
-        prompt = f"""
-You are a context identification assistant. Your task is to determine if the following user query is asking about a stored personal fact related to a specific relationship. If it is, identify the context in the format specified below. Do NOT process queries containing blacklisted keywords: {', '.join(self.BLACKLIST)}.
+        if not isinstance(self._snapshot_embs, np.ndarray) or self._snapshot_embs.ndim != 2:
+            self._snapshot_embs = np.vstack([self._zero_vec() for _ in range(n)]).astype(np.float32)
+            self._snapshot_needs_save = True
+            return
 
-Query: "{query}"
+        if self._snapshot_embs.shape[1] != self.embedding_dim:
+            self._snapshot_embs = np.vstack([self._zero_vec() for _ in range(n)]).astype(np.float32)
+            self._snapshot_needs_save = True
+            return
 
-If the query is explicitly asking about a personal fact related to a relationship (e.g., "what's my cousin's name", "who are my cousins"), return a JSON object like:
-{{
-  "context": "user_cousin"
-}}
-
-Possible contexts are: user_cousin, user_favorite_food, user_pet, user_sibling, user_friend.
-
-If the query is not asking about a personal fact related to a relationship or contains blacklisted keywords, return:
-{{
-  "context": ""
-}}
-
-Examples:
-- "what's my cousin's name" → {{"context": "user_cousin"}}
-- "who are my cousins" → {{"context": "user_cousin"}}
-- "what's my friend's name" → {{"context": "user_friend"}}
-- "who is Jeff" → {{"context": ""}}
-- "who is Jeff to me" → {{"context": ""}}
-
-Respond ONLY with the JSON object.
-"""
-
-        messages = [{"role": "user", "content": prompt}]
-        response = self._call_llm(messages)
-        try:
-            result = json.loads(response)
-            context = result["context"]
-            if context:
-                logger.info(f"Identified context: '{context}' for query '{query}'")
+        if self._snapshot_embs.shape[0] != n:
+            # Fix by truncating/padding with zero vecs
+            if self._snapshot_embs.shape[0] > n:
+                self._snapshot_embs = self._snapshot_embs[-n:, :]
             else:
-                logger.info(f"No context identified for query '{query}'")
-            return context
-        except Exception as e:
-            logger.error(f"Failed to parse LLM response for context identification: {str(e)}")
-            return ""
+                missing = n - self._snapshot_embs.shape[0]
+                pad = np.vstack([self._zero_vec() for _ in range(missing)]).astype(np.float32)
+                self._snapshot_embs = np.vstack([self._snapshot_embs, pad])
+            self._snapshot_needs_save = True
 
-    def retrieve_memories(self, query: str, session_id: str, k: int = 3, relevance_threshold: float = 1.0) -> List[Dict[str, str]]:
-        if any(keyword in query.lower() for keyword in self.BLACKLIST):
-            logger.info(f"Skipping memory retrieval: query='{query}'")
+    def _read_jsonl_tail(self, path: str, max_lines: int) -> List[Dict[str, Any]]:
+        if not os.path.exists(path):
+            return []
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
+            tail = lines[-max_lines:]
+            out = []
+            for line in tail:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    out.append(json.loads(line))
+                except Exception:
+                    continue
+            return out
+        except Exception:
             return []
 
-        self.update_relevance_decay()
+    def _rebuild_snapshot_from_jsonl_tail(self, max_per_file: int = 250) -> None:
+        """
+        Rebuild snapshot from the tail of JSONL files.
+        This prevents "dead memory" if snapshot is missing/corrupt/old-dim.
+        """
+        all_items: List[Dict[str, Any]] = []
 
-        context = self.identify_context(query)
-        if context:
-            conn = self._get_connection()
+        for mtype, path in self.files.items():
+            rows = self._read_jsonl_tail(path, max_per_file)
+            for obj in rows:
+                content = str(obj.get("content", "") or "").strip()
+                ts = str(obj.get("ts", "") or "").strip() or datetime.utcnow().isoformat()
+                typ = str(obj.get("type", mtype) or mtype).strip().lower()
+                h = str(obj.get("hash", "") or "").strip()
+                if not content:
+                    continue
+                if not h:
+                    h = self._hash(f"{self.user_id}:{typ}:{content}")
+                all_items.append({"ts": ts, "content": content, "type": typ, "hash": h})
+
+        if not all_items:
+            self._snapshot_items = []
+            self._snapshot_embs = None
+            return
+
+        # Sort by timestamp if parseable; otherwise keep stable
+        def _ts_key(x: Dict[str, Any]) -> str:
+            return str(x.get("ts", ""))
+
+        all_items.sort(key=_ts_key)
+
+        # Deduplicate by hash preserving last occurrence
+        dedup: Dict[str, Dict[str, Any]] = {}
+        for it in all_items:
+            dedup[it["hash"]] = it
+        rebuilt = list(dedup.values())
+        rebuilt.sort(key=_ts_key)
+
+        # Cap to max_snapshot_items
+        rebuilt = rebuilt[-self.max_snapshot_items:]
+
+        # Build aligned embeddings (use normalized embedding or zero vec)
+        embs = []
+        for it in rebuilt:
+            emb = None
             try:
-                with conn.cursor() as cursor:
-                    cursor.execute("""
-                        SELECT context, value, user_input, relevance_score
-                        FROM memories
-                        WHERE agent_name = %s AND context = %s AND relevance_score >= %s
-                        ORDER BY relevance_score DESC, updated_at DESC;
-                    """, (self.agent_name, context, relevance_threshold))
-                    results = cursor.fetchall()
-                    if results:
-                        memories = [{"context": result[0], "value": result[1], "user_input": result[2], "relevance_score": result[3], "created_at": None, "updated_at": None} for result in results]
-                        logger.info(f"Retrieved memory from memories table: {memories}")
-                        return memories
-            except Exception as e:
-                logger.error(f"Failed to retrieve from memories table: {str(e)}")
-                raise
-            finally:
-                self._release_connection(conn)
+                raw = self.embedding_model.encode([it["content"]])[0]
+                norm = self._normalize_embedding(raw)
+                if norm is not None and len(norm) == self.embedding_dim:
+                    emb = norm.astype(np.float32)
+            except Exception:
+                emb = None
+            if emb is None:
+                emb = self._zero_vec()
+            embs.append(emb)
 
-        # Vector search fallback
-        query_embedding = self.embedding_model.encode([query])[0].tolist()
-        conn = self._get_connection()
+        self._snapshot_items = rebuilt
+        self._snapshot_embs = np.vstack(embs).astype(np.float32)
+        self._snapshot_needs_save = True
+
         try:
-            with conn.cursor() as cursor:
-                cursor.execute("""
-                    SELECT content, 
-                           REGEXP_REPLACE(SUBSTRING(content FROM 'User''s ([^:]+):'), 'User''s | ', '', 'g') AS context_raw,
-                           'user_' || REGEXP_REPLACE(SUBSTRING(content FROM 'User''s ([^:]+):'), 'User''s | ', '_', 'g') AS context
-                    FROM chat_history
-                    WHERE agent_name = %s AND session_id = %s AND content LIKE 'User''s %: %'
-                    ORDER BY embedding <=> %s::vector
-                    LIMIT %s;
-                """, (self.agent_name, session_id, query_embedding, k))
-                results = cursor.fetchall()
-                memories = []
-                # Check if results are not empty to avoid tuple unpacking errors
-                if not results:
-                    logger.info(f"No memories found in chat_history for query '{query}' via vector search")
-                    return memories
-                for result in results:
-                    # Ensure the result has the expected number of columns
-                    if len(result) != 3:
-                        logger.warning(f"Unexpected result format in chat_history: {result}")
+            # Save immediately (atomic) so restart is consistent
+            payload = {
+                "version": 2,
+                "updated": datetime.utcnow().isoformat(),
+                "dim": self.embedding_dim,
+                "items": self._snapshot_items,
+                "embeddings": self._snapshot_embs.tolist(),
+            }
+            self._atomic_write_json(self.snapshot_path, payload)
+            self._snapshot_needs_save = False
+            logger.info(f"[Memory] Snapshot rebuilt from JSONL tail ({len(self._snapshot_items)} items).")
+        except Exception as e:
+            logger.warning(f"[Memory] Snapshot rebuild save failed (non-fatal): {e}")
+
+    async def _save_snapshot(self) -> None:
+        async with self._snapshot_lock:
+            if not self._snapshot_needs_save:
+                return
+            self._ensure_snapshot_alignment()
+
+            embs_list = self._snapshot_embs.tolist() if isinstance(self._snapshot_embs, np.ndarray) else []
+            payload = {
+                "version": 2,
+                "updated": datetime.utcnow().isoformat(),
+                "dim": self.embedding_dim,
+                "items": self._snapshot_items[-self.max_snapshot_items:],
+                "embeddings": embs_list[-self.max_snapshot_items:] if embs_list else [],
+            }
+            self._atomic_write_json(self.snapshot_path, payload)
+            self._snapshot_needs_save = False
+
+    # -------------------------
+    # Same-turn recall (RAM)
+    # -------------------------
+
+    def _purge_ephemeral(self, user_id: str) -> None:
+        now = time.time()
+        items = self._ephemeral.get(user_id, [])
+        if not items:
+            return
+        kept = [x for x in items if (now - x["ts"]) <= self._ephemeral_ttl_seconds]
+        if len(kept) > self._ephemeral_max_per_user:
+            kept = kept[-self._ephemeral_max_per_user:]
+        self._ephemeral[user_id] = kept
+
+    def stage_memory(self, user_id: str, memory_type: str, content: str, source: str = "staged") -> None:
+        if not content or not isinstance(content, str):
+            return
+        user_id = str(user_id or self.user_id)
+        self._purge_ephemeral(user_id)
+        item = {
+            "content": content.strip(),
+            "memory_type": (memory_type or "facts").strip().lower(),
+            "source": source,
+            "ts": time.time(),
+            "tokens": list(self._tokenize(content)),
+        }
+        self._ephemeral[user_id].append(item)
+        if len(self._ephemeral[user_id]) > self._ephemeral_max_per_user:
+            self._ephemeral[user_id] = self._ephemeral[user_id][-self._ephemeral_max_per_user:]
+
+    def _ephemeral_matches(self, user_id: str, query: str, top_k: int = 3) -> List[str]:
+        user_id = str(user_id or self.user_id)
+        self._purge_ephemeral(user_id)
+        q_tokens = self._tokenize(query)
+        if not q_tokens:
+            return []
+        scored: List[Tuple[float, str]] = []
+        for it in self._ephemeral.get(user_id, []):
+            c = it.get("content", "")
+            c_tokens = set(it.get("tokens", []))
+            overlap = len(q_tokens.intersection(c_tokens)) / max(1, len(q_tokens))
+            substr_boost = 0.25 if query.lower() in c.lower() else 0.0
+            score = overlap + substr_boost
+            if score > 0.15:
+                scored.append((score, c))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [c for _, c in scored[:top_k]]
+
+    # -------------------------
+    # LLM decision + categorization
+    # -------------------------
+
+    async def should_store_memory(self, input_text: str, output_text: str, user_id: str) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Decide if there's a stable memory worth storing.
+        Returns: (should_store, memory_type, content)
+        memory_type in: preferences, facts, instructions, episodic
+        """
+        text = (input_text or "").strip()
+        if len(text.split()) < 2:
+            return False, None, None
+
+        if self.disable_financial_memory and self._is_volatile(text):
+            return False, None, None
+
+        prompt = (
+            "You are a classifier for personal memory storage.\n"
+            "Decide if the user's message contains a stable, useful memory.\n"
+            "If yes, return a concise normalized memory statement the assistant can reuse.\n"
+            "Output ONLY valid JSON with keys:\n"
+            '  {"should_store": bool, "memory_type": "preferences|facts|instructions|episodic", "content": string|null}\n'
+            "Rules:\n"
+            "- Do NOT store volatile data (prices, weather, news, time-sensitive events).\n"
+            "- Store stable preferences, personal facts, standing instructions, and rare useful episodic notes.\n"
+            "- Content should be short and directly reusable (e.g., 'Favorite color: blue').\n"
+            f'User message: "{text}"\n'
+        )
+
+        try:
+            async with asyncio.timeout(8.0):
+                resp = await self.ollama_client.chat(
+                    model=self.memory_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    format="json",
+                    options={"temperature": 0.0, "max_tokens": 140},
+                )
+            raw = resp.get("message", {}).get("content", "") or ""
+            data = json.loads(raw)
+
+            should = bool(data.get("should_store"))
+            mtype = data.get("memory_type")
+            content = data.get("content")
+
+            if not should or not isinstance(mtype, str) or not isinstance(content, str) or not content.strip():
+                return False, None, None
+
+            mtype = mtype.strip().lower()
+            if mtype not in ("preferences", "facts", "instructions", "episodic"):
+                mtype = "facts"
+
+            # extra guard against volatile
+            if self.disable_financial_memory and self._is_volatile(content):
+                return False, None, None
+
+            # avoid storing trivial junk
+            if len(content.strip()) < 6:
+                return False, None, None
+
+            return True, mtype, content.strip()
+        except Exception as e:
+            logger.debug(f"Memory decision failed (non-fatal): {e}")
+            return False, None, None
+
+    # -------------------------
+    # Store / retrieve
+    # -------------------------
+
+    async def store_memory(self, content: str, user_id: str, memory_type: str = "facts", source: str = "memory") -> bool:
+        """
+        Persist a memory item (append JSONL) and update snapshot index.
+        """
+        if not content or not isinstance(content, str):
+            return False
+
+        user_id = str(user_id or self.user_id)
+        memory_type = (memory_type or "facts").strip().lower()
+        if memory_type not in self.files:
+            memory_type = "facts"
+
+        if self.disable_financial_memory and self._is_volatile(content):
+            return False
+
+        # Dedupe by hash
+        item_hash = self._hash(f"{user_id}:{memory_type}:{content.strip()}")
+        ts = datetime.utcnow().isoformat()
+
+        rec = MemoryItem(
+            ts=ts,
+            content=content.strip(),
+            memory_type=memory_type,
+            source=source,
+            hash=item_hash,
+        )
+
+        # Append JSONL (durable)
+        try:
+            obj = {
+                "ts": rec.ts,
+                "content": rec.content,
+                "type": rec.memory_type,
+                "source": rec.source,
+                "hash": rec.hash,
+            }
+            self._safe_append_jsonl(self.files[memory_type], obj)
+        except Exception as e:
+            logger.warning(f"JSONL append failed: {e}")
+            return False
+
+        # Daily log + chronicle (best-effort)
+        try:
+            with open(self.today_log_path, "a", encoding="utf-8") as f:
+                f.write(f"**Timestamp:** {ts}\n")
+                f.write(f"**Type:** {memory_type}\n")
+                f.write(f"**Memory:** {rec.content}\n\n---\n\n")
+            with open(self.chronicle_path, "a", encoding="utf-8") as f:
+                f.write(f"- {date.today().isoformat()}: [{memory_type}] {rec.content}\n")
+        except Exception:
+            pass
+
+        # Update snapshot (fast retrieval). Keep strict alignment by always appending a vector.
+        emb = None
+        try:
+            raw = self.embedding_model.encode([rec.content])[0]
+            norm = self._normalize_embedding(raw)
+            if norm is not None and len(norm) == self.embedding_dim:
+                emb = norm.astype(np.float32)
+        except Exception:
+            emb = None
+
+        if emb is None:
+            emb = self._zero_vec()
+
+        async with self._snapshot_lock:
+            self._snapshot_items.append({"ts": rec.ts, "content": rec.content, "type": rec.memory_type, "hash": rec.hash})
+
+            if self._snapshot_embs is None:
+                self._snapshot_embs = np.asarray([emb], dtype=np.float32)
+            else:
+                self._snapshot_embs = np.vstack([self._snapshot_embs, emb])
+
+            # cap both together
+            if len(self._snapshot_items) > self.max_snapshot_items:
+                overflow = len(self._snapshot_items) - self.max_snapshot_items
+                self._snapshot_items = self._snapshot_items[overflow:]
+                if isinstance(self._snapshot_embs, np.ndarray) and self._snapshot_embs.shape[0] >= overflow:
+                    self._snapshot_embs = self._snapshot_embs[overflow:, :]
+
+            self._snapshot_needs_save = True
+
+        await self._save_snapshot()
+        return True
+
+    def _collect_forget_phrases(self, max_scan: int = 250) -> List[str]:
+        """
+        Reads recent instruction memories to extract forget directives.
+        """
+        phrases: List[str] = []
+        try:
+            recent = self._snapshot_items[-max_scan:] if self._snapshot_items else []
+            for it in reversed(recent):
+                if (it.get("type") or "").lower() != "instructions":
+                    continue
+                c = (it.get("content") or "").strip()
+                if not c:
+                    continue
+                up = c.upper()
+                if any(up.startswith(p) for p in FORGET_PREFIXES):
+                    # Extract phrase after first colon if possible
+                    if ":" in c:
+                        phrase = c.split(":", 1)[1].strip()
+                    else:
+                        phrase = c.split(" ", 1)[-1].strip() if " " in c else ""
+                    phrase = phrase.strip().lower()
+                    if phrase and phrase not in phrases and len(phrase) >= 2:
+                        phrases.append(phrase)
+        except Exception:
+            pass
+        return phrases
+
+    def _apply_forget_filter(self, memories: List[str]) -> List[str]:
+        phrases = self._collect_forget_phrases()
+        if not phrases:
+            return memories
+        out = []
+        for m in memories:
+            low = (m or "").lower()
+            if any(p in low for p in phrases):
+                continue
+            out.append(m)
+        return out
+
+    async def retrieve_relevant_memories(self, query: str, user_id: str, min_score: float = 0.20) -> Optional[str]:
+        """
+        Return a formatted memory context string (top relevant memories).
+        """
+        user_id = str(user_id or self.user_id)
+        q = (query or "").strip()
+        if not q:
+            return None
+
+        # 1) Same-turn staged RAM matches
+        staged = self._ephemeral_matches(user_id, q, top_k=3)
+
+        # 2) Snapshot vector similarity
+        vector_hits: List[Tuple[float, str]] = []
+        try:
+            raw_q = self.embedding_model.encode([q])[0]
+            q_emb = self._normalize_embedding(raw_q)
+            if q_emb is not None:
+                async with self._snapshot_lock:
+                    embs = self._snapshot_embs
+                    items = list(self._snapshot_items)
+
+                if isinstance(embs, np.ndarray) and embs.size and embs.shape[0] == len(items):
+                    sims = np.dot(embs, q_emb.astype(np.float32))
+                    if sims.ndim == 1 and sims.size:
+                        top_idx = np.argsort(-sims)[:8]
+                        for idx in top_idx:
+                            score = float(sims[idx])
+                            if score < min_score:
+                                continue
+                            content = items[int(idx)].get("content", "")
+                            if content:
+                                vector_hits.append((score, content))
+        except Exception as e:
+            logger.debug(f"Vector retrieval failed (non-fatal): {e}")
+
+        # 3) Keyword fallback across latest items
+        keyword_hits: List[Tuple[float, str]] = []
+        try:
+            q_tokens = self._tokenize(q)
+            if q_tokens:
+                async with self._snapshot_lock:
+                    recent = self._snapshot_items[-220:]
+                for it in reversed(recent):
+                    c = it.get("content", "")
+                    if not c:
                         continue
-                    content, context_raw, extracted_context = result
-                    if extracted_context == context and ": " in content:
-                        _, value = content.split(": ", 1)
-                        memories.append({
-                            "context": extracted_context,
-                            "value": value,
-                            "user_input": content,
-                            "relevance_score": None,
-                            "created_at": None,
-                            "updated_at": None
-                        })
-                logger.info(f"Retrieved {len(memories)} memories for query '{query}' via vector search")
-                return memories
-        except Exception as e:
-            logger.error(f"Failed to retrieve from chat_history: {str(e)}")
-            raise
-        finally:
-            self._release_connection(conn)
+                    c_tokens = self._tokenize(c)
+                    overlap = len(q_tokens.intersection(c_tokens)) / max(1, len(q_tokens))
+                    if overlap >= 0.35:
+                        keyword_hits.append((overlap, c))
+        except Exception:
+            pass
 
-    def close(self):
+        # Merge results, dedupe, and remove junk
+        results: List[str] = []
+        seen = set()
+
+        def _accept(s: str) -> bool:
+            s = (s or "").strip()
+            if not s:
+                return False
+            if len(s) < 6:
+                return False
+            # avoid extremely generic content
+            low = s.lower()
+            if low in ("ok", "okay", "sure", "thanks", "noted"):
+                return False
+            return True
+
+        for c in staged:
+            if _accept(c) and c not in seen:
+                results.append(c[:220])
+                seen.add(c)
+
+        for _, c in sorted(vector_hits, key=lambda x: x[0], reverse=True):
+            if len(results) >= 6:
+                break
+            if _accept(c) and c not in seen:
+                results.append(c[:220])
+                seen.add(c)
+
+        for _, c in sorted(keyword_hits, key=lambda x: x[0], reverse=True):
+            if len(results) >= 6:
+                break
+            if _accept(c) and c not in seen:
+                results.append(c[:220])
+                seen.add(c)
+
+        if not results:
+            return None
+
+        # Enforce forget directives
+        results = self._apply_forget_filter(results)
+        if not results:
+            return None
+
+        return "\n".join(f"- {r}" for r in results[:6])
+
+    # -------------------------
+    # Telegram support methods
+    # -------------------------
+
+    async def list_recent_memories(self, user_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+        """
+        Returns recent snapshot items (most recent first).
+        Safe and fast; doesn't read disk.
+        """
+        user_id = str(user_id or self.user_id)
         try:
-            if self.conn_pool:
-                self.conn_pool.closeall()
-                logger.info("Closed connection pool")
-        except Exception as e:
-            logger.error(f"Failed to close connection pool: {str(e)}")
+            async with self._snapshot_lock:
+                items = list(self._snapshot_items)
+            items = items[-max(1, int(limit)):]
+            items.reverse()
+            out = []
+            for it in items:
+                out.append({
+                    "ts": it.get("ts", ""),
+                    "type": it.get("type", "facts"),
+                    "content": it.get("content", ""),
+                    "hash": it.get("hash", ""),
+                })
+            return out
+        except Exception:
+            return []
+
+    async def pin_instruction(self, user_id: str, instruction: str, source: str = "pin") -> bool:
+        """
+        Stores an instruction as a durable memory item.
+        """
+        instruction = (instruction or "").strip()
+        if not instruction:
+            return False
+        return await self.store_memory(instruction, user_id=str(user_id or self.user_id), memory_type="instructions", source=source)
+
+    async def forget_phrase(self, user_id: str, phrase: str, source: str = "forget") -> bool:
+        """
+        Adds a 'forget tombstone' instruction and retrieval will respect it.
+        This does NOT delete old JSONL (safer).
+        """
+        phrase = (phrase or "").strip()
+        if not phrase:
+            return False
+        content = f"FORGET: {phrase}"
+        return await self.store_memory(content, user_id=str(user_id or self.user_id), memory_type="instructions", source=source)
+
+    # -------------------------
+    # Maintenance
+    # -------------------------
+
+    async def curate_daily_digest(self) -> None:
+        """
+        Optional: summarize today's log into chronicle (best-effort).
+        """
+        try:
+            if not os.path.exists(self.today_log_path):
+                return
+            with open(self.today_log_path, "r", encoding="utf-8") as f:
+                tail = f.read()[-5000:]
+            if len(tail) < 300:
+                return
+
+            prompt = (
+                "Condense the following daily memory log into 5-12 concise bullets of stable facts, preferences, or instructions.\n"
+                "Avoid volatile items.\n"
+                "Output ONLY markdown bullets.\n\n"
+                f"{tail}"
+            )
+            async with asyncio.timeout(10.0):
+                resp = await self.ollama_client.chat(
+                    model=self.memory_model,
+                    messages=[{"role": "user", "content": prompt}],
+                    options={"temperature": 0.0, "max_tokens": 240},
+                )
+            digest = (resp.get("message", {}).get("content", "") or "").strip()
+            if digest:
+                with open(self.chronicle_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n### Digest {date.today().isoformat()}\n{digest}\n")
+        except Exception:
+            pass
+
+    async def prune_old_memories(self) -> None:
+        """
+        Keep files bounded and purge old episodic items.
+        Conservative to avoid corruption.
+        """
+        try:
+            # Compact oversized JSONL files by keeping last N lines
+            for key, path in self.files.items():
+                if not os.path.exists(path):
+                    continue
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        lines = f.readlines()
+                    if len(lines) <= self.max_line_items_per_file:
+                        continue
+                    keep = lines[-self.max_line_items_per_file:]
+                    tmp = path + ".tmp"
+                    with open(tmp, "w", encoding="utf-8") as f:
+                        f.writelines(keep)
+                    os.replace(tmp, path)
+                except Exception:
+                    continue
+
+            # Episodic TTL purge (rewrite episodic.jsonl only)
+            ep_path = self.files["episodic"]
+            if os.path.exists(ep_path):
+                cutoff = datetime.utcnow() - timedelta(days=self.episodic_ttl_days)
+                kept: List[str] = []
+                with open(ep_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            obj = json.loads(line)
+                            ts = obj.get("ts")
+                            if ts:
+                                dt = datetime.fromisoformat(ts.replace("Z", ""))
+                                if dt >= cutoff:
+                                    kept.append(line + "\n")
+                            else:
+                                kept.append(line + "\n")
+                        except Exception:
+                            kept.append(line + "\n")
+                tmp = ep_path + ".tmp"
+                with open(tmp, "w", encoding="utf-8") as f:
+                    f.writelines(kept[-self.max_line_items_per_file:])
+                os.replace(tmp, ep_path)
+
+            await self._save_snapshot()
+        except Exception:
+            pass
