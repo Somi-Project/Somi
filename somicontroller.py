@@ -131,7 +131,8 @@ class SomiAIGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         logger.info("Initializing SomiAIGUI...")
-        self.setWindowTitle("Somi AI GUI")
+        self.setWindowTitle("SOMI")
+        self.setWindowIcon(QIcon("assets/logo.ico"))
         self.setGeometry(100, 100, 960, 700)
 
         # Process tracking
@@ -173,6 +174,9 @@ class SomiAIGUI(QMainWindow):
         grid.addWidget(self._main_btn("Audio Interface (experimental)", lambda: AudioDialog(self).exec()), 3, 0)
         grid.addWidget(self._main_btn("Personality", self.run_personality_editor),1, 1)
         grid.addWidget(self._main_btn("General Settings", self.show_model_selections), 3, 1)
+        grid.addWidget(self._main_btn("Data Analysis Agent", self.open_data_agent), 4, 0)
+
+
 
         main_layout.addStretch()
 
@@ -233,8 +237,11 @@ class SomiAIGUI(QMainWindow):
         """)
         btn.clicked.connect(callback)
         return btn
-
-    # === ALL YOUR ORIGINAL METHODS — FULL AND UNCHANGED ===
+    
+    def open_data_agent(self):
+        from gui import dataagentgui
+        dialog = dataagentgui.DataAgentWindow(self)
+        dialog.exec()
 
     def update_stylesheet(self):
         background_style = f"background-image: url({self.background_path}); background-size: cover;" if self.background_path and os.path.exists(self.background_path) else ""
@@ -664,12 +671,19 @@ class SomiAIGUI(QMainWindow):
             help_window = HelpWindow(self, f"Help - {section}", help_content)
             help_window.exec()
 
+    def open_data_agent(self):
+        """Opens the Data Analysis Agent window"""
+        try:
+            from gui import dataagentgui
+            dialog = dataagentgui.DataAgentWindow(self)
+            dialog.exec()
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Could not open Data Analysis Agent:\n\n{e}")
+            print(f"[GUI] Data Agent failed: {e}")
+
 if __name__ == "__main__":
     os.chdir(os.path.dirname(os.path.abspath(__file__)))
     app = QApplication(sys.argv)
     window = SomiAIGUI()
     window.show()
-    sys.exit(app.exec())
-    window.show()
-
     sys.exit(app.exec())
