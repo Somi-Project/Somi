@@ -1,10 +1,11 @@
-ollama==0.3.3
-numpy==2.1.1
+ollama
+numpy==1.26.4
 sounddevice==0.5.0
 soundfile==0.12.1
 whisper==1.1.10
 scipy==1.14.1
 torch==2.4.1
+torchvision==0.19.1
 TTS==0.22.0
 click==8.1.7
 psycopg2-binary==2.9.9
@@ -31,5 +32,5 @@ librosa==0.10.2
 pyttsx3==2.90
 huggingface-hub==0.20.0
 ffmpeg-python==0.2.0
-pyttsx3==2.98
-torchvision==0.19.1
+timezonefinder
+
