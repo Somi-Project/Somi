@@ -88,7 +88,6 @@ class MemoryManager:
         self._load_snapshot()
         self._migrate_legacy_jsonl_if_needed()
 
-
     def _safe_append_jsonl(self, path: str, obj: Dict[str, Any]) -> None:
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(obj, ensure_ascii=False) + "\n")
@@ -165,7 +164,7 @@ class MemoryManager:
         s = (scope or "conversation").strip().lower()
         return s if s in VALID_SCOPES else "conversation"
 
-
+    # ---------------- PATCHED: supports seconds ----------------
     def _parse_due_time(self, when: str) -> Optional[str]:
         raw = (when or "").strip().lower()
         if not raw:
@@ -175,11 +174,14 @@ class MemoryManager:
                 return datetime.fromisoformat(raw.replace("z", "")).isoformat()
         except Exception:
             pass
+
         now = datetime.utcnow()
         parts = raw.split()
         if len(parts) == 3 and parts[0] == "in" and parts[1].isdigit():
             n = int(parts[1])
             unit = parts[2]
+            if unit.startswith("sec"):
+                return (now + timedelta(seconds=n)).isoformat()
             if unit.startswith("min"):
                 return (now + timedelta(minutes=n)).isoformat()
             if unit.startswith("hour"):
@@ -250,16 +252,18 @@ class MemoryManager:
             return
         uid = str(user_id or self.user_id)
         self._purge_ephemeral(uid)
-        self._ephemeral[uid].append({
-            "content": content.strip(),
-            "memory_type": (memory_type or "facts").strip().lower(),
-            "source": source,
-            "scope": self._normalize_scope(scope),
-            "ts": time.time(),
-            "tokens": list(tokenize(content)),
-        })
+        self._ephemeral[uid].append(
+            {
+                "content": content.strip(),
+                "memory_type": (memory_type or "facts").strip().lower(),
+                "source": source,
+                "scope": self._normalize_scope(scope),
+                "ts": time.time(),
+                "tokens": list(tokenize(content)),
+            }
+        )
         if len(self._ephemeral[uid]) > self._ephemeral_max_per_user:
-            self._ephemeral[uid] = self._ephemeral[uid][-self._ephemeral_max_per_user:]
+            self._ephemeral[uid] = self._ephemeral[uid][-self._ephemeral_max_per_user :]
 
     def _ephemeral_matches(self, user_id: str, query: str, scope: str, top_k: int = 3) -> List[str]:
         uid = str(user_id or self.user_id)
@@ -335,15 +339,18 @@ class MemoryManager:
         emb = self._embed(content)
 
         try:
-            self._safe_append_jsonl(self._legacy_files.get(memory_type, self._legacy_files["facts"]), {
-                "ts": ts,
-                "user_id": uid,
-                "scope": scope,
-                "type": memory_type,
-                "content": content.strip(),
-                "source": source,
-                "claim_id": claim_id,
-            })
+            self._safe_append_jsonl(
+                self._legacy_files.get(memory_type, self._legacy_files["facts"]),
+                {
+                    "ts": ts,
+                    "user_id": uid,
+                    "scope": scope,
+                    "type": memory_type,
+                    "content": content.strip(),
+                    "source": source,
+                    "claim_id": claim_id,
+                },
+            )
         except Exception:
             pass
 
@@ -434,7 +441,9 @@ class MemoryManager:
                     phrases.append(phrase)
         return phrases
 
-    async def retrieve_relevant_memories_with_trace(self, query: str, user_id: str, min_score: float = 0.20, scope: str = "conversation") -> Dict[str, Any]:
+    async def retrieve_relevant_memories_with_trace(
+        self, query: str, user_id: str, min_score: float = 0.20, scope: str = "conversation"
+    ) -> Dict[str, Any]:
         uid = str(user_id or self.user_id)
         scope = self._normalize_scope(scope)
         q = (query or "").strip()
@@ -483,13 +492,15 @@ class MemoryManager:
             if c and c not in seen and not any(p in c.lower() for p in phrases):
                 results.append(c[:220])
                 seen.add(c)
-                kept_ranked.append({
-                    "claim_id": r.get("claim_id", ""),
-                    "score": float(r.get("rank_score", 0.0)),
-                    "sim": float(r.get("sim", 0.0)),
-                    "memory_type": r.get("memory_type", "facts"),
-                    "scope": r.get("scope", scope),
-                })
+                kept_ranked.append(
+                    {
+                        "claim_id": r.get("claim_id", ""),
+                        "score": float(r.get("rank_score", 0.0)),
+                        "sim": float(r.get("sim", 0.0)),
+                        "memory_type": r.get("memory_type", "facts"),
+                        "scope": r.get("scope", scope),
+                    }
+                )
             if len(results) >= 6:
                 break
 
@@ -510,8 +521,6 @@ class MemoryManager:
     async def retrieve_relevant_memories(self, query: str, user_id: str, min_score: float = 0.20, scope: str = "conversation") -> Optional[str]:
         out = await self.retrieve_relevant_memories_with_trace(query, user_id, min_score=min_score, scope=scope)
         return out.get("context")
-
-
 
     async def retract_claim(self, user_id: str, claim_id: str, source: str = "retract", scope: str = "conversation") -> bool:
         uid = str(user_id or self.user_id)
@@ -535,7 +544,15 @@ class MemoryManager:
         self.events.append(event)
         return True
 
-    async def supersede_claim(self, user_id: str, old_claim_id: str, new_content: str, memory_type: str = "facts", source: str = "supersede", scope: str = "conversation") -> bool:
+    async def supersede_claim(
+        self,
+        user_id: str,
+        old_claim_id: str,
+        new_content: str,
+        memory_type: str = "facts",
+        source: str = "supersede",
+        scope: str = "conversation",
+    ) -> bool:
         uid = str(user_id or self.user_id)
         old_cid = (old_claim_id or "").strip()
         scope = self._normalize_scope(scope)
@@ -589,7 +606,6 @@ class MemoryManager:
             return False
         return await self.store_memory(f"FORGET: {p}", str(user_id or self.user_id), "instructions", source=source, scope=scope, salience=0.95)
 
-
     async def add_reminder(self, user_id: str, title: str, when: str, details: str = "", scope: str = "task", priority: int = 3) -> Optional[str]:
         uid = str(user_id or self.user_id)
         scope = self._normalize_scope(scope)
@@ -598,15 +614,17 @@ class MemoryManager:
             return None
         rid = hash_text(f"reminder:{uid}:{scope}:{title}:{due_ts}")
         self.sql.add_reminder(rid, uid, scope, title.strip(), (details or "").strip(), due_ts, priority=int(priority))
-        self.events.append({
-            "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_create"),
-            "ts": utcnow_iso(),
-            "user_id": uid,
-            "scope": scope,
-            "event_type": "reminder_create",
-            "claim_id": None,
-            "payload": {"reminder_id": rid, "title": title.strip(), "due_ts": due_ts},
-        })
+        self.events.append(
+            {
+                "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_create"),
+                "ts": utcnow_iso(),
+                "user_id": uid,
+                "scope": scope,
+                "event_type": "reminder_create",
+                "claim_id": None,
+                "payload": {"reminder_id": rid, "title": title.strip(), "due_ts": due_ts},
+            }
+        )
         return rid
 
     async def consume_due_reminders(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
@@ -618,22 +636,26 @@ class MemoryManager:
             if not rid:
                 continue
             self.sql.mark_reminder_fired(rid)
-            out.append({
-                "reminder_id": rid,
-                "title": str(r.get("title", "")),
-                "details": str(r.get("details", "")),
-                "due_ts": str(r.get("due_ts", "")),
-                "scope": str(r.get("scope", "task")),
-            })
-            self.events.append({
-                "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_fire"),
-                "ts": utcnow_iso(),
-                "user_id": uid,
-                "scope": str(r.get("scope", "task")),
-                "event_type": "reminder_fire",
-                "claim_id": None,
-                "payload": {"reminder_id": rid, "title": str(r.get("title", ""))},
-            })
+            out.append(
+                {
+                    "reminder_id": rid,
+                    "title": str(r.get("title", "")),
+                    "details": str(r.get("details", "")),
+                    "due_ts": str(r.get("due_ts", "")),
+                    "scope": str(r.get("scope", "task")),
+                }
+            )
+            self.events.append(
+                {
+                    "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_fire"),
+                    "ts": utcnow_iso(),
+                    "user_id": uid,
+                    "scope": str(r.get("scope", "task")),
+                    "event_type": "reminder_fire",
+                    "claim_id": None,
+                    "payload": {"reminder_id": rid, "title": str(r.get("title", ""))},
+                }
+            )
         return out
 
     async def ack_reminder(self, user_id: str, reminder_id: str, action: str = "done", snooze_minutes: int = 0) -> bool:
@@ -645,31 +667,87 @@ class MemoryManager:
         if action == "snooze" and int(snooze_minutes) > 0:
             snooze_until = (datetime.utcnow() + timedelta(minutes=int(snooze_minutes))).isoformat()
         self.sql.ack_reminder(rid, action=action, snooze_until_ts=snooze_until)
-        self.events.append({
-            "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_ack"),
-            "ts": utcnow_iso(),
-            "user_id": uid,
-            "scope": "task",
-            "event_type": "reminder_ack",
-            "claim_id": None,
-            "payload": {"reminder_id": rid, "action": action, "snooze_until": snooze_until},
-        })
+        self.events.append(
+            {
+                "event_id": hash_text(f"event:{utcnow_iso()}:{rid}:reminder_ack"),
+                "ts": utcnow_iso(),
+                "user_id": uid,
+                "scope": "task",
+                "event_type": "reminder_ack",
+                "claim_id": None,
+                "payload": {"reminder_id": rid, "action": action, "snooze_until": snooze_until},
+            }
+        )
         return True
 
-    async def upsert_goal(self, user_id: str, title: str, objective: str = "", scope: str = "task", target_ts: Optional[str] = None, progress: float = 0.0, confidence: float = 0.6) -> str:
+    # ---------------- NEW: list active reminders ----------------
+    async def list_active_reminders(self, user_id: str, scope: str = "task", limit: int = 25) -> List[Dict[str, Any]]:
+        uid = str(user_id or self.user_id)
+        sc = self._normalize_scope(scope)
+        try:
+            return self.sql.active_reminders(uid, scope=sc, limit=max(1, int(limit)))
+        except Exception:
+            return []
+
+    # ---------------- NEW: delete reminders by title ----------------
+    async def delete_reminder_by_title(self, user_id: str, title: str, scope: str = "task") -> int:
+        uid = str(user_id or self.user_id)
+        sc = self._normalize_scope(scope)
+        t = (title or "").strip()
+        if not t:
+            return 0
+        try:
+            n = int(self.sql.delete_reminder_by_title(uid, scope=sc, title=t) or 0)
+        except Exception:
+            n = 0
+        if n > 0:
+            self.events.append(
+                {
+                    "event_id": hash_text(f"event:{utcnow_iso()}:{uid}:{sc}:{hash_text(t)}:reminder_delete"),
+                    "ts": utcnow_iso(),
+                    "user_id": uid,
+                    "scope": sc,
+                    "event_type": "reminder_delete",
+                    "claim_id": None,
+                    "payload": {"title": t, "count": n},
+                }
+            )
+        return n
+
+    async def upsert_goal(
+        self,
+        user_id: str,
+        title: str,
+        objective: str = "",
+        scope: str = "task",
+        target_ts: Optional[str] = None,
+        progress: float = 0.0,
+        confidence: float = 0.6,
+    ) -> str:
         uid = str(user_id or self.user_id)
         sc = self._normalize_scope(scope)
         gid = hash_text(f"goal:{uid}:{sc}:{title.strip()}")
-        self.sql.upsert_goal(gid, uid, sc, title.strip(), objective.strip(), target_ts=target_ts, progress=progress, confidence=confidence)
-        self.events.append({
-            "event_id": hash_text(f"event:{utcnow_iso()}:{gid}:goal_upsert"),
-            "ts": utcnow_iso(),
-            "user_id": uid,
-            "scope": sc,
-            "event_type": "goal_upsert",
-            "claim_id": None,
-            "payload": {"goal_id": gid, "title": title.strip(), "progress": float(progress), "confidence": float(confidence)},
-        })
+        self.sql.upsert_goal(
+            gid,
+            uid,
+            sc,
+            title.strip(),
+            objective.strip(),
+            target_ts=target_ts,
+            progress=progress,
+            confidence=confidence,
+        )
+        self.events.append(
+            {
+                "event_id": hash_text(f"event:{utcnow_iso()}:{gid}:goal_upsert"),
+                "ts": utcnow_iso(),
+                "user_id": uid,
+                "scope": sc,
+                "event_type": "goal_upsert",
+                "claim_id": None,
+                "payload": {"goal_id": gid, "title": title.strip(), "progress": float(progress), "confidence": float(confidence)},
+            }
+        )
         return gid
 
     async def list_active_goals(self, user_id: str, scope: str = "task", limit: int = 6) -> List[Dict[str, Any]]:
@@ -682,8 +760,35 @@ class MemoryManager:
             return None
         lines = []
         for g in goals[:limit]:
-            lines.append(f"- {g.get('title','Goal')} (progress {int(float(g.get('progress',0.0))*100)}%, confidence {float(g.get('confidence',0.6)):.2f})")
+            lines.append(
+                f"- {g.get('title','Goal')} (progress {int(float(g.get('progress',0.0))*100)}%, confidence {float(g.get('confidence',0.6)):.2f})"
+            )
         return "\n".join(lines)
+
+    # ---------------- NEW: delete goal by title ----------------
+    async def delete_goal_by_title(self, user_id: str, title: str, scope: str = "task") -> bool:
+        uid = str(user_id or self.user_id)
+        sc = self._normalize_scope(scope)
+        t = (title or "").strip()
+        if not t:
+            return False
+        try:
+            deleted = bool(self.sql.delete_goal_by_title(uid, scope=sc, title=t))
+        except Exception:
+            deleted = False
+        if deleted:
+            self.events.append(
+                {
+                    "event_id": hash_text(f"event:{utcnow_iso()}:{uid}:{sc}:{hash_text(t)}:goal_delete"),
+                    "ts": utcnow_iso(),
+                    "user_id": uid,
+                    "scope": sc,
+                    "event_type": "goal_delete",
+                    "claim_id": None,
+                    "payload": {"title": t},
+                }
+            )
+        return deleted
 
     async def curate_daily_digest(self) -> None:
         return
