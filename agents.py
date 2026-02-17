@@ -307,12 +307,23 @@ class Agent:
         except Exception:
             pass
 
-    async def _persist_memory_serial(self, mem_content: str, user_id: str, mem_type: str, source: str) -> None:
+    async def _persist_memory_serial(self, mem_content: str, user_id: str, mem_type: str, source: str, scope: str = "conversation") -> None:
         try:
             async with self._mem_write_sem:
-                await self.memory.store_memory(mem_content, user_id, mem_type, source=source)
+                await self.memory.store_memory(mem_content, user_id, mem_type, source=source, scope=scope)
         except Exception:
             pass
+
+
+    def _memory_scope_for_prompt(self, prompt: str, should_search: bool = False) -> str:
+        pl = (prompt or "").lower()
+        if self.current_mode == "story":
+            return "task"
+        if any(k in pl for k in ("remember", "always", "preference", "my favorite", "i prefer", "call me")):
+            return "profile"
+        if should_search:
+            return "task"
+        return "conversation"
 
     def _token_budget(self, prompt: str, system_prompt: str, base_max: int) -> int:
         total_chars = len(prompt) + len(system_prompt)
@@ -443,6 +454,36 @@ class Agent:
             logger.debug(f"Early conversion failed: {e}")
             # fall through — normal routing continues
 
+
+        # Lightweight proactive memory commands
+        try:
+            m = re.search(r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(minutes?|hours?|days?)$", prompt_lower)
+            if m:
+                title = m.group(1).strip()
+                n = int(m.group(2))
+                unit = m.group(3)
+                rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {n} {unit}", scope="task")
+                if rid:
+                    return f"Got it — reminder set: '{title}' in {n} {unit}."
+                return "I couldn't parse that reminder time. Try: remind me to <task> in 2 hours."
+            if prompt_lower.startswith("my goal is "):
+                gtitle = prompt[len("my goal is "):].strip()
+                if gtitle:
+                    await self.memory.upsert_goal(active_user_id, title=gtitle, scope="task", progress=0.0, confidence=0.7)
+                    return f"Goal saved: {gtitle}"
+            if prompt_lower.startswith("update goal ") and " to " in prompt_lower:
+                # format: update goal <title> to <progress%>
+                tail = prompt[len("update goal "):].strip()
+                parts = tail.rsplit(" to ", 1)
+                if len(parts) == 2 and parts[0].strip():
+                    pct_txt = parts[1].strip().rstrip("%")
+                    if pct_txt.replace(".", "", 1).isdigit():
+                        prog = max(0.0, min(1.0, float(pct_txt) / 100.0))
+                        await self.memory.upsert_goal(active_user_id, title=parts[0].strip(), scope="task", progress=prog, confidence=0.72)
+                        return f"Updated goal '{parts[0].strip()}' to {int(prog*100)}%."
+        except Exception:
+            pass
+
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
@@ -468,9 +509,20 @@ class Agent:
                 logger.info(f"Web search failed (non-fatal): {e}")
                 search_context = "Web search unavailable."
         else:
-            mem = await self.memory.retrieve_relevant_memories(prompt, active_user_id, min_score=0.20)
-            if mem:
+            mem_scope = self._memory_scope_for_prompt(prompt, should_search=False)
+            mem = await self.memory.retrieve_relevant_memories(prompt, active_user_id, min_score=0.20, scope=mem_scope)
+            due = await self.memory.consume_due_reminders(active_user_id, limit=3)
+            due_block = ""
+            if due:
+                due_lines = [f"- {d.get('title','Reminder')} (due {d.get('due_ts','soon')})" for d in due[:3]]
+                due_block = "\n".join(due_lines)
+            if mem and due_block:
+                memory_context = f"[Due reminders]\n{due_block}\n\n[Memory]\n{mem}"
+            elif mem:
                 memory_context = mem
+            elif due_block:
+                memory_context = f"[Due reminders]\n{due_block}"
+
 
         rag_block = self._build_rag_block(prompt, k=2)
         current_time = self.time_handler.get_system_date_time()
@@ -483,6 +535,12 @@ class Agent:
         extra_blocks = []
         if rag_block:
             extra_blocks.append(rag_block)
+        try:
+            goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=3)
+            if goal_ctx:
+                extra_blocks.append("## Active Goals\n" + goal_ctx)
+        except Exception:
+            pass
 
         if should_search:
             sources = self._extract_urls_from_results(results, limit=4)
@@ -570,15 +628,17 @@ class Agent:
         if not should_search:
             try:
                 should_store, mem_type, mem_content = await self.memory.should_store_memory(prompt, content, active_user_id)
+                mem_scope = self._memory_scope_for_prompt(prompt, should_search=should_search)
                 if should_store and mem_type and mem_content:
                     self.memory.stage_memory(
                         user_id=active_user_id,
                         memory_type=mem_type,
                         content=mem_content,
                         source="conversation",
+                        scope=mem_scope,
                     )
                     asyncio.create_task(
-                        self._persist_memory_serial(mem_content, active_user_id, mem_type, source="conversation")
+                        self._persist_memory_serial(mem_content, active_user_id, mem_type, source="conversation", scope=mem_scope)
                     )
             except Exception:
                 pass
@@ -592,7 +652,7 @@ class Agent:
 
         system_prompt = self._compose_identity_block()
         memory_context = (
-            await self.memory.retrieve_relevant_memories(caption or "image", active_user_id, min_score=0.20)
+            await self.memory.retrieve_relevant_memories(caption or "image", active_user_id, min_score=0.20, scope="vision")
             or "No relevant memories found"
         )
 
@@ -620,8 +680,8 @@ class Agent:
             content = self._strip_unwanted_json(content)
 
             note = f"Image noted: {caption}".strip()
-            self.memory.stage_memory(user_id=active_user_id, memory_type="episodic", content=note, source="vision")
-            asyncio.create_task(self._persist_memory_serial(note, active_user_id, "episodic", source="vision"))
+            self.memory.stage_memory(user_id=active_user_id, memory_type="episodic", content=note, source="vision", scope="vision")
+            asyncio.create_task(self._persist_memory_serial(note, active_user_id, "episodic", source="vision", scope="vision"))
             return content or "I couldn't extract anything useful from that image."
         except Exception as e:
             return f"Sorry — image analysis failed ({type(e).__name__})."
