@@ -70,6 +70,8 @@ class Agent:
 
         self._maintenance_task: Optional[asyncio.Task] = None
         self._mem_write_sem = asyncio.Semaphore(1)
+        self._last_due_injected_at: Dict[str, float] = {}
+        self._due_inject_cooldown_seconds = 300.0
 
         # Load personality config
         try:
@@ -229,6 +231,12 @@ class Agent:
             if len(self.conversation_cache) > 10:
                 self.conversation_cache = self.conversation_cache[-10:]
 
+    def _format_due_ts_local(self, due_ts: str) -> str:
+        try:
+            return self.time_handler.format_iso_to_local(str(due_ts or ""), SYSTEM_TIMEZONE)
+        except Exception:
+            return str(due_ts or "")
+
     # -------- Local intent routing (memory/goals/reminders) --------
     def _is_personal_memory_query(self, prompt: str) -> bool:
         pl = (prompt or "").strip().lower()
@@ -255,6 +263,22 @@ class Agent:
 
         return False
 
+    def _should_inject_due_context(self, prompt: str, active_user_id: str) -> bool:
+        """
+        Avoid due-reminder context pollution on unrelated turns.
+        Always allow on explicit memory/reminder queries; otherwise throttle.
+        """
+        if self._is_personal_memory_query(prompt):
+            return True
+        now = time.time()
+        uid = str(active_user_id or self.user_id)
+        last = float(self._last_due_injected_at.get(uid, 0.0) or 0.0)
+        return (now - last) >= float(self._due_inject_cooldown_seconds)
+
+    def _mark_due_context_injected(self, active_user_id: str) -> None:
+        uid = str(active_user_id or self.user_id)
+        self._last_due_injected_at[uid] = time.time()
+
     async def _route_local_memory_intents(self, prompt: str, active_user_id: str) -> Optional[str]:
         """
         Handle obvious memory/goals/reminders intents deterministically.
@@ -265,20 +289,36 @@ class Agent:
         if not pll:
             return None
 
-        # 1) One-time reminders: "remind me to X in N seconds/minutes/hours/days"
+        # 1) One-time reminders: supports common natural phrasing + shorthand units
         m = re.search(
-            r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|minutes?|hours?|days?)\s*$",
+            r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*$",
             pll,
         )
         if m:
             title = m.group(1).strip()
             n = int(m.group(2))
             unit = m.group(3).strip()
-
-            # MemoryManager supports "in N unit" parsing; seconds require a memory.py patch (you said you'll do it).
             rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {n} {unit}", scope="task")
             if rid:
                 return f"Got it — reminder set: '{title}' in {n} {unit}."
+            return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
+        m = re.search(r"^remind me to\s+(.+?)\s+in\s+(a|an)\s+(minute|hour|day)\s*$", pll)
+        if m:
+            title = m.group(1).strip()
+            article = m.group(2)
+            unit = m.group(3)
+            rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {article} {unit}", scope="task")
+            if rid:
+                return f"Got it — reminder set: '{title}' in {article} {unit}."
+            return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
+        m = re.search(r"^remind me to\s+(.+?)\s+in\s+half\s+an?\s+hour\s*$", pll)
+        if m:
+            title = m.group(1).strip()
+            rid = await self.memory.add_reminder(active_user_id, title=title, when="in half an hour", scope="task")
+            if rid:
+                return f"Got it — reminder set: '{title}' in half an hour."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
 
         # 2) Due reminders: "any due reminders" / "are there any due reminders right now"
@@ -289,7 +329,7 @@ class Agent:
             lines = ["**Due reminders:**"]
             for d in due:
                 title = str(d.get("title", "Reminder"))
-                due_ts = str(d.get("due_ts", "soon"))
+                due_ts = self._format_due_ts_local(str(d.get("due_ts", "soon")))
                 lines.append(f"- {title} (due {due_ts})")
             return "\n".join(lines)
 
@@ -320,7 +360,7 @@ class Agent:
                     )
                 # If it's a one-time phrasing like "in 2 hours", let the normal reminder parser handle it
                 # by returning None (continue pipeline) OR we can try to schedule directly:
-                rm = re.search(r"\bin\s+(\d+)\s+(seconds?|minutes?|hours?|days?)\b", reminder_tail.lower())
+                rm = re.search(r"\bin\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\b", reminder_tail.lower())
                 if rm:
                     n = int(rm.group(1))
                     unit = rm.group(2)
@@ -374,7 +414,7 @@ class Agent:
                 if rems:
                     for r in rems:
                         title = str(r.get("title", "(untitled)"))
-                        due_ts = str(r.get("due_ts", "(unknown)"))
+                        due_ts = self._format_due_ts_local(str(r.get("due_ts", "(unknown)")))
                         lines.append(f"- {title} (due {due_ts})")
                 else:
                     lines.append("- (none)")
@@ -681,21 +721,6 @@ class Agent:
         except Exception as e:
             logger.debug(f"Early conversion failed: {e}")
             # fall through — normal routing continues
-
-        # Lightweight proactive memory commands (kept for backwards compatibility; local router handles most)
-        try:
-            m = re.search(r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|minutes?|hours?|days?)$", prompt_lower)
-            if m:
-                title = m.group(1).strip()
-                n = int(m.group(2))
-                unit = m.group(3)
-                rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {n} {unit}", scope="task")
-                if rid:
-                    return f"Got it — reminder set: '{title}' in {n} {unit}."
-                return "I couldn't parse that reminder time. Try: remind me to <task> in 2 hours."
-        except Exception:
-            pass
-
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
@@ -723,11 +748,13 @@ class Agent:
         else:
             mem_scope = self._memory_scope_for_prompt(prompt, should_search=False)
             mem = await self.memory.retrieve_relevant_memories(prompt, active_user_id, min_score=0.20, scope=mem_scope)
-            due = await self.memory.consume_due_reminders(active_user_id, limit=3)
             due_block = ""
-            if due:
-                due_lines = [f"- {d.get('title','Reminder')} (due {d.get('due_ts','soon')})" for d in due[:3]]
-                due_block = "\n".join(due_lines)
+            if self._should_inject_due_context(prompt, active_user_id):
+                due = await self.memory.peek_due_reminders(active_user_id, limit=3)
+                if due:
+                    due_lines = [f"- {d.get('title','Reminder')} (due {self._format_due_ts_local(str(d.get('due_ts','soon')))})" for d in due[:3]]
+                    due_block = "\n".join(due_lines)
+                    self._mark_due_context_injected(active_user_id)
             if mem and due_block:
                 memory_context = f"[Due reminders]\n{due_block}\n\n[Memory]\n{mem}"
             elif mem:
@@ -746,12 +773,20 @@ class Agent:
         extra_blocks = []
         if rag_block:
             extra_blocks.append(rag_block)
-        try:
-            goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=3)
-            if goal_ctx:
-                extra_blocks.append("## Active Goals\n" + goal_ctx)
-        except Exception:
-            pass
+
+        extra_blocks.append(
+            "## Reminder/Goal Rules (STRICT)\n"
+            "- Do not mention reminders or goals unless the user asked about them OR a [Due reminders] block is present.\n"
+            "- Do not estimate due times. If mentioning a due time, use only the exact due_ts shown in context.\n"
+        )
+        include_goal_context = self._is_personal_memory_query(prompt) or ("[Due reminders]" in memory_context)
+        if include_goal_context:
+            try:
+                goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=3)
+                if goal_ctx:
+                    extra_blocks.append("## Active Goals\n" + goal_ctx)
+            except Exception:
+                pass
 
         if should_search:
             sources = self._extract_urls_from_results(results, limit=4)

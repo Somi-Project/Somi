@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Set
 
 import numpy as np
@@ -19,7 +19,7 @@ def hash_text(text: str) -> str:
 
 
 def utcnow_iso() -> str:
-    return datetime.utcnow().isoformat()
+    return datetime.now(timezone.utc).isoformat()
 
 
 def tokenize(text: str) -> Set[str]:

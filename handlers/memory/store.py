@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from .utils import utcnow_iso
@@ -277,7 +278,7 @@ class SQLiteMemoryStore:
                 WHERE user_id=? AND status='active'
                   AND COALESCE(snooze_until_ts, due_ts) <= ?
                   AND (next_retry_ts IS NULL OR next_retry_ts <= ?)
-                ORDER BY priority DESC, COALESCE(snooze_until_ts, due_ts) ASC
+                ORDER BY COALESCE(snooze_until_ts, due_ts) ASC, priority DESC
                 LIMIT ?
                 """,
                 (user_id, now_iso, now_iso, int(limit)),
@@ -336,14 +337,26 @@ class SQLiteMemoryStore:
 
     def mark_reminder_fired(self, reminder_id: str) -> None:
         now = utcnow_iso()
+        next_retry = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE reminders
-                SET last_fired_ts=?, next_retry_ts=?, fail_count=fail_count+1, ts_updated=?
+                SET last_fired_ts=?,
+                    status=CASE
+                        WHEN recurrence IS NULL OR TRIM(recurrence)='' THEN 'done'
+                        WHEN LOWER(TRIM(recurrence)) IN ('daily', 'weekly', 'monthly') THEN status
+                        ELSE 'done'
+                    END,
+                    next_retry_ts=CASE
+                        WHEN LOWER(TRIM(recurrence)) IN ('daily', 'weekly', 'monthly') THEN ?
+                        ELSE NULL
+                    END,
+                    fail_count=fail_count,
+                    ts_updated=?
                 WHERE reminder_id=?
                 """,
-                (now, now, now, reminder_id),
+                (now, next_retry, now, reminder_id),
             )
 
     def ack_reminder(self, reminder_id: str, action: str, snooze_until_ts: Optional[str] = None) -> None:

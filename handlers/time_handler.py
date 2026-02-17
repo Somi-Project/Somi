@@ -3,7 +3,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Tuple, Dict, Any
 
 import pytz
@@ -116,6 +116,21 @@ class TimeHandler:
         tz_name, display_name = resolved
         tz = self._safe_tz(tz_name)
         return self._format_now(tz, label=display_name or location)
+
+    def format_iso_to_local(self, iso_ts: str, tz_name: Optional[str] = None) -> str:
+        tz = self._safe_tz(tz_name or self.default_timezone)
+        s = (iso_ts or "").strip().replace("Z", "")
+        try:
+            dt = datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            local = dt.astimezone(tz)
+            try:
+                return local.strftime("%#I:%M %p %Z")
+            except Exception:
+                return local.strftime("%I:%M %p %Z").lstrip("0")
+        except Exception:
+            return iso_ts
 
     # ---------- Internals ----------
 
