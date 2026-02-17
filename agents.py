@@ -1,6 +1,6 @@
 # agents.py
-# Somi Agent using PromptForge + JSONL snapshot memory + same-turn recall
-# Compatible with rag.py and handlers/websearch.py without requiring new methods.
+# Mainframe
+
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from config.settings import (
 
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
+from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
 
@@ -58,6 +59,7 @@ class Agent:
         self.story_iterations = 0
         self.conversation_cache: List[Dict[str, str]] = []
 
+        # Default / constructor user_id (call-level user_id can override at runtime)
         self.user_id = str(user_id or "default_user")
         self.session_dir = os.path.join("sessions", self.user_id)
         os.makedirs(self.session_dir, exist_ok=True)
@@ -84,7 +86,7 @@ class Agent:
                     "aliases": ["Somi"],
                     "physicality": [],
                     "experience": [],
-                    "inhibinations": [],
+                    "inhibitions": [],
                     "hobbies": [],
                     "behaviors": [],
                 }
@@ -114,7 +116,12 @@ class Agent:
         self.memory_model = MEMORY_MODEL
         self.vision_model = VISION_MODEL
 
+        # History:
+        # - self.history: default single-user history (CLI/GUI unchanged)
+        # - self.history_by_user: optional per-user history for Telegram/WhatsApp/etc
         self.history: List[Dict[str, str]] = []
+        self.history_by_user: Dict[str, List[Dict[str, str]]] = {}
+
         self.rag = RAGHandler()
         self.websearch = WebSearchHandler()
         self.time_handler = TimeHandler(default_timezone=SYSTEM_TIMEZONE)
@@ -127,7 +134,7 @@ class Agent:
             embedding_model=embedding_model,
             ollama_client=self.ollama_client,
             memory_model_name=self.memory_model,
-            user_id=self.user_id,
+            user_id=self.user_id,  # default; call-level user_id overrides when we call memory methods
             base_dir="sessions",
             disable_financial_memory=DISABLE_MEMORY_FOR_FINANCIAL,
         )
@@ -192,11 +199,29 @@ class Agent:
             "- Be direct and practical.\n"
         )
 
-    def _push_history(self, user_prompt: str, assistant_content: str) -> None:
-        self.history.append({"role": "user", "content": user_prompt})
-        self.history.append({"role": "assistant", "content": assistant_content})
-        if len(self.history) > 60:
-            self.history = self.history[-60:]
+    # -------- History selection (safe, minimal) --------
+    def _should_use_per_user_history(self, active_user_id: str) -> bool:
+        """
+        Keep CLI/GUI behavior unchanged:
+        - If active_user_id matches the agent's default self.user_id, use self.history.
+        - If active_user_id differs (Telegram/WhatsApp multi-chat), use per-user history.
+        """
+        au = str(active_user_id or "").strip()
+        if not au:
+            return False
+        return au != str(self.user_id)
+
+    def _get_history_list(self, active_user_id: str) -> List[Dict[str, str]]:
+        if self._should_use_per_user_history(active_user_id):
+            return self.history_by_user.setdefault(active_user_id, [])
+        return self.history
+
+    def _push_history_for(self, active_user_id: str, user_prompt: str, assistant_content: str) -> None:
+        hist = self._get_history_list(active_user_id)
+        hist.append({"role": "user", "content": user_prompt})
+        hist.append({"role": "assistant", "content": assistant_content})
+        if len(hist) > 60:
+            del hist[:-60]
 
         if self.use_flow:
             self.conversation_cache.append({"role": "user", "content": user_prompt})
@@ -204,15 +229,55 @@ class Agent:
             if len(self.conversation_cache) > 10:
                 self.conversation_cache = self.conversation_cache[-10:]
 
-    def _should_websearch(self, prompt_lower: str) -> bool:
-        explicit = any(k in prompt_lower for k in ["search", "look up", "google", "find online", "check online"])
-        recency = any(k in prompt_lower for k in ["latest", "today", "now", "current", "this week", "breaking", "live"])
-        volatile = any(k in prompt_lower for k in [
-            "price", "weather", "forecast", "scores", "market", "stock", "bitcoin", "crypto", "forex",
-            "exchange rate", "convert", "conversion", "how much", "how many", "to ", "worth"
-        ])
-        has_year = bool(re.search(r"\b(19|20)\d{2}\b", prompt_lower))
-        return bool((explicit or recency or volatile) and not has_year)
+    def _should_websearch(self, prompt: str) -> bool:
+        """
+        Network decision gate (natural-language-first):
+        - Default to LLM-only.
+        - Search only when user intent requires freshness/volatility/citations or research.
+        """
+        pl = (prompt or "").strip().lower()
+        if not pl:
+            return False
+
+        explicit = any(k in pl for k in (
+            "search", "look up", "google", "find online", "check online",
+            "source", "sources", "cite", "citation", "link", "verify", "confirm online",
+        ))
+
+        recency = any(k in pl for k in (
+            "latest", "current", "today", "now", "right now", "this week", "updated", "newest",
+            "breaking", "live", "recent",
+        ))
+
+        volatile = any(k in pl for k in (
+            "price", "quote", "market", "stock", "shares",
+            "bitcoin", "btc", "ethereum", "eth", "crypto", "coin",
+            "exchange rate", "fx", "forex",
+            "weather", "forecast", "temperature", "rain",
+            "news", "headline", "current events",
+        ))
+
+        research_keywords = (
+            "evidence", "paper", "papers", "study", "studies", "literature", "review",
+            "systematic review", "meta-analysis", "metaanalysis",
+            "rct", "randomized", "randomised", "trial", "clinical trial",
+            "guideline", "practice guideline", "consensus", "position statement",
+            "pmid", "pubmed", "doi", "arxiv", "openalex", "semantic scholar", "crossref",
+            "clinicaltrials", "clinicaltrials.gov", "nct",
+        )
+        research = any(k in pl for k in research_keywords) or bool(
+            re.search(r"\b(10\.\d{4,9}/\S+|pmid\s*\d{6,9}|nct\s*\d{8}|arxiv\s*:\s*\d{4}\.\d{4,5})\b", pl)
+        )
+
+        years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", pl)]
+        has_year = bool(years)
+        near_present = any(y >= 2023 for y in years)
+
+        historical_only = has_year and not (explicit or recency or volatile or research) and not near_present
+        if historical_only:
+            return False
+
+        return bool(explicit or recency or volatile or research or (has_year and near_present))
 
     def _build_rag_block(self, prompt: str, k: int = 2) -> str:
         if not self.use_studies:
@@ -322,6 +387,8 @@ class Agent:
         if not prompt:
             return "Hey, give me something to work with!"
 
+        # Call-level user_id override (Telegram/WhatsApp multi-chat)
+        active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
 
         if self.turn_counter % 25 == 0:
@@ -359,28 +426,28 @@ class Agent:
         if self.current_mode == "game":
             game_response, game_ended = self.wordgame.process_game_input(prompt)
             if game_response:
-                self._push_history(prompt, game_response)
+                self._push_history_for(active_user_id, prompt, game_response)
                 if game_ended:
                     self.current_mode = "normal"
                 return game_response
 
-        # ── Early conversion handoff (prevents LLM from guessing old rates) ──
-        conversion_keywords = ["convert", "to ", "how much", "how many", "worth", "equals", "rate of", "exchange"]
-        if any(k in prompt_lower for k in conversion_keywords):
-            try:
-                conv_result = await self.websearch.converter.convert(prompt)
+        # Early conversion handoff (ONLY if parser confirms conversion)
+        try:
+            if parse_conversion_request(prompt) is not None:
+                async with asyncio.timeout(20.0):
+                    conv_result = await self.websearch.converter.convert(prompt)
                 if conv_result and "Error" not in conv_result and len(conv_result.strip()) > 5:
-                    self._push_history(prompt, conv_result)
+                    self._push_history_for(active_user_id, prompt, conv_result)
                     return conv_result + "\n(Source: real-time finance data)"
-            except Exception as e:
-                logger.debug(f"Early conversion failed: {e}")
-                # fall through — LLM can still try
+        except Exception as e:
+            logger.debug(f"Early conversion failed: {e}")
+            # fall through — normal routing continues
 
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
 
-        should_search = self._should_websearch(prompt_lower)
+        should_search = self._should_websearch(prompt)
 
         search_context = "Not required for this query. Use internal knowledge."
         memory_context = "No relevant memories found"
@@ -390,7 +457,7 @@ class Agent:
 
         if should_search:
             try:
-                results = await self.websearch.search(prompt_lower)
+                results = await self.websearch.search(prompt)
                 volatile_search, volatile_category = self._is_volatile_results(results)
                 formatted = self.websearch.format_results(results)
                 if formatted and "Error" not in formatted:
@@ -401,7 +468,7 @@ class Agent:
                 logger.info(f"Web search failed (non-fatal): {e}")
                 search_context = "Web search unavailable."
         else:
-            mem = await self.memory.retrieve_relevant_memories(prompt, self.user_id, min_score=0.20)
+            mem = await self.memory.retrieve_relevant_memories(prompt, active_user_id, min_score=0.20)
             if mem:
                 memory_context = mem
 
@@ -426,7 +493,7 @@ class Agent:
                 "You MUST follow these rules when Web/Search Context is present:\n"
                 "1) Use ONLY facts found in Web/Search Context. Do NOT guess or fill in missing details.\n"
                 "2) If something is not in the results, say you cannot verify it from the search results.\n"
-                "3) For volatile data (prices, rates, weather, breaking news): do NOT invent numbers. If you cite a number, it must appear verbatim in the results.\n"
+                "3) For volatile data (prices, rates, weather, breaking news, scientific citations/guidelines): do NOT invent numbers. If you cite a number, it must appear verbatim in the results.\n"
                 "4) Include source URL(s) for the claims you make.\n"
                 f"Category hint: {volatile_category}\n"
                 "Sources available:\n"
@@ -443,11 +510,15 @@ class Agent:
             extra_blocks=extra_blocks if extra_blocks else None,
         )
 
-        # Gentle failsafe reminder — short and natural
-        system_prompt += "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): please use the finance/conversion tools or search for current rates — old numbers from training are usually wrong."
+        system_prompt += (
+            "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): "
+            "please use the finance/conversion tools or search for current rates — old numbers from training are usually wrong."
+        )
 
         max_tokens = self._token_budget(prompt, system_prompt, base_max_tokens)
-        history_msgs = self.history[-10:] if self.history else []
+
+        hist = self._get_history_list(active_user_id)
+        history_msgs = hist[-10:] if hist else []
 
         messages = self.promptforge.build_messages(
             system_prompt=system_prompt,
@@ -476,7 +547,6 @@ class Agent:
 
         if should_search and volatile_search:
             content = self._numeric_guard(content, search_context)
-
             if "http" not in content.lower():
                 urls = self._extract_urls_from_results(results, limit=4)
                 if urls:
@@ -499,20 +569,32 @@ class Agent:
         # Memory write-back hard-block on websearch turns
         if not should_search:
             try:
-                should_store, mem_type, mem_content = await self.memory.should_store_memory(prompt, content, self.user_id)
+                should_store, mem_type, mem_content = await self.memory.should_store_memory(prompt, content, active_user_id)
                 if should_store and mem_type and mem_content:
-                    self.memory.stage_memory(user_id=self.user_id, memory_type=mem_type, content=mem_content, source="conversation")
-                    asyncio.create_task(self._persist_memory_serial(mem_content, self.user_id, mem_type, source="conversation"))
+                    self.memory.stage_memory(
+                        user_id=active_user_id,
+                        memory_type=mem_type,
+                        content=mem_content,
+                        source="conversation",
+                    )
+                    asyncio.create_task(
+                        self._persist_memory_serial(mem_content, active_user_id, mem_type, source="conversation")
+                    )
             except Exception:
                 pass
 
-        self._push_history(prompt, content)
-        logger.info(f"[{self.user_id}] Total response time: {time.time() - start_total:.2f}s")
+        self._push_history_for(active_user_id, prompt, content)
+        logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")
         return content
 
     async def analyze_image(self, image_path: str, caption: str = "", user_id: str = "default_user") -> str:
+        active_user_id = str(user_id or self.user_id)
+
         system_prompt = self._compose_identity_block()
-        memory_context = await self.memory.retrieve_relevant_memories(caption or "image", self.user_id, min_score=0.20) or "No relevant memories found"
+        memory_context = (
+            await self.memory.retrieve_relevant_memories(caption or "image", active_user_id, min_score=0.20)
+            or "No relevant memories found"
+        )
 
         prompt = (
             f"You received an image with caption: '{caption or 'Describe this image'}'.\n"
@@ -538,13 +620,14 @@ class Agent:
             content = self._strip_unwanted_json(content)
 
             note = f"Image noted: {caption}".strip()
-            self.memory.stage_memory(user_id=self.user_id, memory_type="episodic", content=note, source="vision")
-            asyncio.create_task(self._persist_memory_serial(note, self.user_id, "episodic", source="vision"))
+            self.memory.stage_memory(user_id=active_user_id, memory_type="episodic", content=note, source="vision")
+            asyncio.create_task(self._persist_memory_serial(note, active_user_id, "episodic", source="vision"))
             return content or "I couldn't extract anything useful from that image."
         except Exception as e:
             return f"Sorry — image analysis failed ({type(e).__name__})."
 
     def clear_short_term_history(self) -> None:
+        # Preserve existing CLI/GUI semantics: clears only default history
         self.history = []
 
     def __del__(self):
