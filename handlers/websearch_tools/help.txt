@@ -1,0 +1,6 @@
+itickers = indices
+ftickers = forex
+ctickers = commodities
+bcrypto = crypto
+
+these are dictionaries for matching that allows the agent to call upon free endpoints
