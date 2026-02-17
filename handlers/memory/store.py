@@ -284,6 +284,56 @@ class SQLiteMemoryStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    # ---------------- NEW: list active reminders ----------------
+    def active_reminders(self, user_id: str, scope: Optional[str] = None, limit: int = 25) -> List[Dict[str, Any]]:
+        """
+        Returns reminders that are still actionable (status='active').
+        Ordered by soonest effective due time (snooze_until_ts overrides due_ts), then priority.
+        """
+        with self._connect() as conn:
+            if scope is None:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM reminders
+                    WHERE user_id=? AND status='active'
+                    ORDER BY COALESCE(snooze_until_ts, due_ts) ASC, priority DESC, ts_updated DESC
+                    LIMIT ?
+                    """,
+                    (user_id, int(limit)),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT * FROM reminders
+                    WHERE user_id=? AND scope=? AND status='active'
+                    ORDER BY COALESCE(snooze_until_ts, due_ts) ASC, priority DESC, ts_updated DESC
+                    LIMIT ?
+                    """,
+                    (user_id, scope, int(limit)),
+                ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ---------------- NEW: delete reminder(s) by title ----------------
+    def delete_reminder_by_title(self, user_id: str, scope: str, title: str) -> int:
+        """
+        Deletes active reminders that match title (case-insensitive).
+        Returns number deleted.
+        """
+        t = (title or "").strip()
+        if not t:
+            return 0
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM reminders
+                WHERE user_id=? AND scope=? AND status='active'
+                  AND LOWER(title)=LOWER(?)
+                """,
+                (user_id, scope, t),
+            )
+            return int(cur.rowcount or 0)
+
     def mark_reminder_fired(self, reminder_id: str) -> None:
         now = utcnow_iso()
         with self._connect() as conn:
@@ -358,6 +408,27 @@ class SQLiteMemoryStore:
                     (user_id, scope, int(limit)),
                 ).fetchall()
         return [dict(r) for r in rows]
+
+    # ---------------- NEW: delete goal by title ----------------
+    def delete_goal_by_title(self, user_id: str, scope: str, title: str) -> bool:
+        """
+        Deletes an active goal by exact title match (case-insensitive).
+        Returns True if any row was deleted.
+        """
+        t = (title or "").strip()
+        if not t:
+            return False
+
+        with self._connect() as conn:
+            cur = conn.execute(
+                """
+                DELETE FROM goals
+                WHERE user_id=? AND scope=? AND status='active'
+                  AND LOWER(title)=LOWER(?)
+                """,
+                (user_id, scope, t),
+            )
+            return bool(cur.rowcount and cur.rowcount > 0)
 
     def add_node(self, node_id: str, user_id: str, scope: str, kind: str, label: str, payload: Optional[Dict[str, Any]] = None) -> None:
         with self._connect() as conn:
