@@ -37,6 +37,10 @@ AUTO_REPLY_INTERVAL_MINUTES = 240
 AUTO_REPLY_INTERVAL_LOWER_VARIATION = 20  # -20 minutes
 AUTO_REPLY_INTERVAL_UPPER_VARIATION = 30  # +30 minutes
 
+# Telegram permissions you can message @userinfobot on telegram for your user ID 
+TELEGRAM_BOT_OWNER_IDS = {
+    placeholder,
+}
 TELEGRAM_BOT_TOKEN = "placeholder"
 TELEGRAM_BOT_USERNAME = "placeholder"
 TELEGRAM_AGENT_ALIASES = [
@@ -79,4 +83,5 @@ PROACTIVE_REMINDER_INTERVAL_MIN = 60  # Minutes between checks (set high to avoi
 ALLOW_16K_CONTEXT = False  # False on 12GB VRAM to avoid OOM; True for 24GB+
 AUTO_COMPRESS_ON_LOW_MEMORY = True  # Automatically compress if nearing limits
 UNRESTRICTED_MODE = False  # If True, bypass any future soft limits (maintains unrestricted nature)
+
 
