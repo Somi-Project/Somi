@@ -1,7 +1,6 @@
 # agents.py
 # Mainframe
 
-
 from __future__ import annotations
 
 import asyncio
@@ -197,6 +196,7 @@ class Agent:
             "- Never use memory for volatile info like prices, weather, breaking news.\n"
             "- If Web/Search Context is present, use it for up-to-date queries.\n"
             "- Be direct and practical.\n"
+            "- Never simulate timers or countdowns. If asked to set a reminder, confirm it was scheduled.\n"
         )
 
     # -------- History selection (safe, minimal) --------
@@ -229,6 +229,222 @@ class Agent:
             if len(self.conversation_cache) > 10:
                 self.conversation_cache = self.conversation_cache[-10:]
 
+    # -------- Local intent routing (memory/goals/reminders) --------
+    def _is_personal_memory_query(self, prompt: str) -> bool:
+        pl = (prompt or "").strip().lower()
+        if not pl:
+            return False
+
+        # Strong internal-state triggers: never websearch
+        internal_triggers = (
+            "what do you remember", "remember about me", "summarize everything you remember",
+            "summarize what you remember", "summarize my", "everything you remember about me",
+            "my name", "my preference", "my preferences",
+            "my goals", "my goal", "my reminders", "goals and reminders",
+            "due reminders", "any due reminders", "list my", "show my",
+            "forget about", "remove my", "delete my",
+        )
+        if any(t in pl for t in internal_triggers):
+            return True
+
+        if re.search(r"\b(my)\s+(name|preferences?|goals?|reminders?)\b", pl):
+            return True
+
+        if ("remind me" in pl) and not any(k in pl for k in ("news", "weather", "price", "quote", "market")):
+            return True
+
+        return False
+
+    async def _route_local_memory_intents(self, prompt: str, active_user_id: str) -> Optional[str]:
+        """
+        Handle obvious memory/goals/reminders intents deterministically.
+        Returns a final user-facing string if handled, else None (continue normal pipeline).
+        """
+        pl = (prompt or "").strip()
+        pll = pl.lower()
+        if not pll:
+            return None
+
+        # 1) One-time reminders: "remind me to X in N seconds/minutes/hours/days"
+        m = re.search(
+            r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|minutes?|hours?|days?)\s*$",
+            pll,
+        )
+        if m:
+            title = m.group(1).strip()
+            n = int(m.group(2))
+            unit = m.group(3).strip()
+
+            # MemoryManager supports "in N unit" parsing; seconds require a memory.py patch (you said you'll do it).
+            rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {n} {unit}", scope="task")
+            if rid:
+                return f"Got it — reminder set: '{title}' in {n} {unit}."
+            return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
+        # 2) Due reminders: "any due reminders" / "are there any due reminders right now"
+        if ("due reminder" in pll) or ("due reminders" in pll):
+            due = await self.memory.consume_due_reminders(active_user_id, limit=10)
+            if not due:
+                return "No due reminders right now."
+            lines = ["**Due reminders:**"]
+            for d in due:
+                title = str(d.get("title", "Reminder"))
+                due_ts = str(d.get("due_ts", "soon"))
+                lines.append(f"- {title} (due {due_ts})")
+            return "\n".join(lines)
+
+        # 3) Save goal (and split off trailing reminder request)
+        if pll.startswith("my goal is "):
+            tail = pl[len("my goal is "):].strip()
+
+            goal_text = tail
+            reminder_tail = ""
+
+            # Split on ". remind me ..." or " remind me ..."
+            mm = re.search(r"^(.*?)(?:\.\s*remind me| remind me)\s+(.+)$", tail, flags=re.IGNORECASE)
+            if mm:
+                goal_text = (mm.group(1) or "").strip()
+                reminder_tail = (mm.group(2) or "").strip()
+
+            if goal_text:
+                await self.memory.upsert_goal(active_user_id, title=goal_text, scope="task", progress=0.0, confidence=0.7)
+
+            # If they asked for recurring reminders, be honest (recurring not implemented in MemoryManager yet)
+            if reminder_tail:
+                # common patterns humans use
+                if any(k in reminder_tail.lower() for k in ("every ", "daily", "each day", "every day", "every afternoon", "every morning", "every night")):
+                    return (
+                        f"Goal saved: {goal_text}\n"
+                        "Recurring reminders (e.g., every day at 3pm) aren’t wired up yet. "
+                        "Right now I can do one-time reminders like: “remind me to drink water in 2 hours”."
+                    )
+                # If it's a one-time phrasing like "in 2 hours", let the normal reminder parser handle it
+                # by returning None (continue pipeline) OR we can try to schedule directly:
+                rm = re.search(r"\bin\s+(\d+)\s+(seconds?|minutes?|hours?|days?)\b", reminder_tail.lower())
+                if rm:
+                    n = int(rm.group(1))
+                    unit = rm.group(2)
+                    rid = await self.memory.add_reminder(active_user_id, title=goal_text, when=f"in {n} {unit}", scope="task")
+                    if rid:
+                        return f"Goal saved: {goal_text}\nAlso set a reminder in {n} {unit}."
+                return f"Goal saved: {goal_text}"
+            return f"Goal saved: {goal_text}" if goal_text else "I didn’t catch the goal. Try: My goal is <something>."
+
+        # 4) Update goal progress: "update goal <title> to <progress%>"
+        if pll.startswith("update goal ") and " to " in pll:
+            tail = pl[len("update goal "):].strip()
+            parts = tail.rsplit(" to ", 1)
+            if len(parts) == 2 and parts[0].strip():
+                pct_txt = parts[1].strip().rstrip("%")
+                if pct_txt.replace(".", "", 1).isdigit():
+                    prog = max(0.0, min(1.0, float(pct_txt) / 100.0))
+                    await self.memory.upsert_goal(active_user_id, title=parts[0].strip(), scope="task", progress=prog, confidence=0.72)
+                    return f"Updated goal '{parts[0].strip()}' to {int(prog * 100)}%."
+
+        # 5) List goals and/or reminders (best-effort; reminders listing may not exist yet)
+        if re.search(r"\b(list|show)\b.*\b(goals?|reminders?)\b", pll) or ("goals and reminders" in pll):
+            lines: List[str] = []
+
+            # Goals
+            try:
+                goals = await self.memory.list_active_goals(active_user_id, scope="task", limit=25)
+            except Exception:
+                goals = []
+            lines.append("**Goals**:")
+            if goals:
+                for g in goals:
+                    title = str(g.get("title", "(untitled)"))
+                    progress = g.get("progress", 0.0)
+                    try:
+                        pct = int(float(progress) * 100)
+                    except Exception:
+                        pct = 0
+                    lines.append(f"- {title} (progress {pct}%)")
+            else:
+                lines.append("- (none)")
+
+            # Reminders (only if the method exists; otherwise be honest)
+            lines.append("\n**Reminders**:")
+            list_rem = getattr(self.memory, "list_active_reminders", None)
+            if callable(list_rem):
+                try:
+                    rems = await list_rem(active_user_id, scope="task", limit=25)
+                except Exception:
+                    rems = []
+                if rems:
+                    for r in rems:
+                        title = str(r.get("title", "(untitled)"))
+                        due_ts = str(r.get("due_ts", "(unknown)"))
+                        lines.append(f"- {title} (due {due_ts})")
+                else:
+                    lines.append("- (none)")
+            else:
+                lines.append("- (listing not available yet — I can only announce reminders when they become due)")
+
+            return "\n".join(lines)
+
+        # 6) Summarize what you remember about me (offline; no websearch)
+        if ("remember about me" in pll) or ("what do you remember" in pll) or ("summarize everything you remember" in pll):
+            # Pull profile + small conversation summary + goals
+            profile = await self.memory.retrieve_relevant_memories("name preferences profile", active_user_id, min_score=0.0, scope="profile")
+            conv = await self.memory.retrieve_relevant_memories("key facts", active_user_id, min_score=0.25, scope="conversation")
+            goal_ctx = None
+            try:
+                goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=10)
+            except Exception:
+                goal_ctx = None
+
+            parts: List[str] = ["Here’s what I have stored about you:"]
+            if profile:
+                parts.append("\n**Profile**\n" + profile)
+            if goal_ctx:
+                parts.append("\n**Goals**\n" + goal_ctx)
+            if conv:
+                parts.append("\n**Recent memory**\n" + conv)
+
+            if len(parts) == 1:
+                return "I don’t have anything stored about you yet."
+            return "\n".join(parts)
+
+        # 7) Forget/remove/delete (best-effort: goals/reminders if delete methods exist; otherwise forget_phrase filter)
+        if re.search(r"^(forget|remove|delete)\b", pll):
+            # Extract target phrase
+            mm = re.search(r"^(?:forget|remove|delete)\s+(?:about\s+)?(.+)$", pl, flags=re.IGNORECASE)
+            target = (mm.group(1).strip() if mm else "").strip()
+            if not target:
+                return "Tell me what to forget/remove. Example: “forget about my water goal”."
+
+            removed_any = False
+
+            # Try goal deletion if available
+            del_goal = getattr(self.memory, "delete_goal_by_title", None)
+            if callable(del_goal):
+                try:
+                    ok = await del_goal(active_user_id, title=target, scope="task")
+                    removed_any = removed_any or bool(ok)
+                except Exception:
+                    pass
+
+            # Try reminder deletion if available
+            del_rem = getattr(self.memory, "delete_reminder_by_title", None)
+            if callable(del_rem):
+                try:
+                    n = await del_rem(active_user_id, title=target, scope="task")
+                    removed_any = removed_any or (int(n) > 0)
+                except Exception:
+                    pass
+
+            # Always add forget-phrase filter as fallback for recall (prevents resurfacing)
+            try:
+                ok2 = await self.memory.forget_phrase(active_user_id, phrase=target, scope="task")
+                removed_any = removed_any or bool(ok2)
+            except Exception:
+                pass
+
+            return "Done — I’ll stop using that." if removed_any else "I couldn’t find anything matching that to remove, but I’ll avoid bringing it up."
+
+        return None
+
     def _should_websearch(self, prompt: str) -> bool:
         """
         Network decision gate (natural-language-first):
@@ -237,6 +453,10 @@ class Agent:
         """
         pl = (prompt or "").strip().lower()
         if not pl:
+            return False
+
+        # Hard block: internal state / memory/goals/reminders must never websearch
+        if self._is_personal_memory_query(pl):
             return False
 
         explicit = any(k in pl for k in (
@@ -313,7 +533,6 @@ class Agent:
                 await self.memory.store_memory(mem_content, user_id, mem_type, source=source, scope=scope)
         except Exception:
             pass
-
 
     def _memory_scope_for_prompt(self, prompt: str, should_search: bool = False) -> str:
         pl = (prompt or "").lower()
@@ -442,6 +661,15 @@ class Agent:
                     self.current_mode = "normal"
                 return game_response
 
+        # --- NEW: Local deterministic routing for memory/goals/reminders (prevents websearch + LLM hallucination) ---
+        try:
+            local = await self._route_local_memory_intents(prompt, active_user_id)
+            if local:
+                self._push_history_for(active_user_id, prompt, local)
+                return local
+        except Exception as e:
+            logger.debug(f"Local intent routing failed (non-fatal): {e}")
+
         # Early conversion handoff (ONLY if parser confirms conversion)
         try:
             if parse_conversion_request(prompt) is not None:
@@ -454,10 +682,9 @@ class Agent:
             logger.debug(f"Early conversion failed: {e}")
             # fall through — normal routing continues
 
-
-        # Lightweight proactive memory commands
+        # Lightweight proactive memory commands (kept for backwards compatibility; local router handles most)
         try:
-            m = re.search(r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(minutes?|hours?|days?)$", prompt_lower)
+            m = re.search(r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|minutes?|hours?|days?)$", prompt_lower)
             if m:
                 title = m.group(1).strip()
                 n = int(m.group(2))
@@ -466,21 +693,6 @@ class Agent:
                 if rid:
                     return f"Got it — reminder set: '{title}' in {n} {unit}."
                 return "I couldn't parse that reminder time. Try: remind me to <task> in 2 hours."
-            if prompt_lower.startswith("my goal is "):
-                gtitle = prompt[len("my goal is "):].strip()
-                if gtitle:
-                    await self.memory.upsert_goal(active_user_id, title=gtitle, scope="task", progress=0.0, confidence=0.7)
-                    return f"Goal saved: {gtitle}"
-            if prompt_lower.startswith("update goal ") and " to " in prompt_lower:
-                # format: update goal <title> to <progress%>
-                tail = prompt[len("update goal "):].strip()
-                parts = tail.rsplit(" to ", 1)
-                if len(parts) == 2 and parts[0].strip():
-                    pct_txt = parts[1].strip().rstrip("%")
-                    if pct_txt.replace(".", "", 1).isdigit():
-                        prog = max(0.0, min(1.0, float(pct_txt) / 100.0))
-                        await self.memory.upsert_goal(active_user_id, title=parts[0].strip(), scope="task", progress=prog, confidence=0.72)
-                        return f"Updated goal '{parts[0].strip()}' to {int(prog*100)}%."
         except Exception:
             pass
 
@@ -522,7 +734,6 @@ class Agent:
                 memory_context = mem
             elif due_block:
                 memory_context = f"[Due reminders]\n{due_block}"
-
 
         rag_block = self._build_rag_block(prompt, k=2)
         current_time = self.time_handler.get_system_date_time()
