@@ -4,9 +4,10 @@ import asyncio
 import json
 import logging
 import os
+import re
 import time
 from collections import defaultdict
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
@@ -164,30 +165,51 @@ class MemoryManager:
         s = (scope or "conversation").strip().lower()
         return s if s in VALID_SCOPES else "conversation"
 
-    # ---------------- PATCHED: supports seconds ----------------
+    # ---------------- PATCHED: supports seconds + common shorthand ----------------
     def _parse_due_time(self, when: str) -> Optional[str]:
         raw = (when or "").strip().lower()
         if not raw:
             return None
         try:
             if "t" in raw and ":" in raw and len(raw) >= 16:
-                return datetime.fromisoformat(raw.replace("z", "")).isoformat()
+                dt = datetime.fromisoformat(raw.replace("z", ""))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc).isoformat()
         except Exception:
             pass
 
-        now = datetime.utcnow()
-        parts = raw.split()
-        if len(parts) == 3 and parts[0] == "in" and parts[1].isdigit():
-            n = int(parts[1])
-            unit = parts[2]
-            if unit.startswith("sec"):
+        now = datetime.now(timezone.utc)
+
+        m = re.match(
+            r"^in\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*$",
+            raw,
+        )
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2)
+            if unit.startswith(("s", "sec")):
                 return (now + timedelta(seconds=n)).isoformat()
-            if unit.startswith("min"):
+            if unit.startswith(("m", "min")):
                 return (now + timedelta(minutes=n)).isoformat()
-            if unit.startswith("hour"):
+            if unit.startswith(("h", "hr", "hour")):
                 return (now + timedelta(hours=n)).isoformat()
-            if unit.startswith("day"):
+            if unit.startswith(("d", "day")):
                 return (now + timedelta(days=n)).isoformat()
+
+        m = re.match(r"^in\s+(a|an)\s+(minute|hour|day)\s*$", raw)
+        if m:
+            unit = m.group(2)
+            if unit == "minute":
+                return (now + timedelta(minutes=1)).isoformat()
+            if unit == "hour":
+                return (now + timedelta(hours=1)).isoformat()
+            if unit == "day":
+                return (now + timedelta(days=1)).isoformat()
+
+        if raw in ("in half an hour", "in half hour"):
+            return (now + timedelta(minutes=30)).isoformat()
+
         return None
 
     def _is_negated(self, text: str) -> bool:
@@ -627,6 +649,23 @@ class MemoryManager:
         )
         return rid
 
+
+    async def peek_due_reminders(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
+        uid = str(user_id or self.user_id)
+        due = self.sql.due_reminders(uid, utcnow_iso(), limit=max(1, int(limit)))
+        out: List[Dict[str, str]] = []
+        for r in due:
+            out.append(
+                {
+                    "reminder_id": str(r.get("reminder_id", "")),
+                    "title": str(r.get("title", "")),
+                    "details": str(r.get("details", "")),
+                    "due_ts": str(r.get("due_ts", "")),
+                    "scope": str(r.get("scope", "task")),
+                }
+            )
+        return out
+
     async def consume_due_reminders(self, user_id: str, limit: int = 3) -> List[Dict[str, str]]:
         uid = str(user_id or self.user_id)
         due = self.sql.due_reminders(uid, utcnow_iso(), limit=max(1, int(limit)))
@@ -665,7 +704,7 @@ class MemoryManager:
             return False
         snooze_until = None
         if action == "snooze" and int(snooze_minutes) > 0:
-            snooze_until = (datetime.utcnow() + timedelta(minutes=int(snooze_minutes))).isoformat()
+            snooze_until = (datetime.now(timezone.utc) + timedelta(minutes=int(snooze_minutes))).isoformat()
         self.sql.ack_reminder(rid, action=action, snooze_until_ts=snooze_until)
         self.events.append(
             {
