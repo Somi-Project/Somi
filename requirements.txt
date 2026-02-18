@@ -33,3 +33,6 @@ pyttsx3==2.90
 huggingface-hub==0.20.0 
 ffmpeg-python==0.2.0
 timezonefinder
+
+pandas==2.2.2
+scikit-learn==1.5.2
