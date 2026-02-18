@@ -12,6 +12,7 @@ import importlib
 import logging
 from pathlib import Path
 from config import settings
+from gui.themes import dialog_stylesheet
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -69,6 +70,7 @@ def telegram_bot_toggle(app):
         dialog = QDialog(app)
         dialog.setWindowTitle("Select Telegram Bot Agent")
         dialog.setGeometry(100, 100, 400, 250)
+        dialog.setStyleSheet(dialog_stylesheet())
         layout = QVBoxLayout()
 
         layout.addWidget(QLabel("Agent Name:"))
@@ -103,7 +105,7 @@ def telegram_bot_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Telegram Bot with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = ["python", "somi.py", "telegram", "--name", agent_key] + (["--use-studies"] if use_studies else [])
+            cmd = [sys.executable, "somi.py", "telegram", "--name", agent_key] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
 
@@ -195,6 +197,7 @@ def telegram_settings(app):
     settings_dialog = QDialog(app)
     settings_dialog.setWindowTitle("Telegram Settings")
     settings_dialog.setGeometry(100, 100, 600, 300)
+    settings_dialog.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
 
     def display_settings():
@@ -217,6 +220,7 @@ def telegram_settings(app):
         edit_dialog = QDialog(settings_dialog)
         edit_dialog.setWindowTitle("Edit Telegram Settings")
         edit_dialog.setGeometry(100, 100, 600, 250)
+        edit_dialog.setStyleSheet(dialog_stylesheet())
         edit_layout = QVBoxLayout()
 
         edit_layout.addWidget(QLabel("Bot Token:"))

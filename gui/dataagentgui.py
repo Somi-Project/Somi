@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
+from gui.themes import COLORS, dialog_stylesheet
 
 
 # ─────────────────────────────── PATHS ───────────────────────────────
@@ -35,13 +36,7 @@ class DataAgentWindow(QDialog):
         self.setWindowTitle("Data Analysis Agent — No-Code Form Empire")
         self.setGeometry(100, 50, 1150, 820)
 
-        self.setStyleSheet("""
-            QDialog { background:#1a1a1a; color:#e0e0e0; font-family:'Segoe UI'; }
-            QLabel { color:#cccccc; }
-            QPushButton { padding:12px; border-radius:8px; font-weight:bold; }
-            QTableWidget { background:#252525; gridline-color:#444; selection-background-color:#00aaff; }
-            QHeaderView::section { background:#333; color:white; padding:10px; font-weight:bold; }
-        """)
+        self.setStyleSheet(dialog_stylesheet())
 
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -52,13 +47,13 @@ class DataAgentWindow(QDialog):
         title = QLabel("DATA ANALYSIS AGENT")
         title.setAlignment(Qt.AlignmentFlag.AlignCenter)
         title.setFont(QFont("Segoe UI", 22, QFont.Weight.Bold))
-        title.setStyleSheet("color:#00eeff; padding:15px;")
+        title.setStyleSheet(f"color:{COLORS['accent']}; padding:15px;")
         main_layout.addWidget(title)
 
         # Subtitle
         subtitle = QLabel("Create and edit data collection forms for visual analysis")
         subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        subtitle.setStyleSheet("color:#888888; font-size:11pt;")
+        subtitle.setStyleSheet(f"color:{COLORS['text_muted']}; font-size:11pt;")
         main_layout.addWidget(subtitle)
 
         # Tabs
@@ -78,7 +73,7 @@ class DataAgentWindow(QDialog):
 
         # Status bar
         self.status = QLabel("Ready")
-        self.status.setStyleSheet("color:#00ff00; font-style:italic; padding:10px;")
+        self.status.setStyleSheet(f"color:{COLORS['accent_ok']}; font-style:italic; padding:10px;")
         main_layout.addWidget(self.status)
 
         # Timer for live preview

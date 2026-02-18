@@ -22,6 +22,7 @@ import importlib
 import torch
 import sys
 import signal
+from gui.themes import dialog_stylesheet
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -212,6 +213,7 @@ def ai_chat(app):
     chat_window = QDialog(app)
     chat_window.setWindowTitle("AI Chat")
     chat_window.setGeometry(100, 100, 800, 600)
+    chat_window.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
 
     layout.addWidget(QLabel("Agent Name:"))
@@ -422,6 +424,7 @@ def study_material(app):
     study_window = QDialog(app)
     study_window.setWindowTitle("Study Material (RAG)")
     study_window.setGeometry(100, 100, 800, 600)
+    study_window.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
 
     layout.addWidget(QLabel("Query:"))
@@ -510,6 +513,7 @@ def study_material(app):
         websites_window = QDialog(study_window)
         websites_window.setWindowTitle("Enter Websites to Ingest")
         websites_window.setGeometry(100, 100, 600, 600)
+        websites_window.setStyleSheet(dialog_stylesheet())
         w_layout = QVBoxLayout()
 
         url_entries = []
