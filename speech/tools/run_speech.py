@@ -4,7 +4,7 @@ import asyncio
 import numpy as np
 
 from speech.brain.agent_bridge import init_agent_bridge
-from speech.config import AGENT_NAME_DEFAULT, AUDIO_GAIN, ECHO_POLICY, FRAME_MS, SAMPLE_RATE, USER_ID_DEFAULT, USE_STUDIES_DEFAULT
+from speech.config import AGENT_NAME_DEFAULT, AUDIO_GAIN, ECHO_POLICY, EXPECTED_STT_SR, FRAME_MS, SAMPLE_RATE, USER_ID_DEFAULT, USE_STUDIES_DEFAULT
 from speech.io.audio_in import AudioIn
 from speech.io.audio_out import AudioOut
 from speech.metrics.log import logger
@@ -27,7 +27,7 @@ async def _main(args):
     state = SomiState(audio_out=audio_out, tts_engine=PocketTTS(), backchannel_cb=lambda: _ack(audio_out))
     orchestrator = Orchestrator(
         audio_in=AudioIn(sample_rate=SAMPLE_RATE, frame_ms=FRAME_MS, gain=AUDIO_GAIN, device=args.input_device),
-        stt_engine=WhisperSTT(),
+        stt_engine=WhisperSTT(expected_sr=EXPECTED_STT_SR),
         somistate=state,
         echo_policy=args.echo_policy,
     )

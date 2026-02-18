@@ -14,8 +14,9 @@ class AudioIn:
         self.blocksize = int(sample_rate * frame_ms / 1000)
         self.gain = gain
         self.device = device
-        self.frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=300)
+        self.frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=100)
         self._stream = None
+        self._dropped_frames = 0
 
     def start(self) -> None:
         def callback(indata, frames, time_info, status):
@@ -25,6 +26,9 @@ class AudioIn:
             try:
                 self.frames.put_nowait(pcm)
             except queue.Full:
+                self._dropped_frames += 1
+                if self._dropped_frames == 1 or self._dropped_frames % 25 == 0:
+                    logger.warning("AudioIn queue full; dropping oldest frame (drops=%s, qsize=%s)", self._dropped_frames, self.frames.qsize())
                 try:
                     _ = self.frames.get_nowait()
                 except queue.Empty:
