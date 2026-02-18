@@ -4,16 +4,25 @@ from typing import Optional
 import numpy as np
 import sounddevice as sd
 
+from speech.io.devices import resolve_device
 from speech.metrics.log import logger
 
 
 class AudioIn:
-    def __init__(self, sample_rate: int, frame_ms: int, gain: float = 1.0, device: Optional[int] = None):
+    def __init__(
+        self,
+        sample_rate: int,
+        frame_ms: int,
+        gain: float = 1.0,
+        device: Optional[int | str] = None,
+        os_profile: str = "auto",
+    ):
         self.sample_rate = sample_rate
         self.frame_ms = frame_ms
         self.blocksize = int(sample_rate * frame_ms / 1000)
         self.gain = gain
         self.device = device
+        self.os_profile = os_profile
         self.frames: "queue.Queue[np.ndarray]" = queue.Queue(maxsize=100)
         self._stream = None
         self._dropped_frames = 0
@@ -28,7 +37,11 @@ class AudioIn:
             except queue.Full:
                 self._dropped_frames += 1
                 if self._dropped_frames == 1 or self._dropped_frames % 25 == 0:
-                    logger.warning("AudioIn queue full; dropping oldest frame (drops=%s, qsize=%s)", self._dropped_frames, self.frames.qsize())
+                    logger.warning(
+                        "AudioIn queue full; dropping oldest frame (drops=%s, qsize=%s)",
+                        self._dropped_frames,
+                        self.frames.qsize(),
+                    )
                 try:
                     _ = self.frames.get_nowait()
                 except queue.Empty:
@@ -38,16 +51,17 @@ class AudioIn:
                 except queue.Full:
                     pass
 
+        selected_device = resolve_device(self.device, kind="input", os_profile=self.os_profile)
         self._stream = sd.InputStream(
             samplerate=self.sample_rate,
             channels=1,
             dtype="float32",
             callback=callback,
             blocksize=self.blocksize,
-            device=self.device,
+            device=selected_device,
         )
         self._stream.start()
-        logger.info("Mic capture started")
+        logger.info("Mic capture started (device=%s os_profile=%s)", selected_device, self.os_profile)
 
     def read(self, timeout: float = 0.1) -> Optional[np.ndarray]:
         try:

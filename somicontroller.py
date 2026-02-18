@@ -210,6 +210,9 @@ class SomiAIGUI(QMainWindow):
         self.intel_paused = False
         self.last_console_line_count = 0
         self.speech_active = False
+        self.speech_os_profile = "auto"
+        self.speech_input_device = ""
+        self.speech_output_device = ""
         self.model_settings_window = None
         self.edit_settings_window = None
 

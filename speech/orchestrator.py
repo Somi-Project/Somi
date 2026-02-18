@@ -9,14 +9,15 @@ from speech.config import (
     ECHO_POLICY,
     FRAME_MS,
     MAX_UTTERANCE_S,
+    PREROLL_MS,
     SAMPLE_RATE,
     SILENCE_MS,
     VAD_RMS_THRESHOLD,
-    PREROLL_MS,
 )
 from speech.detect.bargein import BargeInDetector
 from speech.detect.echo import stt_allowed
 from speech.detect.vad import RMSVAD
+from speech.events import BARGE_IN, TRANSCRIPT_FINAL, SpeechEvent
 from speech.metrics.log import logger
 
 
@@ -37,49 +38,60 @@ class Orchestrator:
         )
         self.bargein = BargeInDetector(BARGEIN_RMS_THRESHOLD, BARGEIN_CONSEC_FRAMES)
 
+    async def perception_loop(self, user_id: str):
+        while True:
+            frame = self.audio_in.read(timeout=0.1)
+            if frame is None:
+                await asyncio.sleep(0.005)
+                continue
+
+            if self.somistate.state == self.somistate.SPEAKING:
+                if self.bargein.process(frame):
+                    turn_id = self.somistate.turn_id
+                    await self.somistate.event_bus.publish(SpeechEvent(type=BARGE_IN, turn_id=turn_id, payload={}))
+                    await self.somistate.cancel_current_turn(reason="barge_in")
+                    logger.info("Barge-in detected and turn cancelled: turn_id=%s", turn_id)
+                continue
+
+            if not stt_allowed(self.somistate.state, self.echo_policy):
+                continue
+
+            utterance = self.vad.process(frame)
+            if utterance is None:
+                continue
+
+            stt_start = time.monotonic()
+            try:
+                text, lang_prob = self.stt_engine.transcribe_final(utterance, SAMPLE_RATE)
+            except Exception as exc:
+                logger.exception("STT failed: %s", exc)
+                continue
+
+            stt_ms = (time.monotonic() - stt_start) * 1000
+            logger.info("STT final: %r (lang_prob=%s, %.2fms)", text, lang_prob, stt_ms)
+
+            tid = self.somistate.allocate_turn_id(text)
+            if tid is None:
+                continue
+
+            await self.somistate.event_bus.publish(
+                SpeechEvent(
+                    type=TRANSCRIPT_FINAL,
+                    turn_id=tid,
+                    payload={"text": text, "user_id": user_id, "stt_ms": stt_ms},
+                )
+            )
+
     async def run(self, user_id: str):
         self.audio_in.start()
-        playback_task = asyncio.create_task(self.somistate.playback_consumer())
         logger.info("Speech orchestrator running")
-
         try:
-            while True:
-                frame = self.audio_in.read(timeout=0.1)
-                if frame is None:
-                    await asyncio.sleep(0.005)
-                    continue
-
-                if self.somistate.state == self.somistate.SPEAKING:
-                    if self.bargein.process(frame):
-                        t0 = time.monotonic()
-                        await self.somistate.cancel_current_turn()
-                        logger.info("Barge-in detected; playback cancelled in %.2fms", (time.monotonic() - t0) * 1000)
-                    continue
-
-                if not stt_allowed(self.somistate.state, self.echo_policy):
-                    continue
-
-                utterance = self.vad.process(frame)
-                if utterance is None:
-                    continue
-
-                stt_start = time.monotonic()
-                try:
-                    text, lang_prob = self.stt_engine.transcribe_final(utterance, SAMPLE_RATE)
-                except Exception as exc:
-                    logger.exception("STT failed: %s", exc)
-                    continue
-                stt_ms = (time.monotonic() - stt_start) * 1000
-                logger.info("STT final: %r (lang_prob=%s, %.2fms)", text, lang_prob, stt_ms)
-
-                if not text.strip():
-                    continue
-                await self.somistate.on_transcript_final(text, user_id=user_id, stt_ms=stt_ms)
+            await asyncio.gather(
+                self.perception_loop(user_id=user_id),
+                self.somistate.cognition_loop(user_id=user_id),
+                self.somistate.playback_loop(),
+            )
         finally:
             self.audio_in.stop()
-            playback_task.cancel()
-            try:
-                await playback_task
-            except asyncio.CancelledError:
-                pass
+            self.somistate.audio_out.stop()
             logger.info("Speech orchestrator stopped")

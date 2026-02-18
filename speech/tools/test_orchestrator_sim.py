@@ -1,10 +1,4 @@
-"""Orchestrator simulation audit for freeze/bug-prone logic.
-
-Validates:
-- final VAD utterance triggers exactly one STT call and one agent call
-- STT is not called while state is SPEAKING (tier0)
-- barge-in triggers stop/cancel path
-"""
+"""Orchestrator simulation audit for streaming/interruptible speech logic."""
 
 import asyncio
 
@@ -31,6 +25,9 @@ class FakeAudioIn:
         if self.frames:
             return self.frames.pop(0)
         return None
+
+    def stop(self):
+        pass
 
 
 class FakeAudioOut:
@@ -62,13 +59,14 @@ class FakeSTT:
 async def _run_test():
     agent_calls = 0
 
-    async def fake_ask_agent(text, user_id):
+    async def fake_ask_agent_stream(text, user_id):
         nonlocal agent_calls
         agent_calls += 1
-        await asyncio.sleep(0.01)
-        return "This is a response."
+        for frag in ["This is", " a response."]:
+            await asyncio.sleep(0.01)
+            yield frag
 
-    somistate_mod.ask_agent = fake_ask_agent
+    somistate_mod.ask_agent_stream = fake_ask_agent_stream
 
     speech_frame = np.ones(320, dtype=np.float32) * 0.05
     silence_frame = np.zeros(320, dtype=np.float32)
@@ -80,14 +78,11 @@ async def _run_test():
     stt = FakeSTT()
     orch = Orchestrator(audio_in=FakeAudioIn(frames), stt_engine=stt, somistate=state, echo_policy="tier0")
 
-    async def runner():
-        await orch.run(user_id="u1")
-
-    task = asyncio.create_task(runner())
-    await asyncio.sleep(1.0)
+    task = asyncio.create_task(orch.run(user_id="u1"))
+    await asyncio.sleep(0.8)
 
     state.state = state.SPEAKING
-    await asyncio.sleep(0.4)
+    await asyncio.sleep(0.5)
 
     task.cancel()
     try:
