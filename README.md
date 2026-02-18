@@ -59,6 +59,19 @@ Start by running the command to initiate the gui
 python somicontroller.py
 ```
 
+### Dependency mismatch fix (NumPy/Pandas)
+If startup fails with an error like `ValueError: numpy.dtype size changed, may indicate binary incompatibility`, your local wheels are mixed after an update. Reinstall core scientific packages in one shot:
+
+```bash
+python -m pip install --upgrade --force-reinstall numpy==1.26.4 pandas==2.2.2 scikit-learn==1.5.2 sentence-transformers==5.2.2
+```
+
+Then rerun:
+
+```bash
+python somicontroller.py
+```
+
 ### Initiate Agent
 Starts the Ollama server in the background and loads your selected A.I. model (set in **General Settings**) into RAM/VRAM.  
 Once running, all chat, voice, and RAG features become active.

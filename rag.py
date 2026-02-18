@@ -4,7 +4,6 @@ import asyncio
 from pathlib import Path
 import pdfplumber
 from playwright.async_api import async_playwright
-from sentence_transformers import SentenceTransformer
 import faiss
 import numpy as np
 import json
@@ -22,7 +21,7 @@ class RAGHandler:
         self.vector_file = self.storage_path / "rag_vectors.faiss"
         self.text_file = self.storage_path / "rag_texts.json"
         self.precomputed_query_file = self.storage_path / "precomputed_queries.json"
-        self.model = SentenceTransformer('all-MiniLM-L12-v2')  # Optimized model
+        self.model = self._load_embedding_model()  # Optimized model
         self.index = None
         self.texts = []
         self.pdf_folder = Path("pdfs")
@@ -31,6 +30,22 @@ class RAGHandler:
         self.precomputed_queries = self._load_precomputed_queries()
         self.embedding_buffer = []  # Buffer for batching embeddings
         self._load_indices()
+
+    def _load_embedding_model(self):
+        """Load sentence-transformers lazily so non-RAG features can still boot."""
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ValueError as exc:
+            msg = str(exc)
+            if "numpy.dtype size changed" in msg:
+                raise RuntimeError(
+                    "RAG dependency binary mismatch detected (NumPy/Pandas/scikit-learn). "
+                    "Reinstall pinned dependencies with: "
+                    "python -m pip install --upgrade --force-reinstall numpy==1.26.4 pandas==2.2.2 scikit-learn==1.5.2"
+                ) from exc
+            raise
+
+        return SentenceTransformer('all-MiniLM-L12-v2')
 
     def _load_precomputed_queries(self):
         """Load precomputed query embeddings from a JSON file."""
