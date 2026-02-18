@@ -49,16 +49,19 @@ class SomiState:
         if self.agent_task and not self.agent_task.done():
             self.agent_task.cancel()
         self.audio_out.stop()
+        flushed = 0
         while not self.tts_queue.empty():
             try:
                 self.tts_queue.get_nowait()
                 self.tts_queue.task_done()
+                flushed += 1
             except asyncio.QueueEmpty:
                 break
         tm = self.turn_metrics.get(cancelled_tid)
         if tm:
             tm.mark("bargein_stop")
             self._close_turn_metrics(cancelled_tid, extra={"cancelled": True})
+        logger.info("Cancelled turn: cancelled_tid=%s new_turn_id=%s flushed_chunks=%s", cancelled_tid, self.turn_id, flushed)
         self.state = self.LISTENING
         return cancelled_tid
 
@@ -82,32 +85,40 @@ class SomiState:
         self.turn_metrics[tid] = tm
 
         async def _backchannel(local_tid: int):
-            await asyncio.sleep(BACKCHANNEL_AFTER_MS / 1000)
-            if local_tid != self.turn_id or self.state != self.THINKING:
-                return
-            if self.backchannel_cb:
-                try:
-                    self.backchannel_cb()
-                except Exception as exc:
-                    logger.warning("Backchannel callback failed: %s", exc)
+            try:
+                await asyncio.sleep(BACKCHANNEL_AFTER_MS / 1000)
+                if local_tid != self.turn_id or self.state != self.THINKING:
+                    return
+                if self.backchannel_cb:
+                    try:
+                        self.backchannel_cb()
+                    except Exception as exc:
+                        logger.warning("Backchannel callback failed: %s", exc)
+            except Exception as exc:
+                logger.warning("Backchannel task failed for turn_id=%s: %s", local_tid, exc)
 
         async def _run_agent(local_tid: int, transcript: str):
             try:
                 response = await asyncio.wait_for(ask_agent(transcript, user_id=user_id), timeout=AGENT_TIMEOUT_S)
                 if local_tid != self.turn_id:
                     return
-                self.turn_metrics[local_tid].mark("agent_done")
+                tm = self.turn_metrics.get(local_tid)
+                if tm:
+                    tm.mark("agent_done")
                 cleaned = clean_tts_text(response)
                 chunks = chunk_text(cleaned)
                 if not chunks:
                     self.state = self.LISTENING
                     self._close_turn_metrics(local_tid, extra={"empty_response": True})
                     return
+                enqueued = False
                 for chunk in chunks:
                     if local_tid != self.turn_id:
                         return
                     await self.tts_queue.put((local_tid, chunk))
-                self.state = self.SPEAKING
+                    enqueued = True
+                if enqueued:
+                    self.state = self.SPEAKING
             except asyncio.TimeoutError:
                 if local_tid == self.turn_id:
                     logger.warning("Agent timed out for turn_id=%s", local_tid)

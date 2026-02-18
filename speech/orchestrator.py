@@ -12,6 +12,7 @@ from speech.config import (
     SAMPLE_RATE,
     SILENCE_MS,
     VAD_RMS_THRESHOLD,
+    PREROLL_MS,
 )
 from speech.detect.bargein import BargeInDetector
 from speech.detect.echo import stt_allowed
@@ -32,6 +33,7 @@ class Orchestrator:
             silence_ms=SILENCE_MS,
             max_utterance_s=MAX_UTTERANCE_S,
             rms_threshold=VAD_RMS_THRESHOLD,
+            preroll_ms=PREROLL_MS,
         )
         self.bargein = BargeInDetector(BARGEIN_RMS_THRESHOLD, BARGEIN_CONSEC_FRAMES)
 
@@ -49,9 +51,9 @@ class Orchestrator:
 
                 if self.somistate.state == self.somistate.SPEAKING:
                     if self.bargein.process(frame):
-                        t0 = time.perf_counter()
+                        t0 = time.monotonic()
                         await self.somistate.cancel_current_turn()
-                        logger.info("Barge-in detected; playback cancelled in %.2fms", (time.perf_counter() - t0) * 1000)
+                        logger.info("Barge-in detected; playback cancelled in %.2fms", (time.monotonic() - t0) * 1000)
                     continue
 
                 if not stt_allowed(self.somistate.state, self.echo_policy):
@@ -61,14 +63,14 @@ class Orchestrator:
                 if utterance is None:
                     continue
 
-                stt_start = time.perf_counter()
+                stt_start = time.monotonic()
                 try:
-                    text, conf = self.stt_engine.transcribe_final(utterance, SAMPLE_RATE)
+                    text, lang_prob = self.stt_engine.transcribe_final(utterance, SAMPLE_RATE)
                 except Exception as exc:
                     logger.exception("STT failed: %s", exc)
                     continue
-                stt_ms = (time.perf_counter() - stt_start) * 1000
-                logger.info("STT final: %r (conf=%s, %.2fms)", text, conf, stt_ms)
+                stt_ms = (time.monotonic() - stt_start) * 1000
+                logger.info("STT final: %r (lang_prob=%s, %.2fms)", text, lang_prob, stt_ms)
 
                 if not text.strip():
                     continue
