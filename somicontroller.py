@@ -36,6 +36,9 @@ from PyQt6.QtWidgets import (
 
 from gui import aicoregui, speechgui, telegramgui, twittergui
 from gui.themes import app_stylesheet, dialog_stylesheet
+from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
+from heartbeat.service import HeartbeatService
+from handlers.research.agentpedia import Agentpedia
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -215,6 +218,16 @@ class SomiAIGUI(QMainWindow):
         self.speech_output_device = ""
         self.model_settings_window = None
         self.edit_settings_window = None
+        self.agentpedia_client = Agentpedia(write_back=False)
+        self.heartbeat_service = HeartbeatService()
+        self.heartbeat_bridge = HeartbeatGUIBridge(self.heartbeat_service)
+        self.heartbeat_service.set_shared_context(
+            HB_CACHED_WEATHER_LINE="",
+            HB_CACHED_WEATHER_TS="",
+            HB_CACHED_WEATHER_PAYLOAD=None,
+            HB_CACHED_URGENT_HEADLINE="",
+            HB_CACHED_AGENTPEDIA_FACT="",
+        )
 
         self.root = QWidget()
         self.setCentralWidget(self.root)
@@ -228,6 +241,7 @@ class SomiAIGUI(QMainWindow):
         self.build_quick_action_bar()
         self.apply_theme()
         self.wire_signals_and_timers()
+        self.heartbeat_service.start()
 
         self.push_activity("system", "Prime Console booted")
         self.refresh_weather()
@@ -255,10 +269,12 @@ class SomiAIGUI(QMainWindow):
 
         self.time_label = QLabel("--")
         self.chips_label = QLabel("Online • Model: -- • Memory: Ready • Speech: Idle • Background: Monitoring")
+        self.heartbeat_label = QLabel("Heartbeat: --")
         self.metrics_label = QLabel("🌡 -- • 📰 0 • ⏰ 0")
 
         layout.addWidget(self.time_label, 1)
         layout.addWidget(self.chips_label, 2, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.heartbeat_label, 1, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(self.metrics_label, 1, alignment=Qt.AlignmentFlag.AlignRight)
         self.main_layout.addWidget(strip)
 
@@ -350,12 +366,12 @@ class SomiAIGUI(QMainWindow):
         console_tab.setLayout(QVBoxLayout())
         console_tab.layout().addWidget(self.output_area)
 
-        diag = QTextEdit()
-        diag.setReadOnly(True)
-        diag.setText("Diagnostics placeholder: weather/news/reminder cache health.")
+        self.diag_text = QTextEdit()
+        self.diag_text.setReadOnly(True)
+        self.diag_text.setText("Diagnostics placeholder: weather/news/reminder cache health.")
         diag_tab = QWidget()
         diag_tab.setLayout(QVBoxLayout())
-        diag_tab.layout().addWidget(diag)
+        diag_tab.layout().addWidget(self.diag_text)
 
         self.tabs.addTab(activity_tab, "Activity")
         self.tabs.addTab(console_tab, "Raw Console")
@@ -372,6 +388,9 @@ class SomiAIGUI(QMainWindow):
             ("Study", lambda: aicoregui.study_material(self)),
             ("Modules", lambda: ModulesDialog(self).exec()),
             ("Settings", self.show_model_selections),
+            ("Agentpedia", self.open_agentpedia_viewer),
+            ("HB Pause", self.pause_heartbeat),
+            ("HB Resume", self.resume_heartbeat),
         ]:
             l.addWidget(self._sub_btn(label, cb))
         l.addWidget(self._sub_btn("Background", self.change_background))
@@ -402,7 +421,23 @@ class SomiAIGUI(QMainWindow):
         self.output_watch_timer.timeout.connect(self.capture_output_events)
         self.output_watch_timer.start(1400)
 
+        hb_update_s = getattr(self.heartbeat_service.settings_module, "HB_UI_HEARTBEAT_UPDATE_SECONDS", 2)
+        hb_label_ms = int(hb_update_s * 1000)
+        self.hb_label_timer = QTimer(self)
+        self.hb_label_timer.timeout.connect(self.update_heartbeat_label)
+        self.hb_label_timer.start(hb_label_ms)
+
+        self.hb_event_timer = QTimer(self)
+        self.hb_event_timer.timeout.connect(self.poll_heartbeat_events)
+        self.hb_event_timer.start(750)
+
+        self.hb_diag_timer = QTimer(self)
+        self.hb_diag_timer.timeout.connect(self.refresh_heartbeat_diagnostics)
+        self.hb_diag_timer.start(5000)
+
         self.update_clock()
+        self.update_heartbeat_label()
+        self.refresh_heartbeat_diagnostics()
 
     def apply_theme(self):
         self.setStyleSheet(app_stylesheet())
@@ -427,6 +462,109 @@ class SomiAIGUI(QMainWindow):
         self.time_label.setText(f"{self.state['system_time_str']} ({self.state['timezone']})")
         self.update_presence()
         self.update_top_strip()
+
+    def update_heartbeat_label(self):
+        self.heartbeat_label.setText(self.heartbeat_bridge.get_label_text())
+        self.heartbeat_label.setToolTip(self.heartbeat_bridge.get_status_tooltip())
+
+    def poll_heartbeat_events(self):
+        events = self.heartbeat_bridge.poll_events()
+        for event in events:
+            title = event.get("title", "Heartbeat event")
+            detail = event.get("detail")
+            level = str(event.get("level", "INFO")).lower()
+            message = f"{title}: {detail}" if detail and title != "Heartbeat steady" else title
+            self.push_activity("heartbeat", message, level="warn" if level == "warn" else "info")
+
+    def refresh_heartbeat_diagnostics(self):
+        status = self.heartbeat_service.get_status()
+        state = status.get("state", {})
+        events = status.get("events", [])[-10:]
+        lines = [
+            "Heartbeat Diagnostics",
+            f"Mode: {state.get('mode', 'MONITOR')}",
+            f"Running: {state.get('running', False)}",
+            f"Paused: {state.get('paused', False)}",
+            f"Last action: {state.get('last_action', 'Idle')}",
+            "Recent events:",
+        ]
+        for event in events:
+            lines.append(f"- {event.get('ts', '')} [{event.get('level', 'INFO')}] {event.get('title', '')}")
+        if state.get("last_greeting_date"):
+            lines.append(f"Morning brief ready: {state.get('last_greeting_date')}")
+        if state.get("last_weather_check_ts"):
+            lines.append(f"Last weather check: {state.get('last_weather_check_ts')}")
+        if state.get("last_weather_warning_ts"):
+            lines.append(f"Last weather warning: {state.get('last_weather_warning_ts')}")
+        if state.get("last_delight_ts"):
+            lines.append(f"Last delight: {state.get('last_delight_ts')}")
+        if state.get("last_agentpedia_run_ts"):
+            lines.append(f"Last Agentpedia run: {state.get('last_agentpedia_run_ts')}")
+        if state.get("last_agentpedia_topic"):
+            lines.append(f"Last Agentpedia topic: {state.get('last_agentpedia_topic')}")
+        if state.get("last_agentpedia_role"):
+            lines.append(f"Last Agentpedia role: {state.get('last_agentpedia_role')}")
+        if state.get("last_agentpedia_style"):
+            lines.append(f"Last Agentpedia style: {state.get('last_agentpedia_style')}")
+        configured_role = getattr(self.heartbeat_service.settings_module, "CAREER_ROLE", None)
+        lines.append(f"Configured Career Role: {configured_role or 'General'}")
+        lines.append(f"Agentpedia facts: {state.get('agentpedia_facts_count', 0)}")
+        if state.get("last_agentpedia_error"):
+            lines.append(f"Agentpedia error: {state.get('last_agentpedia_error')}")
+        if state.get("last_error"):
+            lines.append(f"Last error: {state['last_error']}")
+        self.diag_text.setPlainText("\n".join(lines))
+
+    def pause_heartbeat(self):
+        self.heartbeat_service.pause()
+
+    def resume_heartbeat(self):
+        self.heartbeat_service.resume()
+
+    def open_agentpedia_viewer(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Agentpedia")
+        dialog.resize(920, 560)
+        dialog.setStyleSheet(dialog_stylesheet())
+
+        layout = QVBoxLayout(dialog)
+        row = QHBoxLayout()
+
+        topics = QListWidget()
+        viewer = QTextEdit()
+        viewer.setReadOnly(True)
+
+        row.addWidget(topics, 1)
+        row.addWidget(viewer, 2)
+        layout.addLayout(row)
+
+        refresh_btn = QPushButton("Refresh")
+        layout.addWidget(refresh_btn)
+
+        def load_topics():
+            topics.clear()
+            try:
+                for item in self.agentpedia_client.list_topics(limit=200):
+                    topics.addItem(str(item.get("topic") or "Unknown"))
+            except Exception as exc:
+                viewer.setPlainText(f"Failed to load Agentpedia topics: {exc}")
+
+        def on_pick():
+            it = topics.currentItem()
+            if not it:
+                return
+            topic = it.text().strip()
+            try:
+                md = self.agentpedia_client.get_topic_page(topic)
+                viewer.setPlainText(md)
+            except Exception as exc:
+                viewer.setPlainText(f"Failed to load topic page: {exc}")
+
+        refresh_btn.clicked.connect(load_topics)
+        topics.itemSelectionChanged.connect(on_pick)
+
+        load_topics()
+        dialog.exec()
 
     def update_top_strip(self):
         model_name = self.read_settings().get("DEFAULT_MODEL", "--")
@@ -545,9 +683,19 @@ class SomiAIGUI(QMainWindow):
             if data.get("ok"):
                 self.state["weather"].update(data)
                 self.state["weather"]["last_updated"] = now_stamp
+                self.heartbeat_service.set_shared_context(
+                    HB_CACHED_WEATHER_LINE=self.state["weather"].get("line", ""),
+                    HB_CACHED_WEATHER_TS=datetime.now().astimezone().isoformat(),
+                    HB_CACHED_WEATHER_PAYLOAD={
+                        "temp_c": data.get("temp"),
+                        "description": self.state["weather"].get("line", ""),
+                        "source": "gui_weather_refresh",
+                    },
+                )
                 self.push_activity("ambient", "Weather refreshed")
             else:
                 self.state["weather"] = {"emoji": "🌡", "temp": "--", "line": "Weather unavailable", "last_updated": now_stamp}
+                self.heartbeat_service.set_shared_context(HB_CACHED_WEATHER_LINE="", HB_CACHED_WEATHER_TS="", HB_CACHED_WEATHER_PAYLOAD=None)
                 self.push_activity("ambient", "Weather unavailable", level="warn")
         if kind == "news":
             if data.get("ok"):
@@ -847,6 +995,7 @@ class SomiAIGUI(QMainWindow):
         HelpWindow(self, f"Help - {section}", content).exec()
 
     def closeEvent(self, event):
+        self.heartbeat_service.stop()
         for process in [self.telegram_process, self.twitter_autotweet_process, self.twitter_autoresponse_process, self.alex_process, self.ai_model_process]:
             if process and process.poll() is None:
                 try:

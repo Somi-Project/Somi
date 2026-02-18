@@ -36,6 +36,7 @@ from handlers.research.science_stores import (
     TextbookFactsStore,
     AgentpediaManager,
 )
+from handlers.research.agentpedia_kb import AgentpediaKB
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,7 @@ class Agentpedia:
         )
 
         self.router = ResearchRouter()
+        self.kb = AgentpediaKB()
 
     async def _router_search_bounded(self, q: str) -> Tuple[List[Dict[str, Any]], bool]:
         """
@@ -456,3 +458,43 @@ class Agentpedia:
         except Exception as e:
             logger.debug(f"ResearchedScienceStore.add_facts failed: {type(e).__name__}: {e}")
             return
+
+
+    # ---- Phase 2A Agentpedia API (compat-safe) ----
+    def add_facts(self, facts: List[Dict[str, Any]]) -> Dict[str, Any]:
+        res = self.kb.add_facts(facts)
+        return {
+            "added_count": res.added_count,
+            "updated_topics": res.updated_topics,
+            "skipped_reason_counts": res.skipped_reason_counts,
+        }
+
+    def search_agentpedia(self, query: str, k: int = 8, tags: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+        return self.kb.search(query, k=k, tags=tags)
+
+    def get_topic_page(self, topic: str) -> str:
+        return self.kb.get_topic_page(topic)
+
+    def list_topics(self, limit: int = 200) -> List[Dict[str, Any]]:
+        return self.kb.list_topics(limit=limit)
+
+    def grow(self, role: Optional[str], interests: Optional[List[str]], max_facts: int = 2, mode: str = "safe") -> Dict[str, Any]:
+        res = self.kb.grow(role=role, interests=interests, max_facts=max_facts, mode=mode)
+        return {
+            "added_facts_count": res.added_facts_count,
+            "updated_topics": res.updated_topics,
+            "skipped_reason_counts": res.skipped_reason_counts,
+            "errors": res.errors,
+            "produced_events": res.produced_events,
+        }
+
+    def get_agentpedia_stats(self) -> Dict[str, Any]:
+        st = self.kb._state()
+        return {
+            "last_run_ts": st.get("last_run_ts"),
+            "last_topic_run": st.get("last_topic_run"),
+            "last_role": st.get("last_role"),
+            "last_nugget_style": st.get("last_nugget_style"),
+            "facts_count": self.kb.fact_count(),
+            "last_errors": st.get("last_errors") or [],
+        }
