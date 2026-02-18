@@ -88,6 +88,26 @@ def alex_ai_toggle(app):
         use_studies_check.setChecked(True)
         layout.addWidget(use_studies_check)
 
+        profile_layout = QHBoxLayout()
+        profile_layout.addWidget(QLabel("Audio OS profile:"))
+        os_profile_combo = QComboBox()
+        os_profile_combo.addItems(["auto", "windows", "mac", "linux"])
+        os_profile_combo.setCurrentText(getattr(app, "speech_os_profile", "auto"))
+        profile_layout.addWidget(os_profile_combo)
+        layout.addLayout(profile_layout)
+
+        input_layout = QHBoxLayout()
+        input_layout.addWidget(QLabel("Input device (index or name):"))
+        input_device_edit = QLineEdit(getattr(app, "speech_input_device", ""))
+        input_layout.addWidget(input_device_edit)
+        layout.addLayout(input_layout)
+
+        output_layout = QHBoxLayout()
+        output_layout.addWidget(QLabel("Output device (index or name):"))
+        output_device_edit = QLineEdit(getattr(app, "speech_output_device", ""))
+        output_layout.addWidget(output_device_edit)
+        layout.addLayout(output_layout)
+
         button_layout = QHBoxLayout()
         start_button = QPushButton("Start")
         cancel_button = QPushButton("Cancel")
@@ -109,9 +129,29 @@ def alex_ai_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Alex AI with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = [sys.executable, "-m", "speech.tools.run_speech", "--agent-name", agent_key] + (["--use-studies"] if use_studies else [])
+            cmd = [sys.executable, "-m", "speech.tools.run_speech", "--agent-name", agent_key, "--os-profile", os_profile_combo.currentText()]
+            if use_studies:
+                cmd.append("--use-studies")
+            input_device = input_device_edit.text().strip()
+            output_device = output_device_edit.text().strip()
+            app.speech_os_profile = os_profile_combo.currentText()
+            app.speech_input_device = input_device
+            app.speech_output_device = output_device
+            if input_device:
+                cmd.extend(["--input-device", input_device])
+            if output_device:
+                cmd.extend(["--output-device", output_device])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
+            env["SOMI_SPEECH_OS_PROFILE"] = app.speech_os_profile
+            if app.speech_input_device:
+                env["SOMI_SPEECH_INPUT_DEVICE"] = app.speech_input_device
+            else:
+                env.pop("SOMI_SPEECH_INPUT_DEVICE", None)
+            if app.speech_output_device:
+                env["SOMI_SPEECH_OUTPUT_DEVICE"] = app.speech_output_device
+            else:
+                env.pop("SOMI_SPEECH_OUTPUT_DEVICE", None)
 
             try:
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == 'win32' else 0
