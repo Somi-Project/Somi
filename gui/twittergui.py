@@ -12,6 +12,7 @@ import threading
 import sys
 from datetime import datetime
 import importlib
+from gui.themes import dialog_stylesheet
 import logging
 from config import settings
 
@@ -31,6 +32,7 @@ def twitter_developer_tweet(app):
     dialog = QDialog(app)
     dialog.setWindowTitle("Send Developer Tweet")
     dialog.setGeometry(100, 100, 400, 300)
+    dialog.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
     content_label = QLabel("Tweet Content:")
     layout.addWidget(content_label)
@@ -53,7 +55,7 @@ def twitter_developer_tweet(app):
             return
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Sending Developer Tweet: {content}...")
         app.output_area.ensureCursorVisible()
-        cmd = ["python", "somi.py", "devpost"]
+        cmd = [sys.executable, "somi.py", "devpost"]
         env = os.environ.copy()
         env["PYTHONUNBUFFERED"] = "1"
         try:
@@ -134,6 +136,7 @@ def twitter_autotweet_toggle(app):
         dialog = QDialog(app)
         dialog.setWindowTitle("Select Twitter Autotweet Agent")
         dialog.setGeometry(100, 100, 400, 250)
+        dialog.setStyleSheet(dialog_stylesheet())
         layout = QVBoxLayout()
         label = QLabel("Agent Name:")
         layout.addWidget(label)
@@ -165,7 +168,7 @@ def twitter_autotweet_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Twitter Autotweet with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = ["python", "somi.py", "aiautopost", "--name", agent_key] + (["--use-studies"] if use_studies else [])
+            cmd = [sys.executable, "somi.py", "aiautopost", "--name", agent_key] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
 
@@ -244,6 +247,7 @@ def twitter_autoresponse_toggle(app):
         dialog = QDialog(app)
         dialog.setWindowTitle("Select Twitter Autoresponse Agent")
         dialog.setGeometry(100, 100, 400, 300)
+        dialog.setStyleSheet(dialog_stylesheet())
         layout = QVBoxLayout()
         layout.addWidget(QLabel("Agent Name:"))
         name_combo = QComboBox()
@@ -286,7 +290,7 @@ def twitter_autoresponse_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Twitter Autoresponse with {selected_name}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = ["python", "somi.py", "aiautoreply", "--name", agent_key, "--limit", str(limit)] + (["--use-studies"] if use_studies else [])
+            cmd = [sys.executable, "somi.py", "aiautoreply", "--name", agent_key, "--limit", str(limit)] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
 
@@ -331,6 +335,7 @@ def twitter_settings(app):
     settings_dialog = QDialog(app)
     settings_dialog.setWindowTitle("Twitter Settings")
     settings_dialog.setGeometry(100, 100, 600, 400)
+    settings_dialog.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
 
     def display_settings():
@@ -364,6 +369,7 @@ def twitter_settings(app):
         edit_dialog = QDialog(settings_dialog)
         edit_dialog.setWindowTitle("Edit Twitter Settings")
         edit_dialog.setGeometry(100, 100, 600, 600)
+        edit_dialog.setStyleSheet(dialog_stylesheet())
         edit_layout = QVBoxLayout()
 
         # Username
@@ -579,7 +585,7 @@ def twitter_login(app):
     logger.info("Initiating Twitter Login...")
     app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Generating Twitter cookies...")
     app.output_area.ensureCursorVisible()
-    cmd = ["python", "somi.py", "gencookies"]
+    cmd = [sys.executable, "somi.py", "gencookies"]
     env = os.environ.copy()
     env["PYTHONUNBUFFERED"] = "1"
     try:

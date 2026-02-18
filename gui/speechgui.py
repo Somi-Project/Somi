@@ -15,24 +15,7 @@ import logging
 import ast
 import re
 from pathlib import Path
-
-# gui/speechgui.py
-from PyQt6.QtWidgets import (
-    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox, QCheckBox,
-    QMessageBox, QLineEdit, QSpinBox, QDoubleSpinBox, QWidget
-)
-from PyQt6.QtCore import QTimer
-import subprocess
-import queue
-import os
-import signal
-import threading
-import sys
-from datetime import datetime
-import logging
-import ast
-import re
-from pathlib import Path
+from gui.themes import dialog_stylesheet
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -91,6 +74,7 @@ def alex_ai_toggle(app):
         dialog = QDialog(app)
         dialog.setWindowTitle("Select Alex AI Agent")
         dialog.setGeometry(100, 100, 400, 250)
+        dialog.setStyleSheet(dialog_stylesheet())
         layout = QVBoxLayout()
 
         layout.addWidget(QLabel("Agent Name:"))
@@ -125,7 +109,7 @@ def alex_ai_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Alex AI with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = ["python", "-m", "speech.tools.run_speech", "--agent-name", agent_key] + (["--use-studies"] if use_studies else [])
+            cmd = [sys.executable, "-m", "speech.tools.run_speech", "--agent-name", agent_key] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
 
@@ -217,6 +201,7 @@ def audio_settings(app):
     settings_dialog = QDialog(app)
     settings_dialog.setWindowTitle("Audio Settings")
     settings_dialog.setGeometry(100, 100, 600, 500)
+    settings_dialog.setStyleSheet(dialog_stylesheet())
     layout = QVBoxLayout()
 
     def read_audio_settings():
@@ -280,6 +265,7 @@ def audio_settings(app):
         edit_dialog = QDialog(settings_dialog)
         edit_dialog.setWindowTitle("Edit Audio Settings")
         edit_dialog.setGeometry(100, 100, 600, 600)
+        edit_dialog.setStyleSheet(dialog_stylesheet())
         edit_layout = QVBoxLayout()
 
         entries = {}
