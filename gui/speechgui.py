@@ -46,7 +46,7 @@ def _find_button(app, partial_text):
     return None
 
 def alex_ai_toggle(app):
-    """Toggle the Alex AI (speech.py) process with selected agent and optional use-studies flag."""
+    """Toggle the Alex AI speech process with selected agent and optional use-studies flag."""
     logger.info("Initiating Alex AI Toggle...")
 
     # Find the Alex button in the main window
@@ -125,7 +125,7 @@ def alex_ai_toggle(app):
             app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Starting Alex AI with {selected_name} {'using studies' if use_studies else ''}...")
             app.output_area.ensureCursorVisible()
 
-            cmd = ["python", "speech.py", "--name", agent_key] + (["--use-studies"] if use_studies else [])
+            cmd = ["python", "-m", "speech.tools.run_speech", "--agent-name", agent_key] + (["--use-studies"] if use_studies else [])
             env = os.environ.copy()
             env["PYTHONUNBUFFERED"] = "1"
 
