@@ -823,9 +823,19 @@ def get_binance_pairs(force_refresh: bool = False):
 
 
 def verify_binance_support(symbol):
-    """Check if a symbol is supported as a USDT pair on Binance."""
+    """Check if a symbol is supported as a USDT pair on Binance.
+
+    If exchangeInfo is temporarily unavailable, return True and let ticker/price
+    endpoint be the final validator (fail-open for resilience).
+    """
     usdt_pairs = get_binance_pairs()
-    supported = symbol in usdt_pairs if usdt_pairs else False
+    if not usdt_pairs:
+        logger.warning(
+            f"Binance exchangeInfo unavailable while validating '{symbol}'. "
+            "Proceeding to direct price lookup."
+        )
+        return True
+    supported = symbol in usdt_pairs
     logger.debug(f"Verifying Binance support for '{symbol}': {'Supported' if supported else 'Not supported'}")
     return supported
 

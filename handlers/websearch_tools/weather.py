@@ -158,18 +158,20 @@ def _extract_location_from_query(query: str) -> str:
     Improved version that strips common time-related prefixes first
     so "sunrise time in X" or "what time is sunset in Y" still extracts X/Y correctly.
     """
-    q = (query or "").strip()
-    ql = q.lower()
+    q = _normalize_space(query)
+    if not q:
+        return ""
 
     # Remove leading time-related words/phrases
     q = re.sub(
         r"\b(?:sunrise|sunset|dawn|dusk|when is|what time is|time of|fajr|prayer|zenith)\b\s*",
         "", q, flags=re.IGNORECASE
     ).strip()
+    ql = q.lower()
 
     # If "in/for/at" present, capture after it
     m = re.search(
-        r"\b(?:in|for|at)\s+(.+?)(?=\b(?:today|tomorrow|now|weather|forecast|sunrise|sunset|dawn|dusk|uv|rain|humidity|wind|$))",
+        r"\b(?:in|for|at)\s+(.+?)(?=\b(?:today|tomorrow|now|weather|forecast|sunrise|sunset|dawn|dusk|uv|rain|humidity|wind)\b|$)",
         ql
     )
     if m:
