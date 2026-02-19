@@ -902,9 +902,14 @@ Query: {query}
                     max_n=6,
                 )
 
-                # SearXNG fallback if DDG is weak
-                if len(enriched) < 3:
-                    logger.info(f"DDG weak ({len(enriched)} enriched results) for '{q}' — enriching with SearXNG")
+                strong_content = sum(1 for r in enriched if isinstance(r, dict) and len((r.get("content") or "").strip()) > 400)
+                ddg_weak = len(base) < 3 or len(enriched) < 3 or strong_content < 1
+
+                # SearXNG fallback if DDG is weak (few links or no extracted page content)
+                if ddg_weak:
+                    logger.info(
+                        f"DDG weak (base={len(base)}, enriched={len(enriched)}, strong_content={strong_content}) for '{q}' — enriching with SearXNG"
+                    )
                     async with httpx.AsyncClient(timeout=12.0) as local_client:
                         extra = await search_searxng(
                             local_client,

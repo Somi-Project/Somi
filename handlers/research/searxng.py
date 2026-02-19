@@ -17,6 +17,8 @@ from handlers.research.base import pack_result, safe_trim
 logger = logging.getLogger(__name__)
 
 SEARXNG_URL = "http://localhost:8080"  # Change if your Docker port/host differs
+_SEARXNG_SEM = asyncio.Semaphore(3)
+_ALLOWED_CATEGORIES = {"general", "news", "science", "images", "videos", "music", "it", "files", "social media", "map"}
 
 
 async def search_searxng(
@@ -31,9 +33,10 @@ async def search_searxng(
     """
     Shared async SearXNG search — returns pack_result-compatible dicts.
     """
-    async with asyncio.Semaphore(3):  # Polite rate limit
+    cat = category if category in _ALLOWED_CATEGORIES else "general"
+    async with _SEARXNG_SEM:  # Polite global rate limit across concurrent calls
         qq = quote_plus(query)
-        url = f"{SEARXNG_URL}/search?q={qq}&format=json&categories={category}&pageno=1"
+        url = f"{SEARXNG_URL}/search?q={qq}&format=json&categories={quote_plus(cat)}&pageno=1"
         try:
             r = await client.get(url, timeout=10.0)
             if r.status_code != 200:
@@ -72,5 +75,5 @@ async def search_searxng(
             r_dict["volatile"] = True
             out.append(r_dict)
 
-        logger.info(f"SearXNG returned {len(out)} results for '{query}'")
+        logger.info(f"SearXNG returned {len(out)} results for '{query}' (category={cat})")
         return out
