@@ -61,6 +61,7 @@ class MemoryManager:
         self.sql = SQLiteMemoryStore(os.path.join(self.memory_dir, "memory.sqlite"))
         self.graph = GraphExpander(self.sql)
         self.snapshot_path = os.path.join(self.memory_dir, "snapshot_v3.json")
+        self.markdown_ledger_path = os.path.join(self.memory_dir, "memory_ledger.md")
         self._migration_marker = os.path.join(self.memory_dir, ".migration_v3_done")
         self._legacy_files = {
             "preferences": os.path.join(self.memory_dir, "preferences.jsonl"),
@@ -86,6 +87,7 @@ class MemoryManager:
         self.max_snapshot_items = 1000
         self.max_line_items_per_file = 4000
         self.episodic_ttl_days = 30
+        self._ensure_markdown_ledger()
         self._load_snapshot()
         self._migrate_legacy_jsonl_if_needed()
 
@@ -161,6 +163,79 @@ class MemoryManager:
         with open(self._migration_marker, "w", encoding="utf-8") as f:
             f.write(utcnow_iso())
 
+
+    def _ensure_markdown_ledger(self) -> None:
+        if os.path.exists(self.markdown_ledger_path):
+            return
+        with open(self.markdown_ledger_path, "w", encoding="utf-8") as f:
+            f.write("# Memory Ledger (append-only)\n\n")
+
+    def _append_markdown_ledger(self, row: Dict[str, Any]) -> None:
+        self._ensure_markdown_ledger()
+        with open(self.markdown_ledger_path, "a", encoding="utf-8") as f:
+            f.write(f"- {json.dumps(row, ensure_ascii=False)}\n")
+
+    def _read_markdown_ledger_tail(self, max_lines: int = 2400) -> List[Dict[str, Any]]:
+        if not os.path.exists(self.markdown_ledger_path):
+            return []
+        out: List[Dict[str, Any]] = []
+        try:
+            with open(self.markdown_ledger_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()[-max_lines:]
+            for raw in lines:
+                line = raw.strip()
+                if not line.startswith("- {"):
+                    continue
+                payload = line[2:].strip()
+                try:
+                    obj = json.loads(payload)
+                except Exception:
+                    continue
+                if isinstance(obj, dict):
+                    out.append(obj)
+        except Exception:
+            return []
+        return out
+
+    def _recent_claims_fallback(self, user_id: str, scope: str, limit: int = 240) -> List[Dict[str, Any]]:
+        rows = self.sql.recent_claims(user_id, scope, limit=limit)
+        if rows:
+            return rows
+
+        latest: Dict[str, Dict[str, Any]] = {}
+        for ev in self._read_markdown_ledger_tail(max_lines=3600):
+            if str(ev.get("user_id", "")) != user_id:
+                continue
+            if str(ev.get("scope", "conversation")) != scope:
+                continue
+            et = str(ev.get("event_type", ""))
+            cid = str(ev.get("claim_id", ""))
+            if not cid:
+                continue
+            if et == "claim_upsert":
+                latest[cid] = {
+                    "claim_id": cid,
+                    "content": str(ev.get("content", "")),
+                    "memory_type": str(ev.get("memory_type", "facts")),
+                    "scope": scope,
+                    "status": "active",
+                    "supersedes_claim_id": ev.get("supersedes_claim_id"),
+                    "superseded_by_claim_id": None,
+                    "contradiction_with_claim_id": ev.get("contradiction_with_claim_id"),
+                    "confidence": float(ev.get("confidence", 0.6) or 0.6),
+                    "ts_updated": str(ev.get("ts", "")),
+                    "salience": float(ev.get("salience", 0.5) or 0.5),
+                }
+            elif et == "claim_status":
+                st = str(ev.get("status", "")).strip().lower()
+                if cid in latest and st:
+                    latest[cid]["status"] = st
+                    latest[cid]["ts_updated"] = str(ev.get("ts", latest[cid].get("ts_updated", "")))
+
+        active = [r for r in latest.values() if r.get("status") == "active" and r.get("content")]
+        active.sort(key=lambda x: str(x.get("ts_updated", "")), reverse=True)
+        return active[: max(1, int(limit))]
+
     def _normalize_scope(self, scope: Optional[str]) -> str:
         s = (scope or "conversation").strip().lower()
         return s if s in VALID_SCOPES else "conversation"
@@ -228,6 +303,76 @@ class MemoryManager:
         except Exception:
             pass
         return self._zero_vec()
+
+    def _extract_semantic_slots(self, text: str) -> Dict[str, str]:
+        low = (text or "").strip().lower()
+        if not low:
+            return {}
+
+        out: Dict[str, str] = {}
+        beverage_terms = {
+            "coffee",
+            "latte",
+            "espresso",
+            "tea",
+            "matcha",
+            "cappuccino",
+            "juice",
+            "soda",
+            "water",
+            "milk",
+            "beer",
+            "wine",
+        }
+
+        fav = re.search(r"\bmy\s+favorite\s+([a-z][a-z0-9 _-]{1,28})\s+is\s+([a-z0-9][a-z0-9 ':-]{1,40})", low)
+        if fav:
+            category = fav.group(1).strip()
+            value = fav.group(2).strip(" .!?\"'")
+            out[f"favorite:{category}"] = value
+
+        like = re.search(r"\bi\s+(?:really\s+)?(love|like|prefer)\s+([a-z0-9][a-z0-9 ':-]{1,40})", low)
+        if like:
+            obj = like.group(2).strip(" .!?\"'")
+            head = obj.split()[0]
+            out[f"stance:{obj}"] = "like"
+            if head in beverage_terms and "favorite:drink" not in out:
+                out["favorite:drink"] = obj
+
+        dislike = re.search(r"\bi\s+(?:really\s+)?(hate|dislike)\s+([a-z0-9][a-z0-9 ':-]{1,40})", low)
+        if dislike:
+            obj = dislike.group(2).strip(" .!?\"'")
+            out[f"stance:{obj}"] = "dislike"
+
+        return out
+
+    def _extract_query_slot_keys(self, text: str) -> List[str]:
+        low = (text or "").strip().lower()
+        if not low:
+            return []
+        keys: List[str] = []
+        for m in re.finditer(r"\b(?:my|your)\s+favorite\s+([a-z][a-z0-9 _-]{1,28})", low):
+            keys.append(f"favorite:{m.group(1).strip()}")
+        if any(x in low for x in ("favorite drink", "favorite beverage")):
+            keys.append("favorite:drink")
+        if any(x in low for x in ("what do i like", "what's my preference", "what are my preferences")):
+            keys.append("__likes_intent__")
+        return keys
+
+    def _ensure_embedding_for_claim(self, claim: Dict[str, Any]) -> Optional[np.ndarray]:
+        cid = str(claim.get("claim_id", "") or "")
+        if not cid:
+            return None
+        emb = self._claim_embeddings.get(cid)
+        if emb is not None:
+            return emb
+        content = str(claim.get("content", "") or "").strip()
+        if not content:
+            return None
+        emb = self._embed(content)
+        self._claim_embeddings[cid] = emb
+        self._snapshot_needs_save = True
+        return emb
 
     def _load_snapshot(self) -> None:
         if not os.path.exists(self.snapshot_path):
@@ -380,10 +525,11 @@ class MemoryManager:
         contradiction_with = None
         confidence = 0.82
         content_neg = self._is_negated(content)
-        for c in self.sql.recent_claims(uid, scope, limit=100):
+        slots = self._extract_semantic_slots(content)
+        for c in self._recent_claims_fallback(uid, scope, limit=100):
             if c.get("memory_type") != memory_type:
                 continue
-            prior_emb = self._claim_embeddings.get(c.get("claim_id", ""))
+            prior_emb = self._ensure_embedding_for_claim(c)
             if prior_emb is None:
                 continue
             sim = float(np.dot(prior_emb, emb))
@@ -394,6 +540,17 @@ class MemoryManager:
                 if self._is_negated(c.get("content", "")) != content_neg:
                     contradiction_with = c.get("claim_id")
                     confidence = 0.45
+            if slots and c.get("claim_id") != claim_id:
+                prior_slots = self._extract_semantic_slots(str(c.get("content", "")))
+                for key, val in slots.items():
+                    old_val = prior_slots.get(key)
+                    if old_val and old_val != val:
+                        superseded_target = c.get("claim_id")
+                        contradiction_with = c.get("claim_id")
+                        confidence = 0.66
+                        break
+                if superseded_target:
+                    break
 
         self.sql.upsert_claim(
             claim_id=claim_id,
@@ -421,6 +578,14 @@ class MemoryManager:
             self.sql.add_node(tnode, uid, scope, "token", tok)
             self.sql.add_edge(uid, scope, claim_node_id, tnode, "has_token", weight=0.6)
             self.sql.add_edge(uid, scope, tnode, claim_node_id, "token_of", weight=0.6)
+        for key, val in slots.items():
+            snode = f"slot:{hash_text(key)[:16]}"
+            vnode = f"slotval:{hash_text(f'{key}:{val}')[:16]}"
+            self.sql.add_node(snode, uid, scope, "slot", key)
+            self.sql.add_node(vnode, uid, scope, "slot_value", val, {"slot_key": key})
+            self.sql.add_edge(uid, scope, claim_node_id, snode, "about_slot", weight=0.92)
+            self.sql.add_edge(uid, scope, claim_node_id, vnode, "has_slot_value", weight=0.95)
+            self.sql.add_edge(uid, scope, snode, claim_node_id, "slot_of", weight=0.85)
 
         event = {
             "event_id": hash_text(f"event:{ts}:{claim_id}:{source}"),
@@ -439,6 +604,36 @@ class MemoryManager:
             },
         }
         self.events.append(event)
+        try:
+            self._append_markdown_ledger(
+                {
+                    "ts": ts,
+                    "event_type": "claim_upsert",
+                    "claim_id": claim_id,
+                    "user_id": uid,
+                    "scope": scope,
+                    "memory_type": memory_type,
+                    "content": content.strip(),
+                    "source": source,
+                    "salience": float(salience),
+                    "confidence": float(confidence),
+                    "supersedes_claim_id": superseded_target,
+                    "contradiction_with_claim_id": contradiction_with,
+                }
+            )
+            if superseded_target:
+                self._append_markdown_ledger(
+                    {
+                        "ts": ts,
+                        "event_type": "claim_status",
+                        "claim_id": superseded_target,
+                        "user_id": uid,
+                        "scope": scope,
+                        "status": "superseded",
+                    }
+                )
+        except Exception:
+            pass
 
         try:
             with open(self.today_log_path, "a", encoding="utf-8") as f:
@@ -451,7 +646,7 @@ class MemoryManager:
 
     def _collect_forget_phrases(self, user_id: str, scope: str) -> List[str]:
         phrases: List[str] = []
-        for c in self.sql.recent_claims(user_id, scope, limit=240):
+        for c in self._recent_claims_fallback(user_id, scope, limit=240):
             if c.get("memory_type") != "instructions":
                 continue
             text = (c.get("content") or "").strip()
@@ -474,15 +669,16 @@ class MemoryManager:
 
         staged = self._ephemeral_matches(uid, q, scope=scope, top_k=3)
         q_emb = self._embed(q)
+        query_slot_keys = self._extract_query_slot_keys(q)
 
-        active_claims = self.sql.recent_claims(uid, scope, limit=260)
+        active_claims = self._recent_claims_fallback(uid, scope, limit=260)
         if not active_claims and not staged:
             return {"context": None, "trace": {"reason": "no_claims", "scope": scope}}
 
         seed_rows: List[Tuple[float, str]] = []
         for c in active_claims:
             cid = c.get("claim_id", "")
-            emb = self._claim_embeddings.get(cid)
+            emb = self._ensure_embedding_for_claim(c)
             if emb is None:
                 continue
             sim = float(np.dot(emb, q_emb))
@@ -500,6 +696,19 @@ class MemoryManager:
             candidates = active_claims
 
         ranked = rank_claims(q_emb, candidates, self._claim_embeddings, min_score=min_score, limit=6)
+        semantic_hits: List[Dict[str, Any]] = []
+        if query_slot_keys:
+            likes_intent = "__likes_intent__" in query_slot_keys
+            explicit_keys = [k for k in query_slot_keys if not k.startswith("__")]
+            for c in active_claims:
+                slots = self._extract_semantic_slots(str(c.get("content", "")))
+                hit = any(k in slots for k in explicit_keys)
+                if not hit and likes_intent:
+                    hit = any(k.startswith("stance:") and v == "like" for k, v in slots.items())
+                if hit:
+                    row = dict(c)
+                    row["rank_score"] = 1.05
+                    semantic_hits.append(row)
 
         phrases = self._collect_forget_phrases(uid, scope)
         results: List[str] = []
@@ -509,7 +718,7 @@ class MemoryManager:
             if s_item and s_item not in seen and not any(p in s_item.lower() for p in phrases):
                 results.append(s_item[:220])
                 seen.add(s_item)
-        for r in ranked:
+        for r in semantic_hits + ranked:
             c = (r.get("content") or "").strip()
             if c and c not in seen and not any(p in c.lower() for p in phrases):
                 results.append(c[:220])
@@ -564,6 +773,20 @@ class MemoryManager:
             "payload": {"source": source},
         }
         self.events.append(event)
+        try:
+            self._append_markdown_ledger(
+                {
+                    "ts": event["ts"],
+                    "event_type": "claim_status",
+                    "claim_id": cid,
+                    "user_id": uid,
+                    "scope": scope,
+                    "status": "retracted",
+                    "source": source,
+                }
+            )
+        except Exception:
+            pass
         return True
 
     async def supersede_claim(
@@ -604,7 +827,7 @@ class MemoryManager:
     async def list_recent_memories(self, user_id: str, limit: int = 20, scope: str = "conversation") -> List[Dict[str, Any]]:
         uid = str(user_id or self.user_id)
         scope = self._normalize_scope(scope)
-        rows = self.sql.recent_claims(uid, scope, limit=max(1, int(limit)))
+        rows = self._recent_claims_fallback(uid, scope, limit=max(1, int(limit)))
         return [
             {
                 "ts": r.get("ts_updated", ""),
