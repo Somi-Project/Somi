@@ -20,6 +20,11 @@ from handlers.websearch_tools.news import NewsHandler
 from handlers.websearch_tools.weather import WeatherHandler
 
 from handlers.websearch_tools.conversion import parse_conversion_request, Converter
+from handlers.websearch_tools.stickers import get_stock_ticker_suggestions
+from handlers.websearch_tools.ctickers import get_commodity_ticker_suggestions
+from handlers.websearch_tools.itickers import get_index_ticker_suggestions
+from handlers.websearch_tools.ftickers import get_forex_ticker_suggestions
+from handlers.websearch_tools.bcrypto import TICKER_MAPPING as CRYPTO_TICKER_MAPPING
 
 import pytz
 from datetime import datetime
@@ -541,26 +546,85 @@ class WebSearchHandler:
         # return strong first; weak only if also supported by finance intent words elsewhere
         return list(strong) + [t for t in weak if t not in strong]
 
-    def _force_intent_from_terms(self, query_lower: str, query_original: str) -> Optional[str]:
-        matches = set()
+    def _has_finance_mapping_signal(self, query: str) -> bool:
+        q = (query or "").strip()
+        if not q:
+            return False
 
-        if self._looks_like_forex_pair(query_lower):
-            matches.add("forex")
-        if any(t in query_lower for t in self.crypto_terms):
-            matches.add("crypto")
-        if any(t in query_lower for t in self.index_terms):
-            matches.add("stock/commodity")
+        candidates = [q, q.lower()]
+        for cand in candidates:
+            if get_stock_ticker_suggestions(cand):
+                return True
+            if get_commodity_ticker_suggestions(cand):
+                return True
+            if get_index_ticker_suggestions(cand):
+                return True
+        return False
 
-        stock_keywords = ["stock", "stocks", "share price", "shares", "ticker", "price of", "market cap", "quote"]
-        has_stock_intent = any(k in query_lower for k in stock_keywords)
+    def _looks_like_stock_or_commodity_query(self, query_lower: str, query_original: str) -> bool:
+        finance_phrases = [
+            "price of", "quote", "market price", "trading at", "spot price",
+            "futures", "commodity", "commodities", "stock", "stocks", "share price",
+            "shares", "market cap", "ticker", "index", "indices"
+        ]
+        if any(k in query_lower for k in finance_phrases):
+            return True
+
+        commodity_terms = [
+            "gold", "silver", "oil", "crude", "brent", "wti", "natural gas", "copper",
+            "platinum", "palladium", "wheat", "corn", "soy", "coffee", "sugar", "cocoa",
+            "cotton", "lumber", "oats", "cattle", "hogs"
+        ]
+        if any(t in query_lower for t in commodity_terms):
+            return True
 
         tickers = self._extract_ticker_candidates(query_original)
         has_strong_ticker = bool(re.search(r"\$[A-Z]{1,5}\b", query_original)) or bool(
             re.search(r"\b(?:ticker|symbol)\s*[:=]?\s*[A-Z]{1,5}\b", query_original, flags=re.IGNORECASE)
         )
+        if has_strong_ticker and tickers:
+            return True
 
-        # Only treat ticker candidates as finance if there's finance intent OR strong ticker formatting.
-        if (has_stock_intent or has_strong_ticker) and tickers:
+        return self._has_finance_mapping_signal(query_original)
+
+    def _has_forex_mapping_signal(self, query: str) -> bool:
+        q = (query or "").strip()
+        if not q:
+            return False
+        return bool(get_forex_ticker_suggestions(q) or get_forex_ticker_suggestions(q.lower()))
+
+    def _has_crypto_mapping_signal(self, query: str) -> bool:
+        q = (query or "").strip()
+        if not q:
+            return False
+        ql = q.lower()
+
+        if ql in CRYPTO_TICKER_MAPPING:
+            return True
+
+        # direct symbol form (e.g., BTCUSDT)
+        if re.search(r"\b[A-Za-z0-9]{2,20}USDT\b", q):
+            return True
+
+        for k in CRYPTO_TICKER_MAPPING.keys():
+            if not isinstance(k, str):
+                continue
+            kk = k.lower()
+            if re.search(r"\b" + re.escape(kk) + r"\b", ql):
+                return True
+
+        return False
+
+    def _force_intent_from_terms(self, query_lower: str, query_original: str) -> Optional[str]:
+        matches = set()
+
+        if self._looks_like_forex_pair(query_lower) or self._has_forex_mapping_signal(query_original):
+            matches.add("forex")
+        if any(t in query_lower for t in self.crypto_terms) or self._has_crypto_mapping_signal(query_original):
+            matches.add("crypto")
+        if any(t in query_lower for t in self.index_terms):
+            matches.add("stock/commodity")
+        if self._looks_like_stock_or_commodity_query(query_lower, query_original):
             matches.add("stock/commodity")
 
         if any(t in query_lower for t in self.weather_terms):
@@ -811,7 +875,7 @@ Query: {query}
         if forced:
             try:
                 if forced == "stock/commodity":
-                    res = await self.finance_handler.search_stocks_commodities(query_lower)
+                    res = await self.finance_handler.search_stocks_commodities(query)
                     return self._tag(res, "stock/commodity", True)
                 if forced == "crypto":
                     res = await self.finance_handler.search_crypto_yfinance(query)
@@ -902,9 +966,14 @@ Query: {query}
                     max_n=6,
                 )
 
-                # SearXNG fallback if DDG is weak
-                if len(enriched) < 3:
-                    logger.info(f"DDG weak ({len(enriched)} enriched results) for '{q}' — enriching with SearXNG")
+                strong_content = sum(1 for r in enriched if isinstance(r, dict) and len((r.get("content") or "").strip()) > 400)
+                ddg_weak = len(base) < 3 or len(enriched) < 3 or strong_content < 1
+
+                # SearXNG fallback if DDG is weak (few links or no extracted page content)
+                if ddg_weak:
+                    logger.info(
+                        f"DDG weak (base={len(base)}, enriched={len(enriched)}, strong_content={strong_content}) for '{q}' — enriching with SearXNG"
+                    )
                     async with httpx.AsyncClient(timeout=12.0) as local_client:
                         extra = await search_searxng(
                             local_client,
