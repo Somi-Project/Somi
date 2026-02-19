@@ -39,7 +39,7 @@ AUTO_REPLY_INTERVAL_UPPER_VARIATION = 30  # +30 minutes
 
 # Telegram permissions you can message @userinfobot on telegram for your user ID 
 TELEGRAM_BOT_OWNER_IDS = {
-    placeholder,
+    "placeholder",
 }
 TELEGRAM_BOT_TOKEN = "placeholder"
 TELEGRAM_BOT_USERNAME = "placeholder"
