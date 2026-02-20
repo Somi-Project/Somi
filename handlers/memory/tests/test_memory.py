@@ -11,7 +11,7 @@ if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
 from config.settings import MEMORY_DB_PATH, MEMORY_PINNED_MD_PATH, MEMORY_MAX_TOTAL_CHARS, MEMORY_MODEL
-from handlers.memory3.manager import Memory3Manager
+from handlers.memory.manager import Memory3Manager
 
 
 def _reset():

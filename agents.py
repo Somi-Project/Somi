@@ -30,7 +30,7 @@ from handlers.websearch_tools.conversion import parse_conversion_request  # pars
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
 
-from handlers.memory3 import Memory3Manager
+from handlers.memory import Memory3Manager
 from promptforge import PromptForge
 
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)

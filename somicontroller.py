@@ -38,7 +38,7 @@ from gui import aicoregui, speechgui, telegramgui, twittergui
 from gui.themes import app_stylesheet, dialog_stylesheet
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
-from handlers.memory3 import Memory3Manager
+from handlers.memory import Memory3Manager
 from handlers.research.agentpedia import Agentpedia
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
