@@ -1,3 +1,3 @@
-from .manager import MemoryManager
+from .manager import Memory3Manager
 
-__all__ = ["MemoryManager"]
+__all__ = ["Memory3Manager"]

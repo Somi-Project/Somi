@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from heartbeat.events import EventQueue, EventRingBuffer, event_signature, make_event
 from heartbeat.policy import HeartbeatPolicy
 from heartbeat.state import HeartbeatState
-from heartbeat.tasks import AgentpediaGrowthTask, DailyGreetingTask, DelightTask, WeatherWarnTask
+from heartbeat.tasks import AgentpediaGrowthTask, DailyGreetingTask, DelightTask, GoalNudgeTask, ReminderCheckTask, WeatherWarnTask
 from heartbeat.tasks.base import HeartbeatContext, TaskRegistry
 
 
@@ -66,6 +66,8 @@ class HeartbeatService:
         self._registry.register(WeatherWarnTask())
         self._registry.register(DelightTask())
         self._registry.register(AgentpediaGrowthTask())
+        self._registry.register(ReminderCheckTask())
+        self._registry.register(GoalNudgeTask())
 
     def _build_logger(self) -> logging.Logger:
         logs_path = Path(getattr(self.settings_module, "HB_LOG_PATH", "sessions/logs/heartbeat.log"))
@@ -129,6 +131,9 @@ class HeartbeatService:
             "CAREER_ROLE",
             "USER_INTERESTS",
             "HB_FEATURE_CAREER_ROLE",
+            "HB_FEATURE_REMINDERS",
+            "HB_FEATURE_GOAL_NUDGES",
+            "HB_GOAL_NUDGE_INTERVAL_MINUTES",
         ]
         snapshot = {k: getattr(self.settings_module, k, None) for k in keys}
         with self._lock:

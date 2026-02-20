@@ -38,6 +38,7 @@ from gui import aicoregui, speechgui, telegramgui, twittergui
 from gui.themes import app_stylesheet, dialog_stylesheet
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
+from handlers.memory import Memory3Manager
 from handlers.research.agentpedia import Agentpedia
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
@@ -221,12 +222,15 @@ class SomiAIGUI(QMainWindow):
         self.agentpedia_client = Agentpedia(write_back=False)
         self.heartbeat_service = HeartbeatService()
         self.heartbeat_bridge = HeartbeatGUIBridge(self.heartbeat_service)
+        self.memory3 = Memory3Manager(user_id="default_user")
         self.heartbeat_service.set_shared_context(
             HB_CACHED_WEATHER_LINE="",
             HB_CACHED_WEATHER_TS="",
             HB_CACHED_WEATHER_PAYLOAD=None,
             HB_CACHED_URGENT_HEADLINE="",
             HB_CACHED_AGENTPEDIA_FACT="",
+            HB_REMINDER_PROVIDER=self._heartbeat_due_reminders_provider,
+            HB_GOAL_NUDGE_PROVIDER=self._heartbeat_goal_nudge_provider,
         )
 
         self.root = QWidget()
@@ -475,6 +479,18 @@ class SomiAIGUI(QMainWindow):
             level = str(event.get("level", "INFO")).lower()
             message = f"{title}: {detail}" if detail and title != "Heartbeat steady" else title
             self.push_activity("heartbeat", message, level="warn" if level == "warn" else "info")
+
+    def _heartbeat_goal_nudge_provider(self):
+        try:
+            return self.memory3.list_active_goals_sync("default_user", scope="task", limit=1)
+        except Exception:
+            return []
+
+    def _heartbeat_due_reminders_provider(self):
+        try:
+            return self.memory3.consume_due_reminders_sync("default_user", limit=3)
+        except Exception:
+            return []
 
     def refresh_heartbeat_diagnostics(self):
         status = self.heartbeat_service.get_status()

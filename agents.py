@@ -20,7 +20,8 @@ from config.settings import (
     DEFAULT_TEMP,
     VISION_MODEL,
     SYSTEM_TIMEZONE,
-    DISABLE_MEMORY_FOR_FINANCIAL,
+    USE_MEMORY2,
+    USE_MEMORY3,
 )
 
 from rag import RAGHandler
@@ -29,7 +30,7 @@ from handlers.websearch_tools.conversion import parse_conversion_request  # pars
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
 
-from memory import MemoryManager
+from handlers.memory import Memory3Manager
 from promptforge import PromptForge
 
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
@@ -130,15 +131,8 @@ class Agent:
 
         self.promptforge = PromptForge(workspace=".")
 
-        embedding_model = self.rag.get_embedding_model()
-        self.memory = MemoryManager(
-            embedding_model=embedding_model,
-            ollama_client=self.ollama_client,
-            memory_model_name=self.memory_model,
-            user_id=self.user_id,  # default; call-level user_id overrides when we call memory methods
-            base_dir="sessions",
-            disable_financial_memory=DISABLE_MEMORY_FOR_FINANCIAL,
-        )
+        self.use_memory3 = bool(USE_MEMORY3)
+        self.memory = Memory3Manager(ollama_client=self.ollama_client, session_id=self.user_id, time_handler=self.time_handler, user_id=self.user_id)
 
         self.turn_counter = 0
         self._load_mode_files()
@@ -249,7 +243,7 @@ class Agent:
             "summarize what you remember", "summarize my", "everything you remember about me",
             "my name", "my preference", "my preferences",
             "my goals", "my goal", "my reminders", "goals and reminders",
-            "due reminders", "any due reminders", "list my", "show my",
+            "due reminders", "any due reminders", "list my", "show my", "what did i have to do again",
             "forget about", "remove my", "delete my",
         )
         if any(t in pl for t in internal_triggers):
@@ -290,30 +284,33 @@ class Agent:
             return None
 
         # 1) One-time reminders: supports common natural phrasing + shorthand units
+        reminder_prefix = r"(?:remind me\s+(?:to|about)|set\s+(?:a\s+)?reminder\s+to)"
+
         m = re.search(
-            r"^remind me to\s+(.+?)\s+in\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*$",
-            pll,
+            rf"^{reminder_prefix}\s+(.+?)\s+in\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*$",
+            pl,
+            flags=re.IGNORECASE,
         )
         if m:
             title = m.group(1).strip()
             n = int(m.group(2))
-            unit = m.group(3).strip()
+            unit = m.group(3).strip().lower()
             rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {n} {unit}", scope="task")
             if rid:
                 return f"Got it — reminder set: '{title}' in {n} {unit}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
 
-        m = re.search(r"^remind me to\s+(.+?)\s+in\s+(a|an)\s+(minute|hour|day)\s*$", pll)
+        m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+in\s+(a|an)\s+(minute|hour|day)\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
-            article = m.group(2)
-            unit = m.group(3)
+            article = m.group(2).strip().lower()
+            unit = m.group(3).strip().lower()
             rid = await self.memory.add_reminder(active_user_id, title=title, when=f"in {article} {unit}", scope="task")
             if rid:
                 return f"Got it — reminder set: '{title}' in {article} {unit}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
 
-        m = re.search(r"^remind me to\s+(.+?)\s+in\s+half\s+an?\s+hour\s*$", pll)
+        m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+in\s+half\s+an?\s+hour\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
             rid = await self.memory.add_reminder(active_user_id, title=title, when="in half an hour", scope="task")
@@ -321,11 +318,35 @@ class Agent:
                 return f"Got it — reminder set: '{title}' in half an hour."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
 
+        m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+at\s+(.+)\s*$", pl, flags=re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+            at_when = m.group(2).strip().lower()
+            rid = await self.memory.add_reminder(active_user_id, title=title, when=f"at {at_when}", scope="task")
+            if rid:
+                return f"Got it — reminder set: '{title}' at {at_when}."
+            return "I couldn't schedule that reminder time. Try: remind me to <task> at 8:30 pm."
+
+        m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+tomorrow\s+at\s+(.+)\s*$", pl, flags=re.IGNORECASE)
+        if m:
+            title = m.group(1).strip()
+            at_when = m.group(2).strip().lower()
+            rid = await self.memory.add_reminder(active_user_id, title=title, when=f"tomorrow at {at_when}", scope="task")
+            if rid:
+                return f"Got it — reminder set: '{title}' tomorrow at {at_when}."
+            return "I couldn't schedule that reminder time. Try: remind me to <task> tomorrow at 8 am."
+
         # 2) Due reminders: "any due reminders" / "are there any due reminders right now"
-        if ("due reminder" in pll) or ("due reminders" in pll):
-            due = await self.memory.consume_due_reminders(active_user_id, limit=10)
+        if ("due reminder" in pll) or ("due reminders" in pll) or ("what did i have to do again" in pll):
+            due = await self.memory.peek_due_reminders(active_user_id, limit=10)
             if not due:
-                return "No due reminders right now."
+                active = await self.memory.list_active_reminders(active_user_id, scope="task", limit=5)
+                if not active:
+                    return "No reminders right now."
+                lines = ["**Active reminders:**"]
+                for d in active[:5]:
+                    lines.append(f"- {d.get('title','Reminder')} (due {self._format_due_ts_local(str(d.get('due_ts','soon')))})")
+                return "\n".join(lines)
             lines = ["**Due reminders:**"]
             for d in due:
                 title = str(d.get("title", "Reminder"))
@@ -349,7 +370,7 @@ class Agent:
             if goal_text:
                 await self.memory.upsert_goal(active_user_id, title=goal_text, scope="task", progress=0.0, confidence=0.7)
 
-            # If they asked for recurring reminders, be honest (recurring not implemented in MemoryManager yet)
+            # If they asked for recurring reminders, be honest (recurring reminders are not implemented yet)
             if reminder_tail:
                 # common patterns humans use
                 if any(k in reminder_tail.lower() for k in ("every ", "daily", "each day", "every day", "every afternoon", "every morning", "every night")):
@@ -562,7 +583,6 @@ class Agent:
     async def _maintenance_tick(self) -> None:
         try:
             async with asyncio.timeout(4.0):
-                await self.memory.curate_daily_digest()
                 await self.memory.prune_old_memories()
         except Exception:
             pass
@@ -570,7 +590,7 @@ class Agent:
     async def _persist_memory_serial(self, mem_content: str, user_id: str, mem_type: str, source: str, scope: str = "conversation") -> None:
         try:
             async with self._mem_write_sem:
-                await self.memory.store_memory(mem_content, user_id, mem_type, source=source, scope=scope)
+                await self.memory.ingest_turn(mem_content, assistant_text="", tool_summaries=[source], session_id=user_id)
         except Exception:
             pass
 
@@ -746,8 +766,7 @@ class Agent:
                 logger.info(f"Web search failed (non-fatal): {e}")
                 search_context = "Web search unavailable."
         else:
-            mem_scope = self._memory_scope_for_prompt(prompt, should_search=False)
-            mem = await self.memory.retrieve_relevant_memories(prompt, active_user_id, min_score=0.20, scope=mem_scope)
+            mem = await self.memory.build_injected_context(prompt, user_id=active_user_id)
             due_block = ""
             if self._should_inject_due_context(prompt, active_user_id):
                 due = await self.memory.peek_due_reminders(active_user_id, limit=3)
@@ -870,24 +889,17 @@ class Agent:
                 content = content[:390] + "... (kept short and clear)"
             content = content.replace("however", "but").replace("therefore", "so")
 
-        # Memory write-back hard-block on websearch turns
-        if not should_search:
-            try:
-                should_store, mem_type, mem_content = await self.memory.should_store_memory(prompt, content, active_user_id)
-                mem_scope = self._memory_scope_for_prompt(prompt, should_search=should_search)
-                if should_store and mem_type and mem_content:
-                    self.memory.stage_memory(
-                        user_id=active_user_id,
-                        memory_type=mem_type,
-                        content=mem_content,
-                        source="conversation",
-                        scope=mem_scope,
-                    )
-                    asyncio.create_task(
-                        self._persist_memory_serial(mem_content, active_user_id, mem_type, source="conversation", scope=mem_scope)
-                    )
-            except Exception:
-                pass
+        # Memory write-back: always capture user-turn memory; avoid noisy search-answer injection.
+        try:
+            if should_search:
+                mem_write = await self.memory.ingest_turn(prompt, assistant_text="", tool_summaries=["websearch"], session_id=active_user_id)
+            else:
+                mem_write = await self.memory.ingest_turn(prompt, assistant_text=content, tool_summaries=None, session_id=active_user_id)
+            notices = list((mem_write or {}).get("conflict_notices", []) or [])
+            if notices:
+                content = content.rstrip() + "\n\nMemory update: " + " ".join(notices[:1])
+        except Exception:
+            pass
 
         self._push_history_for(active_user_id, prompt, content)
         logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")
@@ -898,7 +910,7 @@ class Agent:
 
         system_prompt = self._compose_identity_block()
         memory_context = (
-            await self.memory.retrieve_relevant_memories(caption or "image", active_user_id, min_score=0.20, scope="vision")
+            await self.memory.build_injected_context(caption or "image", user_id=active_user_id)
             or "No relevant memories found"
         )
 
@@ -926,8 +938,7 @@ class Agent:
             content = self._strip_unwanted_json(content)
 
             note = f"Image noted: {caption}".strip()
-            self.memory.stage_memory(user_id=active_user_id, memory_type="episodic", content=note, source="vision", scope="vision")
-            asyncio.create_task(self._persist_memory_serial(note, active_user_id, "episodic", source="vision", scope="vision"))
+            await self.memory.ingest_turn(note, assistant_text=content, tool_summaries=["vision"], session_id=active_user_id)
             return content or "I couldn't extract anything useful from that image."
         except Exception as e:
             return f"Sorry — image analysis failed ({type(e).__name__})."
