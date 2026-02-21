@@ -100,10 +100,9 @@ def _is_private_ip(ip: str) -> bool:
 def _host_resolves_private(host: str) -> bool:
     """
     SSRF defense: resolve host and reject if any A/AAAA points to private/loopback/etc.
-    NOTE: This will treat DNS failures as unsafe (returns True).
+    NOTE: Treat DNS failures as unsafe (returns True).
     """
     try:
-        # FIXED: syntax error here (your code had "None." and missed a closing paren)
         infos = socket.getaddrinfo(host, None)
         for family, _, _, _, sockaddr in infos:
             if family == socket.AF_INET:
@@ -170,7 +169,7 @@ def _is_safe_url(url: str) -> bool:
         if not host or host in _BLOCKED_HOSTS:
             return False
 
-        # IMPORTANT: disallow odd ports
+        # disallow odd ports
         if p.port not in (None, 80, 443):
             return False
 
@@ -362,7 +361,6 @@ class WebSearchHandler:
 
         self.converter = Converter(self)
 
-        # FIX: you returned category="science" but it was not in valid_categories
         self.valid_categories = {"stock/commodity", "crypto", "forex", "weather", "news", "general", "science"}
 
         self.alias_map = {
@@ -554,13 +552,11 @@ class WebSearchHandler:
             if not self._looks_like_forex_pair(ql) and "forex" not in ql and "exchange rate" not in ql:
                 return "general"
 
-        # NOTE: "science" only comes from Agentpedia path, not LLM classifier
         if intent == "science":
             return "science"
 
         return intent
 
-    # FIXED: your signature had "retries: int HISTORY = 3" which is invalid syntax
     async def _classify_query(self, query: str, retries: int = 3, backoff_factor: float = 0.5) -> str:
         prompt = f"""
 You are a text classifier. Output EXACTLY ONE WORD from the following categories:
@@ -736,7 +732,30 @@ Query: {query}
         qq = qq.strip(" \t\r\n.,;:!?")
         return qq
 
-    async def search(self, query: str, retries: int = 3, backoff_factor: float = 0.5) -> list:
+    # === PATCH: accept router kwargs like tool_veto/reason/signals ===
+    async def search(
+        self,
+        query: str,
+        retries: int = 3,
+        backoff_factor: float = 0.5,
+        **kwargs,
+    ) -> list:
+        # Router/orchestrator may pass these. We tolerate them.
+        tool_veto = bool(kwargs.get("tool_veto", False))
+        veto_reason = (kwargs.get("reason") or kwargs.get("veto_reason") or "").strip()
+        # signals currently unused, but we accept it.
+        _signals = kwargs.get("signals", None)
+
+        if tool_veto:
+            logger.info(f"Websearch vetoed by router: {veto_reason}")
+            return [{
+                "title": "Websearch vetoed",
+                "url": "",
+                "description": veto_reason or "Router vetoed tool usage.",
+                "category": "general",
+                "volatile": False,
+            }]
+
         query = (query or "").strip()
         if not query:
             return [{"title": "Error", "url": "", "description": "Empty query.", "category": "general", "volatile": False}]
