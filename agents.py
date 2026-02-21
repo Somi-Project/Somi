@@ -245,11 +245,15 @@ class Agent:
             "my goals", "my goal", "my reminders", "goals and reminders",
             "due reminders", "any due reminders", "list my", "show my", "what did i have to do again",
             "forget about", "remove my", "delete my",
+            "my favorite", "favorite drink",
         )
         if any(t in pl for t in internal_triggers):
             return True
 
-        if re.search(r"\b(my)\s+(name|preferences?|goals?|reminders?)\b", pl):
+        if re.search(r"\b(my)\s+(name|preferences?|goals?|reminders?|favorite)\b", pl):
+            return True
+
+        if re.search(r"\bwhat'?s\s+my\b", pl):
             return True
 
         if ("remind me" in pl) and not any(k in pl for k in ("news", "weather", "price", "quote", "market")):
@@ -517,7 +521,7 @@ class Agent:
             return False
 
         # Hard block: internal state / memory/goals/reminders must never websearch
-        if self._is_personal_memory_query(pl):
+        if self._is_personal_memory_query(pl) or re.search(r"\bwhat'?s\s+my\b", pl):
             return False
 
         explicit = any(k in pl for k in (
@@ -862,7 +866,8 @@ class Agent:
                     },
                 )
             content = resp.get("message", {}).get("content", "") or ""
-        except Exception:
+        except Exception as e:
+            logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
             content = "Sorry — generation failed. Try again."
 
         content = self._clean_think_tags(content)

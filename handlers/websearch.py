@@ -444,6 +444,18 @@ class WebSearchHandler:
     def _is_research_query(self, query_lower: str) -> bool:
         return any(t in query_lower for t in self.research_terms)
 
+    def _is_personal_memory_query(self, query_lower: str) -> bool:
+        ql = (query_lower or "").strip().lower()
+        if not ql:
+            return False
+        triggers = (
+            "what's my", "whats my", "what is my",
+            "my name", "my preference", "my preferences",
+            "my favorite", "favorite drink", "remember about me",
+            "what do you remember", "my reminders", "my goals",
+        )
+        return any(t in ql for t in triggers)
+
     def _normalize_category(self, raw_output: str) -> str:
         try:
             if not raw_output:
@@ -731,6 +743,16 @@ Query: {query}
 
         query_lower = query.lower().strip()
         logger.info(f"Processing query: '{query}'")
+
+        if self._is_personal_memory_query(query_lower):
+            logger.info("Skipping websearch/finance routing for personal memory query")
+            return [{
+                "title": "Personal memory query",
+                "url": "",
+                "description": "Handled by in-model memory context.",
+                "category": "general",
+                "volatile": False,
+            }]
 
         parsed = parse_conversion_request(query)
         if parsed is not None:
