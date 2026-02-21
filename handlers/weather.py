@@ -1,35 +1,88 @@
 import logging
 import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 import httpx
 import pytz
 import re
-import json
-import traceback
 
-# Configuration (adjust as per your project structure)
-SYSTEM_TIMEZONE = "America/New_York"  # Replace with your desired timezone
+# Configuration
 DEFAULT_CACHE_DURATION = 600  # Cache duration in seconds (10 minutes)
 
 # Set up logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+
+# Words/phrases that frequently contaminate location strings (e.g., "miami currently")
+_TEMPORAL_TRASH = (
+    "currently", "now", "right now", "today", "tonight",
+    "tomorrow", "this morning", "this afternoon", "this evening",
+    "this week", "this weekend", "at the moment",
+)
+
+# Common lead-ins and weather intent terms to remove when trying to infer a location
+_WEATHER_INTENT_TRASH = (
+    "what's", "whats", "what is", "tell me", "show me", "check",
+    "the", "a", "an",
+    "weather", "forecast", "temperature", "rain", "humidity", "wind",
+    "sunrise", "sunset", "moon phase", "moon cycle",
+    "in", "for", "at", "around", "near",
+)
+
+
+def _normalize_space(s: str) -> str:
+    return re.sub(r"\s+", " ", (s or "").strip())
+
+
+def _clean_location_text(text: str) -> str:
+    """
+    Aggressively clean a location candidate:
+    - remove temporal modifiers ("currently", "now", etc.)
+    - remove junk punctuation
+    - keep alnum/space/hyphen/comma only
+    """
+    t = (text or "").strip().lower()
+    if not t:
+        return ""
+
+    # Remove temporal junk phrases
+    for w in _TEMPORAL_TRASH:
+        t = t.replace(w, " ")
+
+    # Drop lingering words like "currently" attached by punctuation
+    t = re.sub(r"\b(currently|now|today|tonight)\b", " ", t)
+
+    # Keep location-friendly chars
+    t = re.sub(r"[^a-z0-9\s,\-]", " ", t)
+    t = _normalize_space(t).strip(" ,.;:!?")
+    return t
+
+
+def _normalize_cache_key(q: str) -> str:
+    """
+    Normalize query for caching so trivial variants don't explode cache keys.
+    """
+    t = (q or "").lower().strip()
+    t = re.sub(r"\s+", " ", t)
+    t = t.strip(" \t\r\n.,;:!?")
+    return t
+
+
 class WeatherHandler:
-    def __init__(self, timezone: str = SYSTEM_TIMEZONE):
+    def __init__(self, timezone: str = "America/Port_of_Spain"):
         """
         Initialize the WeatherHandler with a timezone and an empty cache.
-        
+
         Args:
             timezone (str): The system timezone (e.g., "America/New_York").
         """
         self.timezone = pytz.timezone(timezone)
-        self.cache = {}  # Cache format: {query: (results, timestamp)}
+        self.cache = {}  # Cache format: {cache_key: (results, timestamp)}
 
     def get_system_time(self) -> str:
         """
         Get the current system time in the specified timezone.
-        
+
         Returns:
             str: Formatted current time (e.g., "2023-10-25 14:30:00 EDT").
         """
@@ -37,45 +90,51 @@ class WeatherHandler:
 
     def extract_location(self, query: str) -> str:
         """
-        Extract the location from the query using regex.
-        
-        Args:
-            query (str): The user query (e.g., "whats the weather in san fernando trinidad").
-            
+        Extract the location from the query using regex + cleaning.
+
+        Supports:
+        - "weather in miami currently" -> "miami"
+        - "forecast for toronto ontario" -> "toronto ontario"
+        - "sunrise in london uk" -> "london uk"
+
         Returns:
-            str: The extracted and cleaned location (e.g., "san fernando trinidad"), or empty string if not found.
+            cleaned location string or ""
         """
-        pattern = r"(?:in|for)\s+(.*?)(?=\s*(?:weather|forecast|moon phase|sunrise|sunset|$))"
-        match = re.search(pattern, query.lower())
+        q = (query or "").strip().lower()
+        if not q:
+            return ""
+
+        # Primary regex: capture after "in|for"
+        pattern = r"(?:\bin\b|\bfor\b)\s+(.*?)(?=\s*(?:weather|forecast|moon phase|moon cycle|sunrise|sunset|$))"
+        match = re.search(pattern, q)
         if match:
-            location = match.group(1).strip()
-            # Clean location: keep only alphanumeric characters, spaces, and hyphens
-            location = re.sub(r'[^a-zA-Z0-9\s-]', '', location)
-            return location
+            loc = match.group(1).strip()
+            loc = _clean_location_text(loc)
+            if loc:
+                return loc
+
+        # Fallback 1: if query starts with a location-like phrase and includes "weather/forecast"
+        # e.g. "miami weather now" -> try removing intent words and keep what's left
+        if any(k in q for k in ("weather", "forecast", "sunrise", "sunset", "moon phase", "moon cycle")):
+            t = q
+            for w in _WEATHER_INTENT_TRASH:
+                t = re.sub(rf"\b{re.escape(w)}\b", " ", t)
+            t = _clean_location_text(t)
+            if t:
+                return t
+
         logger.warning(f"No location found in query: '{query}'")
         return ""
 
     def format_wttr_location(self, location: str) -> str:
         """
         Format the location for the wttr.in API by replacing spaces with '+'.
-        
-        Args:
-            location (str): The location string (e.g., "san fernando trinidad").
-            
-        Returns:
-            str: Formatted location (e.g., "san+fernando+trinidad").
         """
-        return location.strip().replace(" ", "+")
+        return (location or "").strip().replace(" ", "+")
 
     async def fetch_wttr_data(self, endpoint: str) -> dict:
         """
         Fetch data from wttr.in using the specified endpoint.
-        
-        Args:
-            endpoint (str): The wttr.in endpoint (e.g., "san+fernando+trinidad?format=j1&u" or "moon?format=j1").
-            
-        Returns:
-            dict: Parsed JSON response from wttr.in, or empty dict on failure.
         """
         url = f"https://wttr.in/{endpoint}"
         try:
@@ -89,21 +148,18 @@ class WeatherHandler:
             logger.error(f"Error fetching wttr.in data for '{endpoint}': {str(e)}")
         return {}
 
-    async def search_weather(self, query: str, retries: int = 1, backoff_factor: float = 0.5, cache_duration: int = DEFAULT_CACHE_DURATION) -> list:
+    async def search_weather(
+        self,
+        query: str,
+        retries: int = 1,
+        backoff_factor: float = 0.5,
+        cache_duration: int = DEFAULT_CACHE_DURATION,
+    ) -> list:
         """
         Process a weather-related query and return formatted results.
-        
-        Args:
-            query (str): The user query (e.g., "whats the weather in san fernando trinidad").
-            retries (int): Number of retry attempts (not implemented in this version).
-            backoff_factor (float): Delay factor for retries (not implemented in this version).
-            cache_duration (int): Cache validity duration in seconds.
-            
-        Returns:
-            list: List of result dictionaries with title, url, and description.
         """
         # Normalize query for cache key
-        cache_key = query.lower().strip()
+        cache_key = _normalize_cache_key(query)
 
         # Check cache
         if cache_key in self.cache:
@@ -115,7 +171,7 @@ class WeatherHandler:
                 logger.info(f"Cache expired for query '{query}'")
                 del self.cache[cache_key]
 
-        query_lower = query.lower()
+        query_lower = (query or "").lower()
 
         # Moon Phase Query
         if "moon phase" in query_lower or "moon cycle" in query_lower:
@@ -137,7 +193,7 @@ class WeatherHandler:
                 return formatted_results
             return [{
                 "title": "Error",
-                "url": "https://www.accuweather.com",
+                "url": "https://wttr.in/moon",
                 "description": "Could not retrieve moon phase information."
             }]
 
@@ -146,18 +202,30 @@ class WeatherHandler:
         if not location:
             return [{
                 "title": "Error",
-                "url": "https://www.accuweather.com",
+                "url": "https://wttr.in/",
                 "description": "Could not extract location from query."
             }]
 
         formatted_location = self.format_wttr_location(location)
-        data = await self.fetch_wttr_data(f"{formatted_location}?format=j1&u")
+
+        # Small retry loop (you had retries args but not implemented)
+        last_err = None
+        data = {}
+        for attempt in range(max(1, int(retries))):
+            try:
+                data = await self.fetch_wttr_data(f"{formatted_location}?format=j1&u")
+                if data and "current_condition" in data:
+                    break
+            except Exception as e:
+                last_err = e
+            if attempt < retries - 1:
+                await asyncio.sleep(backoff_factor * (2 ** attempt))
 
         if not data or "current_condition" not in data:
-            logger.error(f"No valid data returned for location '{location}'")
+            logger.error(f"No valid data returned for location '{location}'. last_err={last_err}")
             return [{
                 "title": "Error",
-                "url": "https://www.accuweather.com",
+                "url": f"https://wttr.in/{formatted_location}",
                 "description": f"Could not retrieve weather information for {location}."
             }]
 
@@ -169,68 +237,52 @@ class WeatherHandler:
 
         # Current conditions
         current = data["current_condition"][0]
-        temp_f = current.get("temp_F", "N/A")
+        temp_f_raw = current.get("temp_F", "N/A")
 
         # Temperature validation
         try:
-            temp_f = float(temp_f)
+            temp_f = float(temp_f_raw)
             if not 32 <= temp_f <= 122:
                 logger.warning(f"Implausible temperature {temp_f}°F for '{resolved_location}'")
                 return [{
                     "title": "Error",
-                    "url": "https://www.accuweather.com",
+                    "url": f"https://wttr.in/{formatted_location}",
                     "description": f"Implausible weather data for {resolved_location}."
                 }]
         except ValueError:
-            logger.warning(f"Invalid temperature format '{temp_f}' for '{resolved_location}'")
+            logger.warning(f"Invalid temperature format '{temp_f_raw}' for '{resolved_location}'")
             return [{
                 "title": "Error",
-                "url": "https://www.accuweather.com",
+                "url": f"https://wttr.in/{formatted_location}",
                 "description": f"Invalid weather data for {resolved_location}."
             }]
 
-        # Select chance of rain based on local time
-        local_time_str = current.get("localObsDateTime", "")
+        # Chance of rain (best-effort; wttr fields vary)
         chanceofrain = "N/A"
-        if local_time_str:
-            try:
-                local_time = datetime.strptime(local_time_str, "%Y-%m-%d %H:%M %p")
-                current_hour = local_time.hour
-                hourly_data = data["weather"][0]["hourly"]
-                # Convert time strings (e.g., "000", "300") to hours and find closest
-                closest_slot = min(
-                    hourly_data,
-                    key=lambda x: abs(int(x["time"]) // 100 - current_hour)
-                )
-                chanceofrain = closest_slot.get("chanceofrain", "N/A")
-            except Exception as e:
-                logger.error(f"Error parsing chanceofrain for '{resolved_location}': {str(e)}")
+        try:
+            # wttr sometimes provides hourly chanceofrain in weather[0]["hourly"]
+            hourly_data = data.get("weather", [{}])[0].get("hourly", [])
+            if hourly_data:
+                # pick first slot as a cheap proxy; better than failing hard
+                chanceofrain = hourly_data[0].get("chanceofrain", "N/A")
+        except Exception as e:
+            logger.error(f"Error parsing chanceofrain for '{resolved_location}': {str(e)}")
 
         # --- Weather Query ---
-        if "weather" in query_lower or "whats the weather" in query_lower:
-            description = (
-                f"The weather in {resolved_location} is:\n"
-                f"Temperature: {temp_f}°F\n"
-                f"Chance of Rain: {chanceofrain}%\n"
-                f"Wind: {current.get('windspeedMiles', 'N/A')} mph {current.get('winddir16Point', 'N/A')}\n"
-                f"Would you like greater details?"
-            )
-            formatted_results = [{
-                "title": f"Weather in {resolved_location}",
-                "url": f"https://wttr.in/{formatted_location}",
-                "description": description,
-                "needs_details": True
-            }]
+        if "forecast" in query_lower or "tomorrow" in query_lower:
+            # Tomorrow forecast: weather[1] if present
+            weather_days = data.get("weather", [])
+            if len(weather_days) > 1:
+                forecast = weather_days[1]
+            else:
+                forecast = weather_days[0] if weather_days else {}
 
-        # --- Forecast Query ---
-        elif "forecast" in query_lower or "tomorrow" in query_lower:
-            forecast = data["weather"][1]  # Day 1 (tomorrow)
             description = (
                 f"The weather forecast for {resolved_location} tomorrow is:\n"
                 f"Average Temperature: {forecast.get('avgtempF', 'N/A')}°F\n"
                 f"Max Temperature: {forecast.get('maxtempF', 'N/A')}°F\n"
                 f"Min Temperature: {forecast.get('mintempF', 'N/A')}°F\n"
-                f"Chance of Rain: {forecast['hourly'][0].get('chanceofrain', 'N/A')}%"
+                f"Chance of Rain: {forecast.get('hourly', [{}])[0].get('chanceofrain', 'N/A')}%"
             )
             formatted_results = [{
                 "title": f"Weather Forecast for {resolved_location}",
@@ -238,9 +290,8 @@ class WeatherHandler:
                 "description": description
             }]
 
-        # --- Solar Times Query ---
         elif "sunrise" in query_lower or "sunset" in query_lower:
-            astronomy = data["weather"][0]["astronomy"][0]
+            astronomy = data.get("weather", [{}])[0].get("astronomy", [{}])[0]
             description = (
                 f"The solar times in {resolved_location} are:\n"
                 f"Sunrise: {astronomy.get('sunrise', 'N/A')}\n"
@@ -255,10 +306,10 @@ class WeatherHandler:
             }]
 
         else:
-            # Default to current weather if query type is unclear
+            # Default: current weather
             description = (
                 f"The weather in {resolved_location} is:\n"
-                f"Temperature: {temp_f}°F\n"
+                f"Temperature: {temp_f:.1f}°F\n"
                 f"Chance of Rain: {chanceofrain}%\n"
                 f"Wind: {current.get('windspeedMiles', 'N/A')} mph {current.get('winddir16Point', 'N/A')}\n"
                 f"Would you like greater details?"
@@ -275,18 +326,20 @@ class WeatherHandler:
         logger.info(f"Weather data retrieved for '{resolved_location}' from query '{query}'")
         return formatted_results
 
-# Example usage
+
+# Example usage (optional)
 async def main():
     handler = WeatherHandler()
-    
-    # Test queries
+
     queries = [
+        "whats the weather in miami currently",
+        "miami weather now",
         "whats the weather in san fernando trinidad",
         "whats the forecast for toronto ontario",
         "what is the moon phase",
-        "whats the sunrise time in london uk"
+        "whats the sunrise time in london uk",
     ]
-    
+
     for q in queries:
         results = await handler.search_weather(q)
         print(f"\nQuery: {q}")
@@ -295,6 +348,7 @@ async def main():
             print(f"URL: {result['url']}")
             print(f"Description:\n{result['description']}")
             print("-" * 50)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
