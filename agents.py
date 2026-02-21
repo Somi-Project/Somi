@@ -959,26 +959,7 @@ class Agent:
             content = resp.get("message", {}).get("content", "") or ""
         except Exception as e:
             logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
-            if isinstance(e, RuntimeError) and "event loop is closed" in str(e).lower():
-                try:
-                    self._client_loop_id = None
-                    self._ensure_async_clients_for_current_loop()
-                    async with asyncio.timeout(120):
-                        resp = await self.ollama_client.chat(
-                            model=self.model,
-                            messages=messages,
-                            options={
-                                "temperature": 0.0 if should_search else float(self.temperature),
-                                "max_tokens": int(max_tokens),
-                                "keep_alive": 300,
-                            },
-                        )
-                    content = resp.get("message", {}).get("content", "") or ""
-                except Exception as retry_err:
-                    logger.exception(f"Ollama chat retry failed: {type(retry_err).__name__}: {retry_err}")
-                    content = "Sorry — generation failed. Try again."
-            else:
-                content = "Sorry — generation failed. Try again."
+            content = "Sorry — generation failed. Try again."
 
         content = self._clean_think_tags(content)
         content = self._strip_unwanted_json(content)

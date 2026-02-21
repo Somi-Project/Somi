@@ -91,10 +91,6 @@ class SQLiteMemoryStore:
             conn.execute("UPDATE memory_items SET updated_at=COALESCE(updated_at, ts)")
             conn.execute("UPDATE memory_items SET last_used_at=COALESCE(last_used_at, last_used)")
 
-            # create post-migration indexes that reference newly added columns
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_user_scope_status ON memory_items(user_id, scope, status)")
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_user_slot_status ON memory_items(user_id, slot_key, status)")
-
             self.vec_enabled = self._try_load_vec(conn)
             if self.vec_enabled:
                 try:

@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS memory_items (
 CREATE INDEX IF NOT EXISTS idx_memory_user_lane_type_status ON memory_items(user_id, lane, type, status);
 CREATE INDEX IF NOT EXISTS idx_memory_user_entity_key_status ON memory_items(user_id, entity, mkey, status);
 CREATE INDEX IF NOT EXISTS idx_memory_expires ON memory_items(expires_at);
+CREATE INDEX IF NOT EXISTS idx_memory_user_scope_status ON memory_items(user_id, scope, status);
+CREATE INDEX IF NOT EXISTS idx_memory_user_slot_status ON memory_items(user_id, slot_key, status);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, tags, mkey, item_id UNINDEXED);
 
