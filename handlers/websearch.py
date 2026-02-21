@@ -444,6 +444,18 @@ class WebSearchHandler:
     def _is_research_query(self, query_lower: str) -> bool:
         return any(t in query_lower for t in self.research_terms)
 
+    def _is_personal_memory_query(self, query_lower: str) -> bool:
+        ql = (query_lower or "").strip().lower()
+        if not ql:
+            return False
+        triggers = (
+            "what's my", "whats my", "what is my",
+            "my name", "my preference", "my preferences",
+            "my favorite", "favorite drink", "remember about me",
+            "what do you remember", "my reminders", "my goals",
+        )
+        return any(t in ql for t in triggers)
+
     def _normalize_category(self, raw_output: str) -> str:
         try:
             if not raw_output:
@@ -505,12 +517,9 @@ class WebSearchHandler:
         if any(t in query_lower for t in self.index_terms):
             matches.add("stock/commodity")
 
-        stock_keywords = ["stock", "stocks", "share price", "shares", "ticker", "price of"]
+        stock_keywords = ["stock", "stocks", "share price", "shares", "ticker", "market cap", "stock quote", "price of"]
         if any(k in query_lower for k in stock_keywords):
             matches.add("stock/commodity")
-        if re.search(r"\b[A-Z]{3,5}\b", query_lower.upper()):
-            matches.add("stock/commodity")
-
         if any(t in query_lower for t in self.weather_terms):
             matches.add("weather")
         if any(t in query_lower for t in self.news_terms):
@@ -724,13 +733,33 @@ Query: {query}
         qq = qq.strip(" \t\r\n.,;:!?")
         return qq
 
-    async def search(self, query: str, retries: int = 3, backoff_factor: float = 0.5) -> list:
+    async def search(self, query: str, retries: int = 3, backoff_factor: float = 0.5, tool_veto: bool = False, route_hint: Optional[str] = None) -> list:
         query = (query or "").strip()
         if not query:
             return [{"title": "Error", "url": "", "description": "Empty query.", "category": "general", "volatile": False}]
 
         query_lower = query.lower().strip()
         logger.info(f"Processing query: '{query}'")
+
+        if tool_veto:
+            logger.info("Tool veto active: skipping websearch handlers")
+            return [{
+                "title": "Tool veto active",
+                "url": "",
+                "description": "Search/tool routing vetoed by router.",
+                "category": "general",
+                "volatile": False,
+            }]
+
+        if self._is_personal_memory_query(query_lower):
+            logger.info("Skipping websearch/finance routing for personal memory query")
+            return [{
+                "title": "Personal memory query",
+                "url": "",
+                "description": "Handled by in-model memory context.",
+                "category": "general",
+                "volatile": False,
+            }]
 
         parsed = parse_conversion_request(query)
         if parsed is not None:

@@ -22,7 +22,18 @@ CREATE TABLE IF NOT EXISTS memory_items (
     status TEXT NOT NULL,
     expires_at TEXT,
     supersedes TEXT,
-    last_used TEXT
+    last_used TEXT,
+    scope TEXT DEFAULT 'conversation',
+    mem_type TEXT DEFAULT 'note',
+    text TEXT DEFAULT '',
+    entities_json TEXT,
+    tags_json TEXT,
+    supersedes_id TEXT,
+    contradicts_id TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    last_used_at TEXT,
+    slot_key TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_memory_user_lane_type_status ON memory_items(user_id, lane, type, status);
@@ -30,6 +41,24 @@ CREATE INDEX IF NOT EXISTS idx_memory_user_entity_key_status ON memory_items(use
 CREATE INDEX IF NOT EXISTS idx_memory_expires ON memory_items(expires_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, tags, mkey, item_id UNINDEXED);
+
+CREATE TABLE IF NOT EXISTS memory_events (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    memory_id TEXT,
+    payload_json TEXT,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memory_events_user_created ON memory_events(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_links (
+    src_id TEXT NOT NULL,
+    rel TEXT NOT NULL,
+    dst_id TEXT NOT NULL,
+    weight REAL DEFAULT 0.5,
+    created_at TEXT NOT NULL
+);
 
 CREATE TABLE IF NOT EXISTS reminders (
     id TEXT PRIMARY KEY,
