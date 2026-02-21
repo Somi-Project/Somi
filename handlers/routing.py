@@ -42,31 +42,29 @@ def _is_explicit_websearch(prompt_l: str) -> bool:
 
 def _is_volatile_with_strong_signal(prompt_l: str) -> bool:
     """
-    Detect prompts that MUST use tools because answers are time-sensitive/volatile:
-    - finance (stocks/crypto/forex-ish)
+    Detect prompts that SHOULD use tools because answers are time-sensitive or evidence-bound:
+    - finance (stocks/crypto/forex)
     - weather
     - news
+    - research (papers/guidelines/trials/PMID/DOI/etc.)
 
-    IMPORTANT FIX:
-    Previous logic missed "price of bitcoin" because it only allowed 1–6 letters after "price of".
-    "bitcoin" is 7 letters, so it routed to llm_only. This version catches it.
+    NOTE:
+    We route research to 'websearch' because WebSearchHandler internally handles Agentpedia
+    when research keywords are present.
     """
 
-    # Broad finance intent / crypto intent
+    # Finance/price intent (expanded to catch crypto names/symbols + "price of X")
     finance_strong = re.search(
         r"\b("
         r"stock|stocks|ticker|share price|market cap|"
-        r"price|price of|price for|current price|"
+        r"price|price of|price for|current price|market price|"
         r"quote|quote for|"
         r"btc|bitcoin|eth|ethereum|sol|solana|"
         r"crypto|cryptocurrency|altcoin|memecoin|"
-        r"market price|"
-        r"exchange rate|fx|forex|"
+        r"exchange rate|convert|conversion|fx|forex|"
         r")\b",
         prompt_l,
     )
-
-    # Specific pattern: "price of X" where X can be longer than 6 chars (e.g., bitcoin)
     finance_price_of = re.search(r"\bprice of\s+[\$]?[a-z0-9\-_]{2,32}\b", prompt_l)
 
     # Weather intent
@@ -75,7 +73,25 @@ def _is_volatile_with_strong_signal(prompt_l: str) -> bool:
     # News intent
     news_strong = re.search(r"\b(news|headlines|breaking news|current events)\b", prompt_l)
 
-    return bool(finance_strong or finance_price_of or weather_strong or news_strong)
+    # Research intent (THIS IS THE PATCH)
+    research_strong = re.search(
+        r"\b("
+        r"study|studies|trial|trials|randomized|randomised|rct|rcts|"
+        r"meta-analysis|meta analysis|systematic review|systematic reviews|"
+        r"guideline|guidelines|consensus|protocol|standard of care|best practice|"
+        r"paper|papers|literature|evidence|clinical evidence|"
+        r"doi|pmid|arxiv|pubmed|europepmc|clinicaltrials|nct"
+        r")\b",
+        prompt_l,
+    )
+
+    return bool(
+        finance_strong
+        or finance_price_of
+        or weather_strong
+        or news_strong
+        or research_strong
+    )
 
 
 def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> RouteDecision:
