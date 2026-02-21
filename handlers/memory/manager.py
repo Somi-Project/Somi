@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import json
 import logging
 import os
@@ -18,16 +19,23 @@ from config.settings import (
     MEMORY_VOLATILE_TTL_HOURS,
     SYSTEM_TIMEZONE,
     MEMORY_SUMMARY_EVERY_N_TURNS,
+    USE_VECTOR_INDEX,
+    SUMMARY_ENABLED,
+    SUMMARY_USE_LLM,
+    SUMMARY_MODEL,
 )
 
-from .compiler import build_block
 from .embedder import EmbeddingUnavailable, OllamaEmbedder
 from .extract import heuristics, llm_extract, sanitize, should_call_llm, to_snake
-from .retrieve import not_expired, rrf_merge
+from .retrieve import not_expired
+from .retrieval import apply_filters_and_caps, rerank_items, rrf_fuse
+from .injection import build_injection_payload
+from .doctor import memory_doctor_report
+from .session_summary import build_summary_from_recent_turns, should_update_summary, trim_summary_text
 from .store import SQLiteMemoryStore, utcnow_iso
 
 logger = logging.getLogger(__name__)
-PINNED_KEYS = {"output_format", "timezone", "preferred_name", "default_location", "name", "favorite_color", "dog_name"}
+PINNED_KEYS = {"output_format", "timezone", "preferred_name", "default_location", "name", "favorite_color", "dog_name", "favorite_drink", "coding_style"}
 VALID_SCOPES = {"global", "profile", "task", "conversation", "vision"}
 IDENTITY_KEYS = {"name", "preferred_name", "timezone", "default_location", "favorite_color"}
 CRITICAL_KEYS = {"name", "preferred_name", "timezone"}
@@ -44,6 +52,7 @@ class Memory3Manager:
         self.vec_enabled = self.store.vec_enabled
         self._turn_counts: Dict[str, int] = {}
         self._recent_user_texts: Dict[str, List[str]] = {}
+        self._last_summary_turn: Dict[str, int] = {}
         self._ensure_pinned_md()
 
     def _debug(self, msg: str, *args):
@@ -116,6 +125,51 @@ class Memory3Manager:
             return "pinned"
         return "facts"
 
+    def _slot_key_for_fact(self, key: str, kind: str) -> str:
+        k = (key or "").lower()
+        if k == "name":
+            return "profile.name"
+        if k == "favorite_drink":
+            return "preferences.favorite_drink"
+        if k in {"coding_style", "code_style"}:
+            return "preferences.code_style"
+        if kind in {"profile", "preference"}:
+            return f"{kind}.{k}"
+        return ""
+
+    def _scope_for_fact(self, key: str, kind: str) -> str:
+        k = (key or "").lower()
+        if k in {"name", "preferred_name", "timezone", "default_location"}:
+            return "profile"
+        if kind in {"preference", "constraint"} or "favorite" in k or "code" in k:
+            return "preferences"
+        if any(t in k for t in ("goal", "project")):
+            return "projects"
+        if any(t in k for t in ("task", "reminder")):
+            return "tasks"
+        return "conversation"
+
+    def _deterministic_capture(self, user_text: str) -> List[Dict[str, Any]]:
+        t = (user_text or "").strip()
+        tl = t.lower()
+        out: List[Dict[str, Any]] = []
+
+        m = re.search(r"\bmy\s+name\s+is\s+([a-zA-Z0-9 _'-]{1,40})", t, flags=re.IGNORECASE)
+        if m:
+            out.append({"entity": "user", "key": "name", "value": m.group(1).strip(), "kind": "profile", "confidence": 0.98})
+
+        m = re.search(r"\bmy\s+favorite\s+drink\s+is\s+([a-zA-Z0-9 _'-]{1,48})", t, flags=re.IGNORECASE)
+        if m:
+            out.append({"entity": "user", "key": "favorite_drink", "value": m.group(1).strip(), "kind": "preference", "confidence": 0.97})
+
+        if re.search(r"\b(from now on\s+)?when\s+i\s+ask\s+for\s+code", tl):
+            out.append({"entity": "user", "key": "coding_style", "value": t[:120], "kind": "preference", "confidence": 0.92})
+
+        remember_boost = 0.03 if ("remember this" in tl or tl.endswith("remember") or " remember" in tl) else 0.0
+        for f in out:
+            f["confidence"] = min(1.0, float(f.get("confidence", 0.8)) + remember_boost)
+        return out
+
     async def _embed_safe(self, text: str) -> Optional[List[float]]:
         if not str(text or "").strip():
             return None
@@ -137,6 +191,8 @@ class Memory3Manager:
         uid = self._resolve_user_id(user_id)
         lane = self._lane_for_fact(key, kind)
         bucket = self._bucket_for_fact(key, value)
+        scope = self._scope_for_fact(key, kind)
+        slot_key = self._slot_key_for_fact(key, kind)
         importance = self._importance_for_fact(key, kind, bucket)
         conf = float(fact.get("confidence", 0.7) or 0.7)
         conf = max(0.0, min(1.0, conf))
@@ -144,7 +200,7 @@ class Memory3Manager:
         if kind == "volatile":
             expires_at = (datetime.now(timezone.utc) + timedelta(hours=int(MEMORY_VOLATILE_TTL_HOURS))).isoformat()
 
-        cur = self.store.active_fact(uid, entity, key)
+        cur = self.store.active_by_slot(uid, slot_key) if slot_key else self.store.active_fact(uid, entity, key)
         if cur and str(cur.get("value", "")).strip().lower() == value.lower():
             return cur
 
@@ -153,6 +209,7 @@ class Memory3Manager:
         if cur:
             old_value = str(cur.get("value", "")).strip()
             self.store.set_status(str(cur.get("id")), "superseded")
+            self.store.log_event(uid, "suppress", str(cur.get("id")), {"reason": "superseded", "slot_key": slot_key})
             supersedes = str(cur.get("id"))
             self._debug("superseded old %s", key)
             if key in CRITICAL_KEYS and old_value and old_value.lower() != value.lower():
@@ -179,9 +236,21 @@ class Memory3Manager:
             "expires_at": expires_at,
             "supersedes": supersedes,
             "last_used": None,
+            "scope": scope,
+            "mem_type": "preference" if kind == "preference" else "fact",
+            "text": f"{key}: {value}",
+            "entities_json": json.dumps({"key": key, "value": value}, ensure_ascii=False),
+            "tags_json": json.dumps([lane, kind, key], ensure_ascii=False),
+            "supersedes_id": supersedes,
+            "contradicts_id": None,
+            "created_at": utcnow_iso(),
+            "updated_at": utcnow_iso(),
+            "last_used_at": None,
+            "slot_key": slot_key,
         }
         emb = await self._embed_safe(item["content"])
         self.store.write_item(item, embedding=emb)
+        self.store.log_event(uid, "upsert", iid, {"scope": scope, "slot_key": slot_key, "key": key})
         if supersedes:
             self.store.set_replaced_by(supersedes, iid)
         if lane == "pinned":
@@ -219,18 +288,33 @@ class Memory3Manager:
             "expires_at": None,
             "supersedes": None,
             "last_used": None,
+            "scope": scope,
+            "mem_type": "preference" if kind == "preference" else "fact",
+            "text": f"{key}: {value}",
+            "entities_json": json.dumps({"key": key, "value": value}, ensure_ascii=False),
+            "tags_json": json.dumps([lane, kind, key], ensure_ascii=False),
+            "supersedes_id": supersedes,
+            "contradicts_id": None,
+            "created_at": utcnow_iso(),
+            "updated_at": utcnow_iso(),
+            "last_used_at": None,
+            "slot_key": slot_key,
         }
         emb = await self._embed_safe(item["content"])
         self.store.write_item(item, embedding=emb)
+        self.store.log_event(uid, "upsert", iid, {"scope": scope, "slot_key": slot_key, "key": key})
         return item
 
     async def ingest_turn(self, user_text: str, assistant_text: str = "", tool_summaries: Optional[List[str]] = None, session_id: Optional[str] = None):
         uid = self._resolve_user_id(session_id=session_id)
         self.store.expire_items(utcnow_iso())
+        det = self._deterministic_capture(user_text)
         base = heuristics(user_text, assistant_text)
-        if should_call_llm(user_text, assistant_text):
+        if det:
+            merged = {"facts": (det + base.get("facts", []))[:8], "skills": base.get("skills", [])[:1]}
+        elif should_call_llm(user_text, assistant_text):
             llm = await llm_extract(self.client, user_text, assistant_text, tool_summaries)
-            merged = {"facts": (base.get("facts", []) + llm.get("facts", []))[:3], "skills": (base.get("skills", []) + llm.get("skills", []))[:1]}
+            merged = {"facts": (base.get("facts", []) + llm.get("facts", []))[:8], "skills": (base.get("skills", []) + llm.get("skills", []))[:1]}
         else:
             merged = base
         clean = sanitize(merged)
@@ -243,44 +327,18 @@ class Memory3Manager:
         for s in clean.get("skills", []):
             await self.write_skill(s, user_id=uid)
 
-        # Lightweight periodic session summary (no extra model call; safe for consumer hardware).
-        summary_every = max(4, int(MEMORY_SUMMARY_EVERY_N_TURNS or 8))
+        # session summary update (rolling history summary)
         self._turn_counts[uid] = int(self._turn_counts.get(uid, 0) or 0) + 1
         recent = self._recent_user_texts.setdefault(uid, [])
         t = str(user_text or "").strip()
         if t:
             recent.append(t[:220])
-            if len(recent) > summary_every:
-                del recent[:-summary_every]
-
-        summary_created = False
-        if self._turn_counts[uid] % summary_every == 0 and recent:
-            digest = " | ".join(recent[-summary_every:])[:700]
-            sid = hashlib.sha256(f"summary:{uid}:{utcnow_iso()}".encode("utf-8")).hexdigest()
-            item = {
-                "id": sid,
-                "ts": utcnow_iso(),
-                "user_id": uid,
-                "lane": "facts",
-                "type": "summary",
-                "entity": "user",
-                "mkey": "session_summary",
-                "value": digest[:220],
-                "kind": "summary",
-                "bucket": "ongoing_projects",
-                "importance": 0.66,
-                "replaced_by": None,
-                "content": f"session_summary: {digest}",
-                "tags": "summary session recap",
-                "confidence": 0.62,
-                "status": "active",
-                "expires_at": None,
-                "supersedes": None,
-                "last_used": None,
-            }
-            emb = await self._embed_safe(item["content"])
-            self.store.write_item(item, embedding=emb)
-            summary_created = True
+            if len(recent) > 20:
+                del recent[:-20]
+        history_for_summary: List[Dict[str, str]] = []
+        for x in recent[-12:]:
+            history_for_summary.append({"role": "user", "content": x})
+        summary_created = await self.maybe_update_session_summary(uid, history_for_summary)
 
         self._debug("ingest decisions facts=%d skills=%d", len(clean.get("facts", [])), len(clean.get("skills", [])))
         return {"conflict_notices": conflict_notices[:2], "summary_created": summary_created}
@@ -295,77 +353,163 @@ class Memory3Manager:
                     lines.append(t)
         return lines
 
+    def build_session_summary_context(self, user_id: Optional[str] = None) -> str:
+        uid = self._resolve_user_id(user_id)
+        row = self.store.latest_session_summary(uid)
+        if not row:
+            return ""
+        txt = str(row.get("text") or row.get("content") or "").strip()
+        if not txt:
+            return ""
+        return "[Session Summary]\n- " + trim_summary_text(txt)
+
+    async def maybe_update_session_summary(self, user_id: str, recent_history: List[Dict[str, str]]) -> bool:
+        uid = self._resolve_user_id(user_id)
+        if not bool(SUMMARY_ENABLED):
+            return False
+
+        turn_counter = int(self._turn_counts.get(uid, 0) or 0)
+        last = int(self._last_summary_turn.get(uid, 0) or 0)
+        if not should_update_summary(turn_counter, last):
+            return False
+
+        summary_text = build_summary_from_recent_turns(recent_history)
+        if SUMMARY_USE_LLM and self.client is not None:
+            try:
+                raw_turns = "\n".join([f"{t.get('role','user')}: {t.get('content','')}" for t in recent_history[-12:]])
+                prompt = (
+                    "Summarize the active conversation thread in <= 8 bullets, concise and factual. "
+                    "Focus on stable user goals/preferences and open tasks."
+                    f"\n\nTurns:\n{raw_turns}"
+                )
+                async with asyncio.timeout(25.0):
+                    resp = await self.client.chat(
+                        model=SUMMARY_MODEL,
+                        messages=[{"role": "user", "content": prompt}],
+                        options={"temperature": 0.0, "max_tokens": 220},
+                    )
+                candidate = str(resp.get("message", {}).get("content", "") or "").strip()
+                if candidate:
+                    summary_text = candidate
+            except Exception:
+                pass
+
+        summary_text = trim_summary_text(summary_text)
+        if not summary_text:
+            return False
+
+        # simple replace semantics: supersede previous active summary in-slot
+        cur = self.store.active_by_slot(uid, "session.summary")
+        if cur:
+            self.store.set_status(str(cur.get("id")), "superseded")
+            self.store.log_event(uid, "suppress", str(cur.get("id")), {"reason": "summary_refresh"})
+
+        sid = hashlib.sha256(f"summary:{uid}:{utcnow_iso()}".encode("utf-8")).hexdigest()
+        item = {
+            "id": sid,
+            "ts": utcnow_iso(),
+            "user_id": uid,
+            "lane": "facts",
+            "type": "summary",
+            "entity": "user",
+            "mkey": "session_summary",
+            "value": summary_text[:220],
+            "kind": "summary",
+            "bucket": "ongoing_projects",
+            "importance": 0.66,
+            "replaced_by": None,
+            "content": f"session_summary: {summary_text}",
+            "tags": "summary session recap",
+            "confidence": 0.62,
+            "status": "active",
+            "expires_at": None,
+            "supersedes": str(cur.get("id")) if cur else None,
+            "last_used": None,
+            "scope": "session_summary",
+            "mem_type": "summary",
+            "text": summary_text,
+            "entities_json": None,
+            "tags_json": json.dumps(["summary", "session"], ensure_ascii=False),
+            "supersedes_id": str(cur.get("id")) if cur else None,
+            "contradicts_id": None,
+            "created_at": utcnow_iso(),
+            "updated_at": utcnow_iso(),
+            "last_used_at": None,
+            "slot_key": "session.summary",
+        }
+        emb = await self._embed_safe(item["content"])
+        self.store.write_item(item, embedding=emb)
+        self.store.log_event(uid, "upsert", sid, {"scope": "session_summary", "mem_type": "summary"})
+        self._last_summary_turn[uid] = turn_counter
+        return True
+
     async def build_injected_context(self, user_text: str, user_id: Optional[str] = None) -> str:
         uid = self._resolve_user_id(user_id)
         self.store.expire_items(utcnow_iso())
-        pinned = self._read_pinned_lines(uid)
         query = str(user_text or "").strip()
-        if not query:
-            return build_block(pinned=pinned, facts=[], skills=[], volatile=[])
-        fts_ids = self.store.fts_search(uid, query, limit=30)
+
+        scopes = ["profile", "preferences", "projects", "tasks", "conversation", "skills", "session_summary"]
+        fts_hits = self.store.fts_search_scored(uid, query, scopes=scopes, limit=30) if query else []
+
         vec_ids: List[str] = []
-        if self.store.vec_enabled:
+        if self.store.vec_enabled and USE_VECTOR_INDEX and query:
             try:
                 qv = await self.embedder.embed(query)
                 vec_ids = self.store.vec_search(qv, limit=30)
             except Exception:
                 vec_ids = []
-        merged_ids = rrf_merge(fts_ids, vec_ids, k=60)
-        candidates = self.store.get_items_by_ids(uid, merged_ids)
 
-        q_tokens = [x for x in re.findall(r"[a-z0-9_]+", query.lower()) if len(x) > 2][:12]
-        now_utc = datetime.now(timezone.utc)
+        fused_ids = rrf_fuse(fts_hits, vec_ids)
+        candidates = self.store.get_items_by_ids(uid, fused_ids)
+        ranked = rerank_items(candidates, query)
+        filtered = apply_filters_and_caps(
+            ranked,
+            caps_by_scope={"profile": 4, "preferences": 5, "projects": 3, "tasks": 3, "conversation": 6, "skills": 3, "session_summary": 1},
+        )
 
-        def _score(it: Dict[str, Any]) -> float:
-            content = f"{it.get('content','')} {it.get('tags','')}".lower()
-            rel_hits = sum(1 for tok in q_tokens if tok in content)
-            rel = min(1.0, rel_hits / max(1, len(q_tokens))) if q_tokens else 0.4
-            ts_raw = str(it.get("ts") or "")
-            recency = 0.35
-            try:
-                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
-                if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                age_days = max(0.0, (now_utc - ts).total_seconds() / 86400.0)
-                recency = 1.0 / (1.0 + (age_days / 14.0))
-            except Exception:
-                pass
-            importance = float(it.get("importance", 0.5) or 0.5)
-            return (0.65 * rel) + (0.2 * recency) + (0.15 * importance)
+        profile_rows = self.store.latest_by_scope(uid, "profile", limit=4)
+        pref_rows = self.store.latest_by_scope(uid, "preferences", limit=5)
+        summary = self.store.latest_session_summary(uid)
+        summary_text = str((summary or {}).get("text") or (summary or {}).get("content") or "")
 
-        ranked = sorted(candidates, key=_score, reverse=True)
-
-        facts, skills, volatile = [], [], []
-        for it in ranked:
-            if not not_expired(it):
-                continue
-            if it.get("type") == "skill":
-                eff_conf = float(it.get("confidence", 0.7) or 0.7)
-                lu = str(it.get("last_used") or "").strip()
-                if lu:
-                    try:
-                        age_days = (datetime.now(timezone.utc) - datetime.fromisoformat(lu.replace("Z", "+00:00"))).days
-                        if age_days > 30:
-                            eff_conf = max(0.0, eff_conf - 0.02)
-                    except Exception:
-                        pass
-                skills.append(f"- {it.get('value','skill')} (conf {eff_conf:.2f}): {it.get('content','')[:95]}")
-                try:
-                    self.store.reinforce_skill(str(it.get("id", "")), delta=0.02, cap=0.95)
-                except Exception:
-                    pass
-            else:
-                bucket = str(it.get('bucket','general')).strip()
-                prefix = f"[{bucket}] " if bucket and bucket != 'general' else ''
-                ln = f"- {prefix}{it.get('mkey','fact')}: {it.get('value','')}"
-                if it.get("kind") == "volatile":
-                    volatile.append(ln)
-                elif it.get("lane") != "pinned":
-                    facts.append(ln)
-
-        block = build_block(pinned=pinned, facts=facts[: int(MEMORY_MAX_FACT_LINES)], skills=skills[:2], volatile=volatile[:4])
-        self._debug("vec_enabled=%s fts=%d vec=%d facts=%d skills=%d injected_chars=%d", self.store.vec_enabled, len(fts_ids), len(vec_ids), len(facts), len(skills), len(block))
+        block = build_injection_payload(profile_rows=profile_rows, pref_rows=pref_rows, session_summary=summary_text, relevant_items=filtered)
+        self._debug(
+            "vec_enabled=%s fts=%d vec=%d selected=%d injected_chars=%d",
+            self.store.vec_enabled,
+            len(fts_hits),
+            len(vec_ids),
+            len(filtered),
+            len(block),
+        )
         return block
+
+    async def memory_doctor(self, query: str, user_id: Optional[str] = None) -> str:
+        uid = self._resolve_user_id(user_id)
+        scopes = ["profile", "preferences", "projects", "tasks", "conversation", "skills", "session_summary"]
+        fts_hits = self.store.fts_search_scored(uid, query, scopes=scopes, limit=12)
+        vec_hits: List[str] = []
+        if self.store.vec_enabled and USE_VECTOR_INDEX:
+            try:
+                qv = await self.embedder.embed(query)
+                vec_hits = self.store.vec_search(qv, limit=12)
+            except Exception:
+                vec_hits = []
+        fused = rrf_fuse(fts_hits, vec_hits)
+        preview = await self.build_injected_context(query, user_id=uid)
+        events = self.store.recent_events(uid, limit=10)
+        stats = self.store.db_stats(uid)
+        return memory_doctor_report(
+            user_id=uid,
+            query=query,
+            vec_enabled=bool(self.store.vec_enabled and USE_VECTOR_INDEX),
+            scopes=scopes,
+            fts_hits=fts_hits,
+            vec_hits=vec_hits,
+            fused_ids=fused,
+            injected_preview=preview,
+            events=events,
+            stats=stats,
+        )
 
     # compatibility APIs used by agent
     async def retrieve_relevant_memories(self, query: str, user_id: str, min_score: float = 0.2, scope: str = "conversation") -> str:

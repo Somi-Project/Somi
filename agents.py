@@ -22,11 +22,21 @@ from config.settings import (
     SYSTEM_TIMEZONE,
     USE_MEMORY2,
     USE_MEMORY3,
+    CONTEXT_PROFILE,
+    CHAT_CONTEXT_PROFILE,
+    CHAT_CONTEXT_PROFILES,
+    HISTORY_MAX_MESSAGES,
+    ROUTING_DEBUG,
+    BUDGET_MEMORY_TOKENS,
+    BUDGET_SEARCH_TOKENS,
+    BUDGET_HISTORY_TOKENS,
+    BUDGET_OUTPUT_RESERVE_TOKENS,
 )
 
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
+from handlers.routing import decide_route
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
 
@@ -68,6 +78,7 @@ class Agent:
 
         self.ollama_client = AsyncClient()
         self.vision_client = AsyncClient()
+        self._client_loop_id: Optional[int] = None
 
         self._maintenance_task: Optional[asyncio.Task] = None
         self._mem_write_sem = asyncio.Semaphore(1)
@@ -135,6 +146,8 @@ class Agent:
         self.memory = Memory3Manager(ollama_client=self.ollama_client, session_id=self.user_id, time_handler=self.time_handler, user_id=self.user_id)
 
         self.turn_counter = 0
+        self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
+        self.context_profile_cfg = dict((CHAT_CONTEXT_PROFILES or {}).get(self.context_profile, {}))
         self._load_mode_files()
 
     def _resolve_agent_key(self, name: str) -> str:
@@ -167,6 +180,33 @@ class Agent:
         except Exception:
             if self.current_mode == "game":
                 self.current_mode = "normal"
+
+    def _ensure_async_clients_for_current_loop(self) -> None:
+        """
+        Recreate async Ollama clients when called from a different event loop.
+        This prevents `RuntimeError: Event loop is closed` when callers use
+        repeated `asyncio.run(...)` invocations in tests/harnesses.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        loop_id = id(loop)
+        if self._client_loop_id == loop_id:
+            return
+
+        self.ollama_client = AsyncClient()
+        self.vision_client = AsyncClient()
+        self._client_loop_id = loop_id
+
+        # Keep memory manager + embedder aligned with the active async client.
+        try:
+            self.memory.client = self.ollama_client
+            if getattr(self.memory, "embedder", None) is not None:
+                self.memory.embedder.client = self.ollama_client
+        except Exception:
+            pass
 
     def _clean_think_tags(self, text: str) -> str:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
@@ -286,6 +326,13 @@ class Agent:
         pll = pl.lower()
         if not pll:
             return None
+
+        if pll.strip() == "memory doctor":
+            try:
+                report = await self.memory.memory_doctor(prompt, user_id=active_user_id)
+                return report
+            except Exception as e:
+                return f"Memory doctor failed: {type(e).__name__}: {e}"
 
         # 1) One-time reminders: supports common natural phrasing + shorthand units
         reminder_prefix = r"(?:remind me\s+(?:to|about)|set\s+(?:a\s+)?reminder\s+to)"
@@ -685,6 +732,8 @@ class Agent:
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
 
+        self._ensure_async_clients_for_current_loop()
+
         if self.turn_counter % 25 == 0:
             if self._maintenance_task is None or self._maintenance_task.done():
                 self._maintenance_task = asyncio.create_task(self._maintenance_tick())
@@ -725,31 +774,46 @@ class Agent:
                     self.current_mode = "normal"
                 return game_response
 
-        # --- NEW: Local deterministic routing for memory/goals/reminders (prevents websearch + LLM hallucination) ---
-        try:
-            local = await self._route_local_memory_intents(prompt, active_user_id)
-            if local:
-                self._push_history_for(active_user_id, prompt, local)
-                return local
-        except Exception as e:
-            logger.debug(f"Local intent routing failed (non-fatal): {e}")
+        decision = decide_route(prompt, agent_state={"mode": self.current_mode})
+        if ROUTING_DEBUG:
+            logger.info(f"Routing decision: route={decision.route} veto={decision.tool_veto} reason={decision.reason} signals={decision.signals}")
 
-        # Early conversion handoff (ONLY if parser confirms conversion)
-        try:
-            if parse_conversion_request(prompt) is not None:
+        if decision.route == "command":
+            cmd = prompt_lower.strip()
+            if cmd == "memory doctor":
+                try:
+                    report = await self.memory.memory_doctor(prompt, user_id=active_user_id)
+                    self._push_history_for(active_user_id, prompt, report)
+                    return report
+                except Exception as e:
+                    msg = f"Memory doctor failed: {type(e).__name__}: {e}"
+                    self._push_history_for(active_user_id, prompt, msg)
+                    return msg
+
+        if decision.route == "local_memory_intent":
+            try:
+                local = await self._route_local_memory_intents(prompt, active_user_id)
+                if local:
+                    self._push_history_for(active_user_id, prompt, local)
+                    return local
+            except Exception as e:
+                logger.debug(f"Local intent routing failed (non-fatal): {e}")
+
+        if decision.route == "conversion_tool":
+            try:
                 async with asyncio.timeout(20.0):
                     conv_result = await self.websearch.converter.convert(prompt)
                 if conv_result and "Error" not in conv_result and len(conv_result.strip()) > 5:
                     self._push_history_for(active_user_id, prompt, conv_result)
                     return conv_result + "\n(Source: real-time finance data)"
-        except Exception as e:
-            logger.debug(f"Early conversion failed: {e}")
-            # fall through — normal routing continues
+            except Exception as e:
+                logger.debug(f"Early conversion failed: {e}")
+
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
 
-        should_search = self._should_websearch(prompt)
+        should_search = decision.route == "websearch"
 
         search_context = "Not required for this query. Use internal knowledge."
         memory_context = "No relevant memories found"
@@ -759,11 +823,12 @@ class Agent:
 
         if should_search:
             try:
-                results = await self.websearch.search(prompt)
+                results = await self.websearch.search(prompt, tool_veto=decision.tool_veto, route_hint="websearch")
                 volatile_search, volatile_category = self._is_volatile_results(results)
                 formatted = self.websearch.format_results(results)
                 if formatted and "Error" not in formatted:
-                    search_context = formatted[:2200]
+                    search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
+                    search_context = formatted[:search_cap]
                 else:
                     search_context = "Web search returned no results."
             except Exception as e:
@@ -784,6 +849,10 @@ class Agent:
                 memory_context = mem
             elif due_block:
                 memory_context = f"[Due reminders]\n{due_block}"
+
+            mem_cap = max(120, int(BUDGET_MEMORY_TOKENS) * 4)
+            if len(memory_context) > mem_cap:
+                memory_context = memory_context[:mem_cap]
 
         rag_block = self._build_rag_block(prompt, k=2)
         current_time = self.time_handler.get_system_date_time()
@@ -845,13 +914,35 @@ class Agent:
         max_tokens = self._token_budget(prompt, system_prompt, base_max_tokens)
 
         hist = self._get_history_list(active_user_id)
-        history_msgs = hist[-10:] if hist else []
+        history_keep = int(HISTORY_MAX_MESSAGES or 10)
+        history_msgs = hist[-history_keep:] if hist else []
+        hist_budget_chars = max(120, int(BUDGET_HISTORY_TOKENS) * 4)
+        total_hist_chars = 0
+        trimmed_history = []
+        for m in reversed(history_msgs):
+            c = str(m.get("content", ""))
+            if total_hist_chars + len(c) > hist_budget_chars:
+                continue
+            trimmed_history.append(m)
+            total_hist_chars += len(c)
+        history_msgs = list(reversed(trimmed_history))
 
         messages = self.promptforge.build_messages(
             system_prompt=system_prompt,
             history=history_msgs,
             user_prompt=prompt,
         )
+
+        try:
+            est = getattr(self.promptforge, "_estimate_tokens")
+            sys_est = int(est(system_prompt))
+            mem_est = int(est(memory_context))
+            search_est = int(est(search_context))
+            hist_est = int(sum(est(str(m.get("content", ""))) for m in history_msgs))
+            total_est = int(sys_est + hist_est + est(prompt) + int(BUDGET_OUTPUT_RESERVE_TOKENS or 320))
+            logger.info(f"Budget est tokens: system={sys_est} memory={mem_est} search={search_est} history={hist_est} total={total_est}")
+        except Exception:
+            pass
 
         content = ""
         try:
@@ -912,6 +1003,7 @@ class Agent:
 
     async def analyze_image(self, image_path: str, caption: str = "", user_id: str = "default_user") -> str:
         active_user_id = str(user_id or self.user_id)
+        self._ensure_async_clients_for_current_loop()
 
         system_prompt = self._compose_identity_block()
         memory_context = (
