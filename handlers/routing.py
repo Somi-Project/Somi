@@ -32,15 +32,50 @@ def _is_personal_memory_intent(prompt_l: str) -> bool:
 
 
 def _is_explicit_websearch(prompt_l: str) -> bool:
-    return bool(re.search(r"\b(search|look up|google|cite|citation|source|sources|find online|check online)\b", prompt_l))
+    return bool(
+        re.search(
+            r"\b(search|look up|google|cite|citation|source|sources|find online|check online)\b",
+            prompt_l,
+        )
+    )
 
 
 def _is_volatile_with_strong_signal(prompt_l: str) -> bool:
-    # Do not treat plain "now/current/update" as finance or web intent.
-    finance_strong = re.search(r"\b(stock|stocks|ticker|share price|market cap|price of\s+\$?[a-z]{1,6}|quote for)\b", prompt_l)
+    """
+    Detect prompts that MUST use tools because answers are time-sensitive/volatile:
+    - finance (stocks/crypto/forex-ish)
+    - weather
+    - news
+
+    IMPORTANT FIX:
+    Previous logic missed "price of bitcoin" because it only allowed 1–6 letters after "price of".
+    "bitcoin" is 7 letters, so it routed to llm_only. This version catches it.
+    """
+
+    # Broad finance intent / crypto intent
+    finance_strong = re.search(
+        r"\b("
+        r"stock|stocks|ticker|share price|market cap|"
+        r"price|price of|price for|current price|"
+        r"quote|quote for|"
+        r"btc|bitcoin|eth|ethereum|sol|solana|"
+        r"crypto|cryptocurrency|altcoin|memecoin|"
+        r"market price|"
+        r"exchange rate|fx|forex|"
+        r")\b",
+        prompt_l,
+    )
+
+    # Specific pattern: "price of X" where X can be longer than 6 chars (e.g., bitcoin)
+    finance_price_of = re.search(r"\bprice of\s+[\$]?[a-z0-9\-_]{2,32}\b", prompt_l)
+
+    # Weather intent
     weather_strong = re.search(r"\b(weather|forecast|temperature|rain|humidity|wind)\b", prompt_l)
+
+    # News intent
     news_strong = re.search(r"\b(news|headlines|breaking news|current events)\b", prompt_l)
-    return bool(finance_strong or weather_strong or news_strong)
+
+    return bool(finance_strong or finance_price_of or weather_strong or news_strong)
 
 
 def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> RouteDecision:
@@ -59,6 +94,11 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
     explicit = _is_explicit_websearch(pl)
     volatile = _is_volatile_with_strong_signal(pl)
     if explicit or volatile:
-        return RouteDecision(route="websearch", tool_veto=False, reason="explicit_or_strong_volatile", signals={"explicit": explicit, "volatile": volatile})
+        return RouteDecision(
+            route="websearch",
+            tool_veto=False,
+            reason="explicit_or_strong_volatile",
+            signals={"explicit": explicit, "volatile": volatile},
+        )
 
     return RouteDecision(route="llm_only", tool_veto=False, reason="default_llm")
