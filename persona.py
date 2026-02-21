@@ -9,6 +9,7 @@ import os
 import copy
 import logging
 from ollama import Client
+from gui.themes import app_stylesheet
 
 # Set up logging
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -18,6 +19,7 @@ class PersonaEditor(QMainWindow):
         super().__init__()
         self.setWindowTitle("Somi Personality Editor")
         self.resize(900, 700)
+        self.setStyleSheet(app_stylesheet())
 
         self.ollama = Client(host='http://localhost:11434')
         self.fields = ["role", "temperature", "description", "physicality", "experience", "inhibitions", "hobbies", "behaviors"]

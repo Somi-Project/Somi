@@ -58,10 +58,10 @@ class DataAgentWindow(QDialog):
 
         # Tabs
         self.tabs = QTabWidget()
-        self.tabs.setStyleSheet("""
-            QTabBar::tab { padding:14px 28px; min-width:160px; font-size:11pt; }
-            QTabBar::tab:selected { background:#00ddff; color:black; font-weight:bold; }
-            QTabBar::tab:!selected { background:#333333; }
+        self.tabs.setStyleSheet(f"""
+            QTabBar::tab {{ padding:14px 28px; min-width:160px; font-size:11pt; }}
+            QTabBar::tab:selected {{ background:{COLORS['accent']}; color:black; font-weight:bold; }}
+            QTabBar::tab:!selected {{ background:{COLORS['button']}; color:{COLORS['text_muted']}; }}
         """)
 
         self.tabs.addTab(self.create_manual_editor_tab(), "Manual Form Editor")

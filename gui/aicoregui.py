@@ -1,12 +1,13 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit,
-    QComboBox, QCheckBox, QMessageBox, QWidget, QApplication
+    QComboBox, QCheckBox, QMessageBox, QWidget
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QTextCursor, QFont
+from PyQt6.QtGui import QFont
 import asyncio
 import subprocess
 import time
+from concurrent.futures import CancelledError
 from datetime import datetime
 from agents import Agent
 from rag import RAGHandler
@@ -22,13 +23,28 @@ import importlib
 import torch
 import sys
 import signal
-from gui.themes import dialog_stylesheet
+from gui.themes import COLORS, dialog_stylesheet
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 handler = logging.handlers.TimedRotatingFileHandler('agent.log', when='midnight', interval=1, backupCount=7)
 handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 logger.handlers = [handler]
+
+
+
+def _themed_text_style(font_pt: int = 12) -> str:
+    return (
+        f"font-size: {font_pt}pt; color: {COLORS['text']}; "
+        f"background-color: {COLORS['bg_surface']}; border: 1px solid {COLORS['border']};"
+    )
+
+
+def _themed_input_style(font_pt: int = 12) -> str:
+    return (
+        f"font-size: {font_pt}pt; color: {COLORS['text']}; "
+        f"background-color: {COLORS['bg_input']}; border: 1px solid {COLORS['border']};"
+    )
 
 class RagWorker(QThread):
     update_signal = pyqtSignal(str)
@@ -140,13 +156,17 @@ class RagWorker(QThread):
 
     def stop(self):
         self.running = False
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        try:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        except RuntimeError:
+            pass
         self.quit()
         self.wait()
 
 class ChatWorker(QThread):
     response_signal = pyqtSignal(str, str)
     error_signal = pyqtSignal(str)
+    status_signal = pyqtSignal(str)
 
     def __init__(self, app, agent_name, use_studies, parent=None):
         super().__init__(parent)
@@ -156,6 +176,7 @@ class ChatWorker(QThread):
         self.loop = asyncio.new_event_loop()
         self.agent = None
         self.running = False
+        self.pending_future = None
 
     def run(self):
         asyncio.set_event_loop(self.loop)
@@ -186,25 +207,63 @@ class ChatWorker(QThread):
             self.error_signal.emit("Chat worker not running or agent not initialized.")
             return
         try:
+            if self.pending_future and not self.pending_future.done():
+                self.error_signal.emit("A response is already generating. Please wait or stop it first.")
+                return
+
             simple_prompts = ["hi", "hello", "hey"]
-            original_use_studies = self.use_studies
+            original_use_studies = bool(getattr(self.agent, "use_studies", self.use_studies))
             if prompt.lower().strip() in simple_prompts and self.use_studies:
-                self.use_studies = False
-            future = asyncio.run_coroutine_threadsafe(
-                self.agent.generate_response(prompt, user_id="default_user"),
-                self.loop
-            )
-            response = future.result()
-            self.use_studies = original_use_studies
-            self.response_signal.emit(prompt, response + "\n")
+                self.agent.use_studies = False
+            else:
+                self.agent.use_studies = self.use_studies
+
+            self.status_signal.emit("Routing request…")
+
+            async def _gen():
+                return await self.agent.generate_response(prompt, user_id="default_user")
+
+            self.pending_future = asyncio.run_coroutine_threadsafe(_gen(), self.loop)
+
+            def _done(fut):
+                try:
+                    response = fut.result()
+                    self.response_signal.emit(prompt, (response or "No response received.") + "\n")
+                    self.status_signal.emit("Done")
+                except CancelledError:
+                    self.status_signal.emit("Stopped")
+                except Exception as exc:
+                    self.error_signal.emit(f"Error processing prompt: {str(exc)}")
+                    self.status_signal.emit("Idle")
+                finally:
+                    try:
+                        self.agent.use_studies = original_use_studies
+                    except Exception:
+                        pass
+                    self.pending_future = None
+
+            self.pending_future.add_done_callback(_done)
         except Exception as e:
             self.error_signal.emit(f"Error processing prompt: {str(e)}")
 
+    def cancel_current(self):
+        if self.pending_future and not self.pending_future.done():
+            self.pending_future.cancel()
+            self.pending_future = None
+            self.status_signal.emit("Stopped")
+
+    def is_busy(self) -> bool:
+        return bool(self.pending_future and not self.pending_future.done())
+
     def stop(self):
         self.running = False
+        self.cancel_current()
         if self.agent:
             del self.agent
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        try:
+            self.loop.call_soon_threadsafe(self.loop.stop)
+        except RuntimeError:
+            pass
         self.quit()
         self.wait()
 
@@ -231,81 +290,83 @@ def ai_chat(app):
     chat_area = QTextEdit()
     chat_area.setReadOnly(True)
     chat_area.setFixedHeight(400)
-    chat_area.setStyleSheet("font-size: 12pt; color: #ffffff; background-color: #1e1e1e; border: 1px solid #444444;")
+    chat_area.setStyleSheet(_themed_text_style(12))
     chat_area.setFont(QFont("Arial", 12))
     layout.addWidget(chat_area)
+
+    status_label = QLabel("Status: Connecting…")
+    layout.addWidget(status_label)
 
     layout.addWidget(QLabel("Prompt:"))
     prompt_entry = QLineEdit()
     prompt_entry.setFixedWidth(700)
-    prompt_entry.setStyleSheet("font-size: 12pt; color: #ffffff; background-color: #2d2d2d; border: 1px solid #444444;")
+    prompt_entry.setStyleSheet(_themed_input_style(12))
     prompt_entry.setFont(QFont("Arial", 12))
     layout.addWidget(prompt_entry)
 
     chat_worker = None
-    typing_timer = QTimer()
-    typing_timer.setInterval(10)
-    dots_timer = QTimer()
-    dots_timer.setInterval(500)
-    current_response = ""
-    response_index = 0
-    dot_states = ["..", "...", "...."]
-    dot_index = 0
+    spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    spinner_index = 0
+    spinner_state = "Idle"
+    spinner_timer = QTimer()
+    spinner_timer.setInterval(90)
 
-    def type_response():
-        nonlocal response_index, current_response
-        if response_index < len(current_response):
-            chat_area.moveCursor(QTextCursor.MoveOperation.End)
-            chat_area.insertPlainText(current_response[response_index])
-            response_index += 1
-            chat_area.ensureCursorVisible()
-            QApplication.processEvents()
-        else:
-            typing_timer.stop()
-            chat_area.append(current_response[response_index:] + "\n\n")
-            response_index = 0
-            current_response = ""
-
-    def update_dots():
-        nonlocal dot_index
+    def on_response(user_input, ai_response):
         selected_name = name_combo.currentText()
-        cursor = chat_area.textCursor()
-        prev_state = dot_states[dot_index-1 if dot_index > 0 else len(dot_states)-1]
-        if chat_area.toPlainText().endswith(f"{selected_name}: {prev_state}"):
-            cursor.movePosition(QTextCursor.MoveOperation.End)
-            cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
-            cursor.removeSelectedText()
-        chat_area.append(f"{selected_name}: {dot_states[dot_index]}")
-        chat_area.ensureCursorVisible()
-        dot_index = (dot_index + 1) % len(dot_states)
-
-    def start_typing(user_input, ai_response, agent_name):
-        nonlocal current_response, response_index
-        dots_timer.stop()
-        cursor = chat_area.textCursor()
-        for state in dot_states:
-            if chat_area.toPlainText().endswith(f"{agent_name}: {state}"):
-                cursor.movePosition(QTextCursor.MoveOperation.End)
-                cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
-                cursor.removeSelectedText()
-                break
-        typing_timer.stop()
         chat_area.append(f"You: {user_input}\n")
-        chat_area.append(f"{agent_name}: ")
-        current_response = ai_response if ai_response else "No response received."
-        response_index = 0
-        typing_timer.start()
+        chat_area.append(f"{selected_name}: {ai_response.strip()}\n")
+        chat_area.ensureCursorVisible()
+        prompt_entry.setEnabled(True)
+        send_button.setEnabled(True)
+        stop_button.setEnabled(False)
+
+    def tick_spinner():
+        nonlocal spinner_index
+        frame = spinner_frames[spinner_index]
+        spinner_index = (spinner_index + 1) % len(spinner_frames)
+        status_label.setText(f"Status: {frame} {spinner_state}")
+
+    def set_status(text):
+        nonlocal spinner_state
+        spinner_state = text
+        if text in {"Idle", "Done", "Stopped"}:
+            spinner_timer.stop()
+            status_label.setText(f"Status: {text}")
+        else:
+            if not spinner_timer.isActive():
+                spinner_timer.start()
+
+    def on_worker_error(msg):
+        chat_area.append(f"Error: {msg}\n")
+        chat_area.ensureCursorVisible()
+        app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat Error: {msg}\n")
+        app.output_area.ensureCursorVisible()
+        set_status("Idle")
+        prompt_entry.setEnabled(True)
+        send_button.setEnabled(True)
+        stop_button.setEnabled(False)
+        QMessageBox.critical(chat_window, "Error", msg)
 
     def start_chat():
         nonlocal chat_worker
         selected_name = name_combo.currentText()
         if not app.agent_names:
             QMessageBox.critical(chat_window, "Error", "No agents loaded. Check personalC.json.")
+            set_status("Idle")
+            send_button.setEnabled(False)
+            prompt_entry.setEnabled(False)
+            apply_agent_button.setEnabled(False)
+            stop_button.setEnabled(False)
             return
         try:
             agent_key = app.agent_keys[app.agent_names.index(selected_name)]
         except ValueError:
             QMessageBox.critical(chat_window, "Error", f"Agent '{selected_name}' not found.")
+            set_status("Idle")
+            send_button.setEnabled(False)
+            prompt_entry.setEnabled(False)
+            apply_agent_button.setEnabled(False)
+            stop_button.setEnabled(False)
             return
 
         if chat_worker and chat_worker.isRunning():
@@ -313,18 +374,16 @@ def ai_chat(app):
             chat_worker.wait()
 
         chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-        chat_worker.response_signal.connect(lambda u, r: start_typing(u, r, selected_name))
-        chat_worker.error_signal.connect(lambda msg: [
-            chat_area.append(f"Error: {msg}\n"),
-            chat_area.ensureCursorVisible(),
-            app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat Error: {msg}\n"),
-            app.output_area.ensureCursorVisible(),
-            QMessageBox.critical(chat_window, "Error", msg)
-        ])
+        chat_worker.response_signal.connect(on_response)
+        chat_worker.status_signal.connect(set_status)
+        chat_worker.error_signal.connect(on_worker_error)
         chat_worker.start()
+        chat_area.append(f"Connected to {selected_name}. You can start chatting now.\n")
+        set_status("Idle")
         send_button.setEnabled(True)
         prompt_entry.setEnabled(True)
         apply_agent_button.setEnabled(True)
+        stop_button.setEnabled(False)
 
     def apply_agent():
         nonlocal chat_worker
@@ -337,6 +396,9 @@ def ai_chat(app):
             return
 
         if chat_worker and chat_worker.isRunning():
+            if chat_worker.is_busy():
+                QMessageBox.warning(chat_window, "Warning", "Please wait for the current response to finish (or stop it) before switching agents.")
+                return
             if not chat_worker.update_agent(agent_key, use_studies_check.isChecked()):
                 chat_area.append(f"Agent unchanged: {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
                 return
@@ -347,12 +409,9 @@ def ai_chat(app):
                 chat_worker.stop()
                 chat_worker.wait()
             chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-            chat_worker.response_signal.connect(lambda u, r: start_typing(u, r, selected_name))
-            chat_worker.error_signal.connect(lambda msg: [
-                chat_area.append(f"Error: {msg}\n"),
-                app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat Error: {msg}\n"),
-                QMessageBox.critical(chat_window, "Error", msg)
-            ])
+            chat_worker.response_signal.connect(on_response)
+            chat_worker.status_signal.connect(set_status)
+            chat_worker.error_signal.connect(on_worker_error)
             chat_worker.start()
             chat_area.clear()
             chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
@@ -360,42 +419,36 @@ def ai_chat(app):
     def show_typing_indicator():
         nonlocal chat_worker
         if not chat_worker or not chat_worker.isRunning():
-            QMessageBox.warning(chat_window, "Warning", "Please start the chat first.")
+            QMessageBox.warning(chat_window, "Warning", "Chat is still connecting. Please wait.")
             return
         prompt = prompt_entry.text().strip()
         if not prompt:
             QMessageBox.warning(chat_window, "Warning", "Please enter a prompt.")
             return
-        selected_name = name_combo.currentText()
-        dots_timer.stop()
-        cursor = chat_area.textCursor()
-        for state in dot_states:
-            if chat_area.toPlainText().endswith(f"{selected_name}: {state}"):
-                cursor.movePosition(QTextCursor.MoveOperation.End)
-                cursor.movePosition(QTextCursor.MoveOperation.StartOfLine, QTextCursor.MoveMode.KeepAnchor)
-                cursor.removeSelectedText()
-                break
-        dot_index = 0
-        chat_area.append(f"{selected_name}: {dot_states[dot_index]}")
-        chat_area.ensureCursorVisible()
-        dots_timer.start()
+        set_status("Thinking…")
+        prompt_entry.setEnabled(False)
+        send_button.setEnabled(False)
+        stop_button.setEnabled(True)
         chat_worker.process_prompt(prompt)
         prompt_entry.clear()
+
+    def stop_generation():
+        nonlocal chat_worker
+        if chat_worker and chat_worker.isRunning():
+            chat_worker.cancel_current()
+        prompt_entry.setEnabled(True)
+        send_button.setEnabled(True)
+        stop_button.setEnabled(False)
 
     def quit_chat():
         nonlocal chat_worker
         if chat_worker and chat_worker.isRunning():
             chat_worker.stop()
             chat_worker.wait()
-        typing_timer.stop()
-        dots_timer.stop()
+        spinner_timer.stop()
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat session ended.\n")
         app.output_area.ensureCursorVisible()
         chat_window.reject()
-
-    start_button = QPushButton("Start Chat")
-    start_button.clicked.connect(start_chat)
-    layout.addWidget(start_button)
 
     apply_agent_button = QPushButton("Apply Agent")
     apply_agent_button.setEnabled(False)
@@ -407,13 +460,20 @@ def ai_chat(app):
     send_button.clicked.connect(show_typing_indicator)
     layout.addWidget(send_button)
 
+    stop_button = QPushButton("Stop Generating")
+    stop_button.setEnabled(False)
+    stop_button.clicked.connect(stop_generation)
+    layout.addWidget(stop_button)
+
     quit_button = QPushButton("Quit")
     quit_button.clicked.connect(quit_chat)
     layout.addWidget(quit_button)
 
     prompt_entry.returnPressed.connect(show_typing_indicator)
-    typing_timer.timeout.connect(type_response)
-    dots_timer.timeout.connect(update_dots)
+    spinner_timer.timeout.connect(tick_spinner)
+
+    # Auto-start chat session for smoother UX.
+    start_chat()
 
     layout.addStretch()
     chat_window.setLayout(layout)
@@ -430,7 +490,7 @@ def study_material(app):
     layout.addWidget(QLabel("Query:"))
     query_entry = QLineEdit()
     query_entry.setFixedWidth(700)
-    query_entry.setStyleSheet("font-size: 12pt; color: #ffffff; background-color: #2d2d2d; border: 1px solid #444444;")
+    query_entry.setStyleSheet(_themed_input_style(12))
     query_entry.setFont(QFont("Arial", 12))
     layout.addWidget(query_entry)
 
@@ -443,7 +503,7 @@ def study_material(app):
     results_area = QTextEdit()
     results_area.setReadOnly(True)
     results_area.setFixedHeight(200)
-    results_area.setStyleSheet("font-size: 12pt; color: #ffffff; background-color: #1e1e1e; border: 1px solid #444444;")
+    results_area.setStyleSheet(_themed_text_style(12))
     results_area.setFont(QFont("Arial", 12))
     layout.addWidget(results_area)
 
@@ -521,7 +581,7 @@ def study_material(app):
             w_layout.addWidget(QLabel(f"Website {i+1}:"))
             entry = QLineEdit()
             entry.setFixedWidth(500)
-            entry.setStyleSheet("font-size: 12pt; color: #ffffff; background-color: #2d2d2d; border: 1px solid #444444;")
+            entry.setStyleSheet(_themed_input_style(12))
             entry.setFont(QFont("Arial", 12))
             w_layout.addWidget(entry)
             url_entries.append(entry)
