@@ -4,8 +4,9 @@ import json
 import logging
 import os
 import sqlite3
+import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from config.settings import (
     EMBEDDING_DIM,
@@ -62,17 +63,34 @@ class SQLiteMemoryStore:
         with self._connect() as conn:
             conn.executescript(SCHEMA_SQL)
             cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(memory_items)").fetchall()}
-            if "user_id" not in cols:
-                conn.execute("ALTER TABLE memory_items ADD COLUMN user_id TEXT")
-                conn.execute("UPDATE memory_items SET user_id='default_user' WHERE user_id IS NULL OR user_id=''")
-            if "bucket" not in cols:
-                conn.execute("ALTER TABLE memory_items ADD COLUMN bucket TEXT DEFAULT 'general'")
-                conn.execute("UPDATE memory_items SET bucket='general' WHERE bucket IS NULL OR bucket=''")
-            if "importance" not in cols:
-                conn.execute("ALTER TABLE memory_items ADD COLUMN importance REAL DEFAULT 0.5")
-                conn.execute("UPDATE memory_items SET importance=0.5 WHERE importance IS NULL")
-            if "replaced_by" not in cols:
-                conn.execute("ALTER TABLE memory_items ADD COLUMN replaced_by TEXT")
+            needed = {
+                "user_id": "TEXT",
+                "bucket": "TEXT DEFAULT 'general'",
+                "importance": "REAL DEFAULT 0.5",
+                "replaced_by": "TEXT",
+                "scope": "TEXT DEFAULT 'conversation'",
+                "mem_type": "TEXT DEFAULT 'note'",
+                "text": "TEXT DEFAULT ''",
+                "entities_json": "TEXT",
+                "tags_json": "TEXT",
+                "supersedes_id": "TEXT",
+                "contradicts_id": "TEXT",
+                "created_at": "TEXT",
+                "updated_at": "TEXT",
+                "last_used_at": "TEXT",
+                "slot_key": "TEXT",
+            }
+            for c, ddl in needed.items():
+                if c not in cols:
+                    conn.execute(f"ALTER TABLE memory_items ADD COLUMN {c} {ddl}")
+            conn.execute("UPDATE memory_items SET user_id='default_user' WHERE user_id IS NULL OR user_id=''")
+            conn.execute("UPDATE memory_items SET scope=COALESCE(NULLIF(scope,''),'conversation')")
+            conn.execute("UPDATE memory_items SET mem_type=COALESCE(NULLIF(mem_type,''),'note')")
+            conn.execute("UPDATE memory_items SET text=COALESCE(NULLIF(text,''),content)")
+            conn.execute("UPDATE memory_items SET created_at=COALESCE(created_at, ts)")
+            conn.execute("UPDATE memory_items SET updated_at=COALESCE(updated_at, ts)")
+            conn.execute("UPDATE memory_items SET last_used_at=COALESCE(last_used_at, last_used)")
+
             self.vec_enabled = self._try_load_vec(conn)
             if self.vec_enabled:
                 try:
@@ -103,21 +121,69 @@ class SQLiteMemoryStore:
             pass
 
     def write_item(self, item: Dict[str, Any], embedding: Optional[List[float]] = None) -> None:
+        now_iso = utcnow_iso()
+        item_id = str(item.get("id") or uuid.uuid4())
+        payload = (
+            item_id,
+            item.get("ts") or now_iso,
+            item.get("user_id", "default_user"),
+            item.get("lane", "facts"),
+            item.get("type", "fact"),
+            item.get("entity", "user"),
+            item.get("mkey", "fact"),
+            item.get("value", ""),
+            item.get("kind", "preference"),
+            item.get("bucket", "general"),
+            float(item.get("importance", 0.5) or 0.5),
+            item.get("replaced_by"),
+            item.get("content", item.get("text", "")),
+            item.get("tags", ""),
+            float(item.get("confidence", 0.7) or 0.7),
+            item.get("status", "active"),
+            item.get("expires_at"),
+            item.get("supersedes"),
+            item.get("last_used"),
+            item.get("scope", "conversation"),
+            item.get("mem_type", item.get("type", "note")),
+            item.get("text", item.get("content", "")),
+            item.get("entities_json"),
+            item.get("tags_json"),
+            item.get("supersedes_id", item.get("supersedes")),
+            item.get("contradicts_id"),
+            item.get("created_at", item.get("ts") or now_iso),
+            item.get("updated_at", item.get("ts") or now_iso),
+            item.get("last_used_at", item.get("last_used")),
+            item.get("slot_key"),
+        )
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO memory_items(id, ts, user_id, lane, type, entity, mkey, value, kind, bucket, importance, replaced_by, content, tags,
-                    confidence, status, expires_at, supersedes, last_used)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO memory_items(
+                    id, ts, user_id, lane, type, entity, mkey, value, kind, bucket, importance, replaced_by,
+                    content, tags, confidence, status, expires_at, supersedes, last_used,
+                    scope, mem_type, text, entities_json, tags_json, supersedes_id, contradicts_id,
+                    created_at, updated_at, last_used_at, slot_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (
-                    item.get("id"), item.get("ts"), item.get("user_id", "default_user"), item.get("lane"), item.get("type"), item.get("entity"), item.get("mkey"),
-                    item.get("value"), item.get("kind"), item.get("bucket", "general"), float(item.get("importance", 0.5) or 0.5), item.get("replaced_by"), item.get("content"), item.get("tags", ""), float(item.get("confidence", 0.7)),
-                    item.get("status", "active"), item.get("expires_at"), item.get("supersedes"), item.get("last_used"),
-                ),
+                payload,
             )
-            self._upsert_fts(conn, str(item.get("id")), str(item.get("content", "")), str(item.get("tags", "")), str(item.get("mkey", "")))
-            self._upsert_vec(conn, str(item.get("id")), embedding)
+            self._upsert_fts(conn, item_id, str(item.get("content", item.get("text", ""))), str(item.get("tags", "")), str(item.get("mkey", "")))
+            self._upsert_vec(conn, item_id, embedding)
+
+    def log_event(self, user_id: str, event_type: str, memory_id: Optional[str], payload: Optional[Dict[str, Any]] = None) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO memory_events(id, user_id, event_type, memory_id, payload_json, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (str(uuid.uuid4()), user_id, event_type, memory_id, json.dumps(payload or {}, ensure_ascii=False), utcnow_iso()),
+            )
+
+    def recent_events(self, user_id: str, limit: int = 10) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memory_events WHERE user_id=? ORDER BY created_at DESC LIMIT ?",
+                (user_id, int(limit)),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def active_fact(self, user_id: str, entity: str, mkey: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
@@ -127,20 +193,29 @@ class SQLiteMemoryStore:
             ).fetchone()
         return dict(row) if row else None
 
+    def active_by_slot(self, user_id: str, slot_key: str) -> Optional[Dict[str, Any]]:
+        if not slot_key:
+            return None
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_items WHERE user_id=? AND slot_key=? AND status='active' ORDER BY ts DESC LIMIT 1",
+                (user_id, slot_key),
+            ).fetchone()
+        return dict(row) if row else None
 
     def set_replaced_by(self, item_id: str, new_item_id: str) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE memory_items SET replaced_by=? WHERE id=?", (new_item_id, item_id))
+            conn.execute("UPDATE memory_items SET replaced_by=?, updated_at=? WHERE id=?", (new_item_id, utcnow_iso(), item_id))
 
     def set_status(self, item_id: str, status: str) -> None:
         with self._connect() as conn:
-            conn.execute("UPDATE memory_items SET status=? WHERE id=?", (status, item_id))
+            conn.execute("UPDATE memory_items SET status=?, updated_at=? WHERE id=?", (status, utcnow_iso(), item_id))
 
     def expire_items(self, now_iso: str) -> int:
         with self._connect() as conn:
             cur = conn.execute(
-                "UPDATE memory_items SET status='expired' WHERE status='active' AND expires_at IS NOT NULL AND expires_at<=?",
-                (now_iso,),
+                "UPDATE memory_items SET status='expired', updated_at=? WHERE status='active' AND expires_at IS NOT NULL AND expires_at<=?",
+                (now_iso, now_iso),
             )
             return int(cur.rowcount or 0)
 
@@ -152,23 +227,54 @@ class SQLiteMemoryStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def latest_by_scope(self, user_id: str, scope: str, limit: int = 8) -> List[Dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM memory_items WHERE user_id=? AND scope=? AND status='active' ORDER BY ts DESC LIMIT ?",
+                (user_id, scope, int(limit)),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    def latest_session_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM memory_items WHERE user_id=? AND mem_type='summary' AND status='active' ORDER BY ts DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
     def fts_search(self, user_id: str, query: str, limit: int = 30) -> List[str]:
+        rows = self.fts_search_scored(user_id, query, scopes=None, limit=limit)
+        return [iid for iid, _ in rows]
+
+    def fts_search_scored(self, user_id: str, query: str, scopes: Optional[List[str]] = None, limit: int = 30) -> List[Tuple[str, float]]:
         q = (query or "").strip()
         if not q:
             return []
         with self._connect() as conn:
             try:
-                rows = conn.execute(
+                if scopes:
+                    ph = ",".join(["?"] * len(scopes))
+                    sql = f"""
+                        SELECT f.item_id, bm25(memory_fts) AS score
+                        FROM memory_fts f
+                        JOIN memory_items i ON i.id=f.item_id
+                        WHERE memory_fts MATCH ? AND i.user_id=? AND i.status='active' AND i.scope IN ({ph})
+                        ORDER BY bm25(memory_fts) ASC LIMIT ?
                     """
-                    SELECT f.item_id
-                    FROM memory_fts f
-                    JOIN memory_items i ON i.id=f.item_id
-                    WHERE memory_fts MATCH ? AND i.user_id=? AND i.status='active'
-                    ORDER BY bm25(memory_fts) ASC LIMIT ?
-                    """,
-                    (q, user_id, int(limit)),
-                ).fetchall()
-                return [str(r[0]) for r in rows]
+                    rows = conn.execute(sql, [q, user_id] + scopes + [int(limit)]).fetchall()
+                else:
+                    rows = conn.execute(
+                        """
+                        SELECT f.item_id, bm25(memory_fts) AS score
+                        FROM memory_fts f
+                        JOIN memory_items i ON i.id=f.item_id
+                        WHERE memory_fts MATCH ? AND i.user_id=? AND i.status='active'
+                        ORDER BY bm25(memory_fts) ASC LIMIT ?
+                        """,
+                        (q, user_id, int(limit)),
+                    ).fetchall()
+                return [(str(r[0]), float(r[1] or 0.0)) for r in rows]
             except Exception:
                 return []
 
@@ -195,6 +301,14 @@ class SQLiteMemoryStore:
                 [user_id] + ids,
             ).fetchall()
         return [dict(r) for r in rows]
+
+    def db_stats(self, user_id: str) -> Dict[str, int]:
+        with self._connect() as conn:
+            total = int(conn.execute("SELECT COUNT(*) FROM memory_items WHERE user_id=?", (user_id,)).fetchone()[0])
+            active = int(conn.execute("SELECT COUNT(*) FROM memory_items WHERE user_id=? AND status='active'", (user_id,)).fetchone()[0])
+            events = int(conn.execute("SELECT COUNT(*) FROM memory_events WHERE user_id=?", (user_id,)).fetchone()[0])
+            fts = int(conn.execute("SELECT COUNT(*) FROM memory_fts").fetchone()[0])
+        return {"memory_items_total": total, "memory_items_active": active, "memory_events": events, "memory_fts": fts}
 
     # reminders
     def upsert_reminder(self, r: Dict[str, Any]) -> None:
@@ -249,7 +363,6 @@ class SQLiteMemoryStore:
             rows = conn.execute("SELECT * FROM memory_items WHERE status='active'").fetchall()
         return [dict(r) for r in rows]
 
-
     def reinforce_skill(self, item_id: str, delta: float = 0.02, cap: float = 0.95) -> None:
         with self._connect() as conn:
             row = conn.execute("SELECT confidence FROM memory_items WHERE id=?", (item_id,)).fetchone()
@@ -257,4 +370,7 @@ class SQLiteMemoryStore:
                 return
             conf = float(row[0] or 0.0)
             conf = min(float(cap), max(0.0, conf + float(delta)))
-            conn.execute("UPDATE memory_items SET confidence=?, last_used=? WHERE id=?", (conf, utcnow_iso(), item_id))
+            conn.execute(
+                "UPDATE memory_items SET confidence=?, last_used=?, last_used_at=?, updated_at=? WHERE id=?",
+                (conf, utcnow_iso(), utcnow_iso(), utcnow_iso(), item_id),
+            )

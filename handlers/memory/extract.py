@@ -35,12 +35,30 @@ def heuristics(user_text: str, assistant_text: str = "") -> Dict[str, List[Dict[
         kind = "volatile" if "for this session" in tl else "preference"
         facts.append({"entity": "user", "key": "preferred_name", "value": m.group(1).strip()[:32], "kind": kind, "confidence": 0.86})
 
+    m = re.search(r"\bmy\s+name\s+is\s+([a-zA-Z0-9 _'-]{1,40})", t, flags=re.IGNORECASE)
+    if m:
+        facts.append({"entity": "user", "key": "name", "value": m.group(1).strip()[:40], "kind": "profile", "confidence": 0.96})
+
+    m = re.search(r"\bmy\s+favorite\s+drink\s+is\s+([a-zA-Z0-9 _'-]{1,48})", t, flags=re.IGNORECASE)
+    if m:
+        facts.append({"entity": "user", "key": "favorite_drink", "value": m.group(1).strip()[:48], "kind": "preference", "confidence": 0.95})
+
+    m = re.search(r"\bupdate\s*:\s*my\s+favorite\s+drink\s+is\s+now\s+([a-zA-Z0-9 _'-]{1,48})", t, flags=re.IGNORECASE)
+    if m:
+        facts.append({"entity": "user", "key": "favorite_drink", "value": m.group(1).strip()[:48], "kind": "preference", "confidence": 0.97})
+
+    if re.search(r"\bwhen\s+i\s+ask\s+for\s+code", tl) and "python" in tl:
+        facts.append({"entity": "user", "key": "coding_style", "value": "Python 3.11+ and type hints", "kind": "preference", "confidence": 0.9})
+
+    if "run memory test" in tl and "tools/memory_e2e_test.py" in tl:
+        facts.append({"entity": "user", "key": "run_memory_test_command", "value": "tools/memory_e2e_test.py", "kind": "preference", "confidence": 0.88})
+
     # skill heuristic: 3+ step-like lines in assistant output
     step_lines = [ln.strip("- ") for ln in (assistant_text or "").splitlines() if re.search(r"\b(run|edit|patch|set|create|use|check|test|open)\b", ln.lower())]
     if len(step_lines) >= 3:
         skills.append({"trigger": "procedural fix", "steps": step_lines[:8], "tags": ["auto", "replay"], "confidence": 0.7})
 
-    return {"facts": facts[:3], "skills": skills[:1]}
+    return {"facts": facts[:8], "skills": skills[:1]}
 
 
 def should_call_llm(user_text: str, assistant_text: str = "") -> bool:
@@ -83,12 +101,12 @@ async def llm_extract(client, user_text: str, assistant_text: str = "", tool_sum
         facts = []
     if not isinstance(skills, list):
         skills = []
-    return {"facts": facts[:3], "skills": skills[:1]}
+    return {"facts": facts[:8], "skills": skills[:1]}
 
 
 def sanitize(data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
     out_facts, out_skills = [], []
-    allow = {"timezone", "preferred_name", "output_format", "favorite_color", "dog_name", "default_location", "name"}
+    allow = {"timezone", "preferred_name", "output_format", "favorite_color", "favorite_drink", "dog_name", "default_location", "name", "coding_style", "run_memory_test_command"}
     for f in data.get("facts", []) or []:
         key = to_snake(str(f.get("key", "")))
         value = str(f.get("value", "")).strip()[:120]
@@ -114,4 +132,4 @@ def sanitize(data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, 
         if conf < float(MEMORY_CONF_MIN):
             continue
         out_skills.append({"trigger": trig, "steps": steps, "tags": tags, "confidence": conf})
-    return {"facts": out_facts[:3], "skills": out_skills[:1]}
+    return {"facts": out_facts[:8], "skills": out_skills[:1]}

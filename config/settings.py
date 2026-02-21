@@ -92,6 +92,37 @@ SESSION_DIR = "sessions/"  # Directory for per-user JSON session files
 SESSION_AUTO_SAVE_EVERY_N_TURNS = 1  # Save after every N responses (1 = always, safe but slight overhead)
 
 MAX_CONTEXT_TOKENS = 8192  # Hard cap on total tokens sent to LLM (fits most 8B models on 12GB VRAM)
+
+# Context budgeting profiles for PromptForge/Agent memory+history packing
+
+# Chat Flow / Routing architecture defaults
+CONTEXT_PROFILE = "8k"
+HISTORY_MAX_MESSAGES = 10
+SUMMARY_ENABLED = True
+SUMMARY_UPDATE_EVERY_N_TURNS = 8
+SUMMARY_MAX_TOKENS = 220
+SUMMARY_LAST_TURNS_TO_SUMMARIZE = 12
+SUMMARY_USE_LLM = False
+SUMMARY_MODEL = MEMORY_MODEL
+ROUTING_DEBUG = True
+
+# Deterministic context budgets (approx-token budgets)
+BUDGET_MEMORY_TOKENS = 420
+BUDGET_SEARCH_TOKENS = 550
+BUDGET_HISTORY_TOKENS = 900
+BUDGET_OUTPUT_RESERVE_TOKENS = 320
+CHAT_CONTEXT_PROFILE = "8k"  # one of: 4k, 8k, 16k, 32k
+CHAT_CONTEXT_PROFILES = {
+    "4k": {"max_context_tokens": 4096, "history_turns": 4, "memory_chars": 900, "summary_chars": 350},
+    "8k": {"max_context_tokens": 8192, "history_turns": 8, "memory_chars": 1600, "summary_chars": 500},
+    "16k": {"max_context_tokens": 16384, "history_turns": 12, "memory_chars": 2600, "summary_chars": 800},
+    "32k": {"max_context_tokens": 32768, "history_turns": 18, "memory_chars": 4200, "summary_chars": 1200},
+}
+
+# Memory retrieval toggles
+USE_VECTOR_INDEX = False
+VECTOR_INDEX_BACKEND = "zvec"  # zvec|null
+MEMORY_AUTO_CAPTURE_HIGH_VALUE = False
 DEFAULT_MAX_NEW_TOKENS = 512  # Default generation length (balanced for speed)
 RESPONSE_TOKEN_SOFT_LIMIT = 300  # Aim for shorter responses unless long_form triggered
 
