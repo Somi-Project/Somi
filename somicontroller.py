@@ -35,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 
 from gui import aicoregui, speechgui, telegramgui, twittergui
-from gui.themes import app_stylesheet, dialog_stylesheet
+from gui.themes import app_stylesheet, dialog_stylesheet, get_theme_name, list_themes, set_theme
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
 from handlers.memory import Memory3Manager
@@ -45,6 +45,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 PERSONALITY_CONFIG = Path("config/personalC.json")
+GUI_SETTINGS_PATH = Path("config/gui_settings.json")
 FACTS = [
     "Octopuses have three hearts, and two of them stop when swimming.",
     "A day on Venus is longer than a year on Venus.",
@@ -243,6 +244,7 @@ class SomiAIGUI(QMainWindow):
         self.build_center_panel()
         self.build_bottom_tabs()
         self.build_quick_action_bar()
+        self.load_gui_theme_preference()
         self.apply_theme()
         self.wire_signals_and_timers()
         self.heartbeat_service.start()
@@ -395,6 +397,7 @@ class SomiAIGUI(QMainWindow):
             ("Agentpedia", self.open_agentpedia_viewer),
             ("HB Pause", self.pause_heartbeat),
             ("HB Resume", self.resume_heartbeat),
+            ("Theme", self.open_theme_selector),
         ]:
             l.addWidget(self._sub_btn(label, cb))
         l.addWidget(self._sub_btn("Background", self.change_background))
@@ -445,6 +448,68 @@ class SomiAIGUI(QMainWindow):
 
     def apply_theme(self):
         self.setStyleSheet(app_stylesheet())
+
+    def read_gui_settings(self):
+        if not GUI_SETTINGS_PATH.exists():
+            return {}
+        try:
+            return json.loads(GUI_SETTINGS_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+
+    def write_gui_settings(self, payload):
+        try:
+            GUI_SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            GUI_SETTINGS_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to write GUI settings: %s", exc)
+
+    def load_gui_theme_preference(self):
+        data = self.read_gui_settings()
+        set_theme(str(data.get("theme", "default_dark")))
+
+
+    def open_theme_selector(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Theme")
+        dialog.resize(360, 170)
+        dialog.setStyleSheet(dialog_stylesheet())
+
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel("Select interface theme:"))
+        combo = QComboBox()
+        options = list_themes()
+        for key, label in options:
+            combo.addItem(label, key)
+
+        current = get_theme_name()
+        for i, (key, _label) in enumerate(options):
+            if key == current:
+                combo.setCurrentIndex(i)
+                break
+        layout.addWidget(combo)
+
+        buttons = QHBoxLayout()
+        apply_btn = QPushButton("Apply")
+        cancel_btn = QPushButton("Cancel")
+        buttons.addWidget(apply_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        def apply_theme_change():
+            selected = combo.currentData()
+            selected_name = str(selected or "default_dark")
+            set_theme(selected_name)
+            data = self.read_gui_settings()
+            data["theme"] = selected_name
+            self.write_gui_settings(data)
+            self.apply_theme()
+            self.push_activity("system", f"Theme changed to {combo.currentText()}")
+            dialog.accept()
+
+        apply_btn.clicked.connect(apply_theme_change)
+        cancel_btn.clicked.connect(dialog.reject)
+        dialog.exec()
 
     def _sub_btn(self, text, callback):
         btn = QPushButton(text)
