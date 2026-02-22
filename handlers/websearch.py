@@ -1,3 +1,4 @@
+# handlers/websearch.py
 import asyncio
 import logging
 import re
@@ -395,10 +396,8 @@ class WebSearchHandler:
         self.research_terms = [
             "pmid", "doi", "arxiv", "nct",
             "guideline", "guidelines",
-            "consensus", "consensuses",
-            "practice guideline", "practice guidelines",
-            "recommendation", "recommendations",
-            "recommended", "recommend",
+            "consensus", "practice guideline", "practice guidelines",
+            "recommendation", "recommendations", "recommended", "recommend",
             "protocol", "protocols",
             "standard of care", "best practice", "best practices",
             "trial", "trials",
@@ -436,11 +435,54 @@ class WebSearchHandler:
 
         self.agentpedia = Agentpedia(write_back=False) if agentpedia_available else None
 
+        # Finance-like cues (used to prevent stock false positives)
+        self.finance_cues = [
+            "price", "quote", "ticker", "stock", "stocks", "shares", "market cap", "chart",
+            "forex", "exchange rate", "fx", "commodity", "commodities", "gold", "oil",
+            "bitcoin", "btc", "ethereum", "eth", "crypto", "coingecko", "coinmarketcap",
+        ]
+
+        # Research regex
+        self._re_pmid = re.compile(r"\bpmid[:\s]*\d{5,9}\b", re.IGNORECASE)
+        self._re_doi = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
+        self._re_nct = re.compile(r"\bnct\d{8}\b", re.IGNORECASE)
+        self._re_arxiv = re.compile(r"\barxiv[:\s]*\d{4}\.\d{4,5}\b", re.IGNORECASE)
+
     def get_system_time(self) -> str:
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
 
+    # --- Deroute detection ---
+    def _is_deroute(self, results: Any) -> bool:
+        if not results or not isinstance(results, list):
+            return False
+        first = results[0]
+        return isinstance(first, dict) and first.get("deroute") is True
+
+    def _maybe_log_deroute(self, results: Any, query: str = "") -> bool:
+        if not self._is_deroute(results):
+            return False
+        payload = results[0] if results else {}
+        logger.info(
+            f"De-route from {payload.get('handler')} reason={payload.get('reason')} query='{query}'"
+        )
+        return True
+
     def _is_research_query(self, query_lower: str) -> bool:
-        return any(t in query_lower for t in self.research_terms)
+        ql = (query_lower or "").strip().lower()
+        if not ql:
+            return False
+
+        # Hard signals
+        if self._re_pmid.search(ql) or self._re_doi.search(ql) or self._re_nct.search(ql) or self._re_arxiv.search(ql):
+            return True
+
+        # Common research operators / patterns
+        if "site:" in ql:
+            # not always research, but it is definitely "not finance"
+            # and is often academic/web-research
+            return True
+
+        return any(t in ql for t in self.research_terms)
 
     def _is_personal_memory_query(self, query_lower: str) -> bool:
         ql = (query_lower or "").strip().lower()
@@ -506,24 +548,39 @@ class WebSearchHandler:
             return False
 
     def _force_intent_from_terms(self, query_lower: str) -> Optional[str]:
+        """
+        Hard heuristics. IMPORTANT: avoid finance false positives.
+        - Never force finance if query looks like research.
+        - Do NOT treat random uppercase tokens as tickers here.
+        """
+        ql = (query_lower or "").strip().lower()
+        if not ql:
+            return None
+
+        # If it's research-like, don't force finance/news/weather here.
+        if self._is_research_query(ql):
+            return "science"
+
         matches = set()
 
-        if self._looks_like_forex_pair(query_lower):
+        if self._looks_like_forex_pair(ql):
             matches.add("forex")
-        if any(t in query_lower for t in self.crypto_terms):
+        if any(t in ql for t in self.crypto_terms):
             matches.add("crypto")
-        if any(t in query_lower for t in self.index_terms):
+        if any(t in ql for t in self.index_terms):
             matches.add("stock/commodity")
 
-        stock_keywords = ["stock", "stocks", "share price", "shares", "ticker", "price of"]
-        if any(k in query_lower for k in stock_keywords):
-            matches.add("stock/commodity")
-        if re.search(r"\b[A-Z]{3,5}\b", query_lower.upper()):
+        stock_keywords = ["stock", "stocks", "share price", "shares", "ticker", "price of", "market cap", "quote"]
+        if any(k in ql for k in stock_keywords):
             matches.add("stock/commodity")
 
-        if any(t in query_lower for t in self.weather_terms):
+        # NOTE: removed this bug source:
+        # if re.search(r"\b[A-Z]{3,5}\b", query_lower.upper()):
+        #     matches.add("stock/commodity")
+
+        if any(t in ql for t in self.weather_terms):
             matches.add("weather")
-        if any(t in query_lower for t in self.news_terms):
+        if any(t in ql for t in self.news_terms):
             matches.add("news")
 
         if len(matches) == 1:
@@ -532,6 +589,10 @@ class WebSearchHandler:
 
     def _sanity_validate_intent(self, intent: str, ql: str) -> str:
         intent = intent if intent in self.valid_categories else "general"
+
+        # If query is research-like, treat it as science regardless of LLM classifier
+        if self._is_research_query(ql):
+            return "science"
 
         if intent == "weather":
             if not any(t in ql for t in self.weather_terms):
@@ -732,7 +793,53 @@ Query: {query}
         qq = qq.strip(" \t\r\n.,;:!?")
         return qq
 
-    # === PATCH: accept router kwargs like tool_veto/reason/signals ===
+    # --- Research stack helper ---
+    async def _research_stack(self, query: str) -> List[Dict[str, Any]]:
+        q = (query or "").strip()
+        if not q:
+            return []
+
+        # 1) Agentpedia
+        if self.agentpedia:
+            try:
+                research_results = await self.agentpedia.search(q)
+                if research_results and isinstance(research_results, list):
+                    bad = 0
+                    for r in research_results:
+                        t = str((r or {}).get("title", "")).lower()
+                        if "insufficient coverage" in t or "unavailable" in t:
+                            bad += 1
+                    if bad < max(1, len(research_results)):
+                        logger.info(f"Agentpedia successful for '{q}' ({len(research_results)} results)")
+                        return self._tag(research_results, "science", True)
+            except Exception as e:
+                logger.warning(f"Agentpedia failed for '{q}': {e}")
+
+        # 2) SearXNG (local metasearch)
+        try:
+            async with httpx.AsyncClient(timeout=12.0) as client:
+                searx = await search_searxng(
+                    client,
+                    q,
+                    max_results=8,
+                    category="science",  # PATCH: use science category for research
+                    source_name="searxng_research",
+                    domain="science",
+                )
+                if searx and isinstance(searx, list):
+                    logger.info(f"SearXNG research results: {len(searx)} for '{q}'")
+                    return self._tag(searx, "science", True)
+        except Exception as e:
+            logger.warning(f"SearXNG research failed for '{q}': {e}")
+
+        # 3) DDG web fallback (still tagged science because intent)
+        try:
+            res = await self.search_web(q, retries=2, backoff_factor=0.5)
+            return self._tag(res, "science", False)
+        except Exception:
+            return []
+
+    # === accept router kwargs like tool_veto/reason/signals ===
     async def search(
         self,
         query: str,
@@ -743,8 +850,8 @@ Query: {query}
         # Router/orchestrator may pass these. We tolerate them.
         tool_veto = bool(kwargs.get("tool_veto", False))
         veto_reason = (kwargs.get("reason") or kwargs.get("veto_reason") or "").strip()
-        # signals currently unused, but we accept it.
-        _signals = kwargs.get("signals", None)
+        signals = kwargs.get("signals", None) or {}
+        intent_hint = str(signals.get("intent") or "").strip().lower()
 
         if tool_veto:
             logger.info(f"Websearch vetoed by router: {veto_reason}")
@@ -773,6 +880,52 @@ Query: {query}
                 "volatile": False,
             }]
 
+        # --- Router intent hints: bypass classifier and heuristics (PATCH) ---
+        # If the router already decided the intent, trust it and avoid re-classifying.
+        if intent_hint in {"news", "weather", "science", "stock/commodity", "crypto", "forex"}:
+            try:
+                if intent_hint == "news":
+                    res = await self.news_handler.search_news(query, retries, backoff_factor)
+                    return self._tag(res, "news", True)
+
+                if intent_hint == "weather":
+                    res = await self.weather_handler.search_weather(query, retries, backoff_factor)
+                    return self._tag(res, "weather", True)
+
+                if intent_hint == "science":
+                    res = await self._research_stack(query)
+                    if res:
+                        return res
+                    # fall through if research stack fails
+
+                if intent_hint == "stock/commodity":
+                    res = await self.finance_handler.search_stocks_commodities(query)
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "stock/commodity", True)
+
+                if intent_hint == "crypto":
+                    res = await self.finance_handler.search_crypto_yfinance(query)
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "crypto", True)
+
+                if intent_hint == "forex":
+                    res = await self.finance_handler.search_forex_yfinance(query_lower)
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "forex", True)
+
+            except Exception as e:
+                logger.error(
+                    f"Router intent routing failed for '{query}' ({intent_hint}): {e}\n{traceback.format_exc()}"
+                )
+                # fall through to normal routing
+
+        # --- Conversion shortcut stays first ---
         parsed = parse_conversion_request(query)
         if parsed is not None:
             try:
@@ -796,64 +949,124 @@ Query: {query}
             except Exception as e:
                 logger.error(f"Conversion failed for '{query}': {e}", exc_info=True)
 
+        # --- Research intent: forced early path ---
+        looks_research = self._is_research_query(query_lower)
+        if intent_hint in {"research", "science"} or looks_research:
+            logger.info(f"Research intent detected (hint={intent_hint!r}, looks_research={looks_research}) for '{query}'")
+            res = await self._research_stack(query)
+            if res:
+                return res
+            # If research stack fails, we continue to general web below.
+
+        # --- Forced intent heuristics (safe) ---
         forced = self._force_intent_from_terms(query_lower)
         if forced:
             try:
-                if forced == "stock/commodity":
+                if forced == "science":
+                    res = await self._research_stack(query)
+                    if res:
+                        return res
+
+                elif forced == "stock/commodity":
                     res = await self.finance_handler.search_stocks_commodities(query_lower)
-                    return self._tag(res, "stock/commodity", True)
-                if forced == "crypto":
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "stock/commodity", True)
+
+                elif forced == "crypto":
                     res = await self.finance_handler.search_crypto_yfinance(query)
-                    return self._tag(res, "crypto", True)
-                if forced == "forex":
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "crypto", True)
+
+                elif forced == "forex":
                     res = await self.finance_handler.search_forex_yfinance(query_lower)
-                    return self._tag(res, "forex", True)
-                if forced == "weather":
+                    if self._maybe_log_deroute(res, query=query):
+                        res = []
+                    if res:
+                        return self._tag(res, "forex", True)
+
+                elif forced == "weather":
                     res = await self.weather_handler.search_weather(query, retries, backoff_factor)
-                    return self._tag(res, "weather", True)
-                if forced == "news":
+                    if res:
+                        return self._tag(res, "weather", True)
+
+                elif forced == "news":
                     res = await self.news_handler.search_news(query, retries, backoff_factor)
-                    return self._tag(res, "news", True)
+                    if res:
+                        return self._tag(res, "news", True)
+
             except Exception as e:
                 logger.error(f"Forced routing failed for '{query}' ({forced}): {e}\n{traceback.format_exc()}")
 
-        # Research/science path (Agentpedia) - only if strong research keywords
-        if self._is_research_query(query_lower):
-            if self.agentpedia:
-                try:
-                    research_results = await self.agentpedia.search(query)
-                    if research_results and not any(
-                        "insufficient coverage" in str(r.get("title", "")).lower()
-                        or "unavailable" in str(r.get("title", "")).lower()
-                        for r in research_results
-                    ):
-                        logger.info(f"Agentpedia successful for '{query}' ({len(research_results)} results)")
-                        return self._tag(research_results, "science", True)
-                except Exception as e:
-                    logger.warning(f"Agentpedia failed for '{query}': {e}")
-
-            logger.info(f"Agentpedia unavailable or insufficient → falling back for '{query}'")
-
+        # --- LLM classification (still used), but sanity validator upgrades research to science ---
         query_type = await self._classify_query(query, retries=retries, backoff_factor=backoff_factor)
         query_type = self._sanity_validate_intent(query_type, query_lower)
 
+        # --- Main routing + deroute-aware fallback (finance only) ---
         try:
+            if query_type == "science":
+                res = await self._research_stack(query)
+                if res:
+                    return res
+                # fallthrough to general web
+
             if query_type == "stock/commodity":
                 res = await self.finance_handler.search_stocks_commodities(query)
-                return self._tag(res, "stock/commodity", True)
+                if self._maybe_log_deroute(res, query=query):
+                    res = []
+                if res:
+                    return self._tag(res, "stock/commodity", True)
+                # finance failed: try research (common misclass), then general
+                res2 = await self._research_stack(query)
+                if res2:
+                    return res2
+                res3 = await self.search_web(query, retries, backoff_factor)
+                return self._tag(res3, "general", False)
+
             if query_type == "crypto":
                 res = await self.finance_handler.search_crypto_yfinance(query)
-                return self._tag(res, "crypto", True)
+                if self._maybe_log_deroute(res, query=query):
+                    res = []
+                if res:
+                    return self._tag(res, "crypto", True)
+                res2 = await self._research_stack(query)
+                if res2:
+                    return res2
+                res3 = await self.search_web(query, retries, backoff_factor)
+                return self._tag(res3, "general", False)
+
             if query_type == "forex":
                 res = await self.finance_handler.search_forex_yfinance(query_lower)
-                return self._tag(res, "forex", True)
+                if self._maybe_log_deroute(res, query=query):
+                    res = []
+                if res:
+                    return self._tag(res, "forex", True)
+                res3 = await self.search_web(query, retries, backoff_factor)
+                return self._tag(res3, "general", False)
+
             if query_type == "weather":
                 res = await self.weather_handler.search_weather(query, retries, backoff_factor)
-                return self._tag(res, "weather", True)
+                if res:
+                    return self._tag(res, "weather", True)
+                # fallback to general web (weather provider down / parse fail)
+                res3 = await self.search_web(query, retries, backoff_factor)
+                return self._tag(res3, "general", False)
+
             if query_type == "news":
                 res = await self.news_handler.search_news(query, retries, backoff_factor)
-                return self._tag(res, "news", True)
+                if res:
+                    return self._tag(res, "news", True)
+                # fallback: research stack (searxng), then ddg web
+                res2 = await self._research_stack(query)  # uses searxng
+                if res2:
+                    return res2
+                res3 = await self.search_web(query, retries, backoff_factor)
+                return self._tag(res3, "general", False)
 
+            # default general
             res = await self.search_web(query, retries, backoff_factor)
             return self._tag(res, "general", False)
 
@@ -903,8 +1116,8 @@ Query: {query}
                             source_name="searxng_fallback",
                             domain="general"
                         )
-                        existing_urls = {r.get("url", "") for r in enriched}
-                        extra_deduped = [r for r in extra if r.get("url", "") not in existing_urls]
+                        existing_urls = {r.get("url", "") for r in enriched if isinstance(r, dict)}
+                        extra_deduped = [r for r in extra if isinstance(r, dict) and r.get("url", "") not in existing_urls]
                         enriched.extend(extra_deduped)
                         logger.info(f"SearXNG fallback added {len(extra_deduped)} new results")
 
@@ -934,12 +1147,22 @@ Query: {query}
             category = (r.get("category") or "").strip()
             volatile = bool(r.get("volatile", False))
 
+            # Include deroute fields if present (for debugging)
+            deroute = bool(r.get("deroute", False))
+            deroute_reason = (r.get("reason") or "").strip()
+            deroute_handler = (r.get("handler") or "").strip()
+
             block = (
                 f"- Title: {title}\n"
                 f"  URL: {url}\n"
                 f"  Snippet: {_safe_trim(desc, 280)}\n"
-                f"  Meta: category={category}, volatile={volatile}"
+                f"  Meta: category={category}, volatile={volatile}, deroute={deroute}"
             )
+            if deroute:
+                if deroute_handler:
+                    block += f"\n  DerouteHandler: {_safe_trim(deroute_handler, 80)}"
+                if deroute_reason:
+                    block += f"\n  DerouteReason: {_safe_trim(deroute_reason, 220)}"
             if content:
                 block += f"\n  Extracted: {_safe_trim(content, 700)}"
 
