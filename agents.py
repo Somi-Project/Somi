@@ -20,6 +20,7 @@ from config.settings import (
     DEFAULT_TEMP,
     VISION_MODEL,
     SYSTEM_TIMEZONE,
+    USE_MEMORY2,
     USE_MEMORY3,
     CONTEXT_PROFILE,
     CHAT_CONTEXT_PROFILE,
@@ -142,7 +143,12 @@ class Agent:
         self.promptforge = PromptForge(workspace=".")
 
         self.use_memory3 = bool(USE_MEMORY3)
-        self.memory = Memory3Manager(ollama_client=self.ollama_client, session_id=self.user_id, time_handler=self.time_handler, user_id=self.user_id)
+        self.memory = Memory3Manager(
+            ollama_client=self.ollama_client,
+            session_id=self.user_id,
+            time_handler=self.time_handler,
+            user_id=self.user_id,
+        )
 
         self.turn_counter = 0
         self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
@@ -822,7 +828,14 @@ class Agent:
 
         if should_search:
             try:
-                results = await self.websearch.search(prompt, tool_veto=decision.tool_veto, route_hint="websearch")
+                # === PATCH: forward router metadata (reason/signals) into WebSearchHandler ===
+                results = await self.websearch.search(
+                    prompt,
+                    tool_veto=decision.tool_veto,
+                    reason=decision.reason,
+                    signals=decision.signals,
+                    route_hint=decision.route,
+                )
                 volatile_search, volatile_category = self._is_volatile_results(results)
                 formatted = self.websearch.format_results(results)
                 if formatted and "Error" not in formatted:
