@@ -218,7 +218,6 @@ class Memory3Manager:
         iid = hashlib.sha256(f"{entity}:{key}:{value}:{utcnow_iso()}".encode("utf-8")).hexdigest()
         item = {
             "id": iid,
-            "ts": utcnow_iso(),
             "user_id": uid,
             "lane": lane,
             "type": "fact",
@@ -229,13 +228,10 @@ class Memory3Manager:
             "bucket": bucket,
             "importance": importance,
             "replaced_by": None,
-            "content": f"{key}: {value}",
             "tags": f"{lane} {kind} {key}",
             "confidence": conf,
             "status": "active",
             "expires_at": expires_at,
-            "supersedes": supersedes,
-            "last_used": None,
             "scope": scope,
             "mem_type": "preference" if kind == "preference" else "fact",
             "text": f"{key}: {value}",
@@ -248,7 +244,7 @@ class Memory3Manager:
             "last_used_at": None,
             "slot_key": slot_key,
         }
-        emb = await self._embed_safe(item["content"])
+        emb = await self._embed_safe(item["text"])
         self.store.write_item(item, embedding=emb)
         self.store.log_event(uid, "upsert", iid, {"scope": scope, "slot_key": slot_key, "key": key})
         if supersedes:
@@ -267,10 +263,9 @@ class Memory3Manager:
         steps = [str(x).strip()[:90] for x in (skill.get("steps", []) or []) if str(x).strip()][:8]
         tags = [to_snake(str(x))[:32] for x in (skill.get("tags", []) or []) if str(x).strip()][:10]
         iid = hashlib.sha256(f"skill:{trig}:{utcnow_iso()}".encode("utf-8")).hexdigest()
-        content = f"{trig} | " + " ; ".join(steps)
+        text = (f"{trig} | " + " ; ".join(steps)).strip()[:2000]
         item = {
             "id": iid,
-            "ts": utcnow_iso(),
             "user_id": uid,
             "lane": "skills",
             "type": "skill",
@@ -281,28 +276,25 @@ class Memory3Manager:
             "bucket": "ongoing_projects",
             "importance": 0.7,
             "replaced_by": None,
-            "content": content[:2000],
+            "text": text,
             "tags": " ".join(tags),
             "confidence": max(0.0, min(1.0, float(skill.get("confidence", 0.7) or 0.7))),
             "status": "active",
             "expires_at": None,
-            "supersedes": None,
-            "last_used": None,
-            "scope": scope,
-            "mem_type": "preference" if kind == "preference" else "fact",
-            "text": f"{key}: {value}",
-            "entities_json": json.dumps({"key": key, "value": value}, ensure_ascii=False),
-            "tags_json": json.dumps([lane, kind, key], ensure_ascii=False),
-            "supersedes_id": supersedes,
+            "scope": "skills",
+            "mem_type": "skill",
+            "entities_json": json.dumps({"trigger": trig, "steps": steps}, ensure_ascii=False),
+            "tags_json": json.dumps(tags, ensure_ascii=False),
+            "supersedes_id": None,
             "contradicts_id": None,
             "created_at": utcnow_iso(),
             "updated_at": utcnow_iso(),
             "last_used_at": None,
-            "slot_key": slot_key,
+            "slot_key": None,
         }
-        emb = await self._embed_safe(item["content"])
+        emb = await self._embed_safe(item["text"])
         self.store.write_item(item, embedding=emb)
-        self.store.log_event(uid, "upsert", iid, {"scope": scope, "slot_key": slot_key, "key": key})
+        self.store.log_event(uid, "upsert", iid, {"scope": "skills", "key": "skill"})
         return item
 
     async def ingest_turn(self, user_text: str, assistant_text: str = "", tool_summaries: Optional[List[str]] = None, session_id: Optional[str] = None):
@@ -358,7 +350,7 @@ class Memory3Manager:
         row = self.store.latest_session_summary(uid)
         if not row:
             return ""
-        txt = str(row.get("text") or row.get("content") or "").strip()
+        txt = str(row.get("text") or "").strip()
         if not txt:
             return ""
         return "[Session Summary]\n- " + trim_summary_text(txt)
@@ -407,7 +399,6 @@ class Memory3Manager:
         sid = hashlib.sha256(f"summary:{uid}:{utcnow_iso()}".encode("utf-8")).hexdigest()
         item = {
             "id": sid,
-            "ts": utcnow_iso(),
             "user_id": uid,
             "lane": "facts",
             "type": "summary",
@@ -418,13 +409,10 @@ class Memory3Manager:
             "bucket": "ongoing_projects",
             "importance": 0.66,
             "replaced_by": None,
-            "content": f"session_summary: {summary_text}",
             "tags": "summary session recap",
             "confidence": 0.62,
             "status": "active",
             "expires_at": None,
-            "supersedes": str(cur.get("id")) if cur else None,
-            "last_used": None,
             "scope": "session_summary",
             "mem_type": "summary",
             "text": summary_text,
@@ -437,7 +425,7 @@ class Memory3Manager:
             "last_used_at": None,
             "slot_key": "session.summary",
         }
-        emb = await self._embed_safe(item["content"])
+        emb = await self._embed_safe(item["text"])
         self.store.write_item(item, embedding=emb)
         self.store.log_event(uid, "upsert", sid, {"scope": "session_summary", "mem_type": "summary"})
         self._last_summary_turn[uid] = turn_counter
@@ -470,7 +458,7 @@ class Memory3Manager:
         profile_rows = self.store.latest_by_scope(uid, "profile", limit=4)
         pref_rows = self.store.latest_by_scope(uid, "preferences", limit=5)
         summary = self.store.latest_session_summary(uid)
-        summary_text = str((summary or {}).get("text") or (summary or {}).get("content") or "")
+        summary_text = str((summary or {}).get("text") or "")
 
         block = build_injection_payload(profile_rows=profile_rows, pref_rows=pref_rows, session_summary=summary_text, relevant_items=filtered)
         self._debug(

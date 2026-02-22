@@ -49,12 +49,12 @@ def rerank_items(items: List[Dict], query: str) -> List[Dict]:
     now = datetime.now(timezone.utc)
 
     def score(it: Dict) -> float:
-        txt = f"{it.get('text','')} {it.get('content','')} {it.get('tags','')}".lower()
+        txt = f"{it.get('text','')} {it.get('tags','')}".lower()
         overlap = sum(1 for t in q_tokens if t in txt)
         rel = overlap / max(1, len(q_tokens)) if q_tokens else 0.4
 
         recency = 0.3
-        ts_raw = str(it.get("updated_at") or it.get("created_at") or it.get("ts") or "")
+        ts_raw = str(it.get("updated_at") or it.get("created_at") or "")
         try:
             ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
             if ts.tzinfo is None:

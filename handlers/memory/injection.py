@@ -49,7 +49,7 @@ def build_session_summary_block(summary_text: str) -> str:
 def build_relevant_block(items: List[Dict]) -> str:
     lines = []
     for it in items:
-        text = str(it.get("text") or it.get("content") or "").strip()
+        text = str(it.get("text") or "").strip()
         if not text:
             continue
         lines.append(f"- {text[:180]}")

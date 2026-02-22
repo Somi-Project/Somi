@@ -6,7 +6,7 @@ import os
 import sqlite3
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from config.settings import (
     EMBEDDING_DIM,
@@ -59,37 +59,93 @@ class SQLiteMemoryStore:
         except Exception:
             return False
 
+    def _table_columns(self, conn: sqlite3.Connection, table: str) -> Set[str]:
+        try:
+            rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+        except Exception:
+            return set()
+        return {str(r[1]) for r in rows}
+
+    def _migrate_memory_items_if_needed(self, conn: sqlite3.Connection) -> None:
+        cols = self._table_columns(conn, "memory_items")
+        if not cols:
+            return
+
+        required = {
+            "id", "created_at", "updated_at", "user_id", "lane", "type", "entity", "mkey", "value", "kind",
+            "bucket", "importance", "replaced_by", "text", "tags", "confidence", "status", "expires_at",
+            "scope", "mem_type", "entities_json", "tags_json", "supersedes_id", "contradicts_id", "last_used_at", "slot_key",
+        }
+        if required.issubset(cols):
+            return
+
+        def c(name: str, fallback: str = "NULL") -> str:
+            return name if name in cols else fallback
+
+        conn.execute("ALTER TABLE memory_items RENAME TO memory_items_legacy")
+        conn.executescript(SCHEMA_SQL)
+
+        insert_sql = f"""
+            INSERT INTO memory_items(
+                id, created_at, updated_at, user_id, lane, type, entity, mkey, value, kind,
+                bucket, importance, replaced_by, text, tags, confidence, status, expires_at,
+                scope, mem_type, entities_json, tags_json, supersedes_id, contradicts_id, last_used_at, slot_key
+            )
+            SELECT
+                {c('id')},
+                COALESCE({c('created_at')}, {c('ts')}, '{utcnow_iso()}'),
+                COALESCE({c('updated_at')}, {c('created_at')}, {c('ts')}, '{utcnow_iso()}'),
+                COALESCE(NULLIF({c('user_id', "''")}, ''), 'default_user'),
+                COALESCE({c('lane', "'facts'")}, 'facts'),
+                COALESCE({c('type', "'fact'")}, 'fact'),
+                {c('entity')},
+                {c('mkey')},
+                {c('value')},
+                COALESCE({c('kind', "'preference'")}, 'preference'),
+                COALESCE({c('bucket', "'general'")}, 'general'),
+                COALESCE({c('importance', '0.5')}, 0.5),
+                {c('replaced_by')},
+                COALESCE(NULLIF({c('text', "''")}, ''), {c('content', "''")}, {c('value', "''")}, ''),
+                {c('tags')},
+                COALESCE({c('confidence', '0.7')}, 0.7),
+                COALESCE({c('status', "'active'")}, 'active'),
+                {c('expires_at')},
+                COALESCE(NULLIF({c('scope', "''")}, ''), 'conversation'),
+                COALESCE(NULLIF({c('mem_type', "''")}, ''), {c('type', "'note'")}, 'note'),
+                {c('entities_json')},
+                {c('tags_json')},
+                COALESCE({c('supersedes_id')}, {c('supersedes')}),
+                {c('contradicts_id')},
+                COALESCE({c('last_used_at')}, {c('last_used')}),
+                {c('slot_key')}
+            FROM memory_items_legacy
+        """
+        conn.execute(insert_sql)
+        conn.execute("DROP TABLE memory_items_legacy")
+
+    def _ensure_fts_schema(self, conn: sqlite3.Connection) -> None:
+        fts_cols = self._table_columns(conn, "memory_fts")
+        if fts_cols and "text" not in fts_cols:
+            conn.execute("DROP TABLE memory_fts")
+            conn.execute("CREATE VIRTUAL TABLE memory_fts USING fts5(text, tags, mkey, item_id UNINDEXED)")
+
+        conn.execute("DELETE FROM memory_fts")
+        conn.execute(
+            "INSERT INTO memory_fts(text, tags, mkey, item_id) SELECT COALESCE(text,''), COALESCE(tags,''), COALESCE(mkey,''), id FROM memory_items"
+        )
+
     def _init_db(self) -> None:
         with self._connect() as conn:
+            existing_cols = self._table_columns(conn, "memory_items")
+            if existing_cols:
+                self._migrate_memory_items_if_needed(conn)
             conn.executescript(SCHEMA_SQL)
-            cols = {str(r[1]) for r in conn.execute("PRAGMA table_info(memory_items)").fetchall()}
-            needed = {
-                "user_id": "TEXT",
-                "bucket": "TEXT DEFAULT 'general'",
-                "importance": "REAL DEFAULT 0.5",
-                "replaced_by": "TEXT",
-                "scope": "TEXT DEFAULT 'conversation'",
-                "mem_type": "TEXT DEFAULT 'note'",
-                "text": "TEXT DEFAULT ''",
-                "entities_json": "TEXT",
-                "tags_json": "TEXT",
-                "supersedes_id": "TEXT",
-                "contradicts_id": "TEXT",
-                "created_at": "TEXT",
-                "updated_at": "TEXT",
-                "last_used_at": "TEXT",
-                "slot_key": "TEXT",
-            }
-            for c, ddl in needed.items():
-                if c not in cols:
-                    conn.execute(f"ALTER TABLE memory_items ADD COLUMN {c} {ddl}")
+            self._ensure_fts_schema(conn)
             conn.execute("UPDATE memory_items SET user_id='default_user' WHERE user_id IS NULL OR user_id=''")
             conn.execute("UPDATE memory_items SET scope=COALESCE(NULLIF(scope,''),'conversation')")
             conn.execute("UPDATE memory_items SET mem_type=COALESCE(NULLIF(mem_type,''),'note')")
-            conn.execute("UPDATE memory_items SET text=COALESCE(NULLIF(text,''),content)")
-            conn.execute("UPDATE memory_items SET created_at=COALESCE(created_at, ts)")
-            conn.execute("UPDATE memory_items SET updated_at=COALESCE(updated_at, ts)")
-            conn.execute("UPDATE memory_items SET last_used_at=COALESCE(last_used_at, last_used)")
+            conn.execute("UPDATE memory_items SET text=COALESCE(NULLIF(text,''),value)")
+            conn.execute("UPDATE memory_items SET updated_at=COALESCE(updated_at, created_at)")
 
             self.vec_enabled = self._try_load_vec(conn)
             if self.vec_enabled:
@@ -104,11 +160,11 @@ class SQLiteMemoryStore:
             if MEMORY_DEBUG:
                 logger.info("memory3 init vec_enabled=%s", self.vec_enabled)
 
-    def _upsert_fts(self, conn: sqlite3.Connection, item_id: str, content: str, tags: str, mkey: str) -> None:
+    def _upsert_fts(self, conn: sqlite3.Connection, item_id: str, text: str, tags: str, mkey: str) -> None:
         conn.execute("DELETE FROM memory_fts WHERE item_id=?", (item_id,))
         conn.execute(
-            "INSERT INTO memory_fts(content, tags, mkey, item_id) VALUES (?, ?, ?, ?)",
-            (content or "", tags or "", mkey or "", item_id),
+            "INSERT INTO memory_fts(text, tags, mkey, item_id) VALUES (?, ?, ?, ?)",
+            (text or "", tags or "", mkey or "", item_id),
         )
 
     def _upsert_vec(self, conn: sqlite3.Connection, item_id: str, vec: Optional[List[float]]) -> None:
@@ -123,9 +179,13 @@ class SQLiteMemoryStore:
     def write_item(self, item: Dict[str, Any], embedding: Optional[List[float]] = None) -> None:
         now_iso = utcnow_iso()
         item_id = str(item.get("id") or uuid.uuid4())
+        created_at = str(item.get("created_at") or now_iso)
+        updated_at = str(item.get("updated_at") or created_at)
+        text = str(item.get("text") or item.get("value") or "")
         payload = (
             item_id,
-            item.get("ts") or now_iso,
+            created_at,
+            updated_at,
             item.get("user_id", "default_user"),
             item.get("lane", "facts"),
             item.get("type", "fact"),
@@ -136,38 +196,33 @@ class SQLiteMemoryStore:
             item.get("bucket", "general"),
             float(item.get("importance", 0.5) or 0.5),
             item.get("replaced_by"),
-            item.get("content", item.get("text", "")),
+            text,
             item.get("tags", ""),
             float(item.get("confidence", 0.7) or 0.7),
             item.get("status", "active"),
             item.get("expires_at"),
-            item.get("supersedes"),
-            item.get("last_used"),
             item.get("scope", "conversation"),
             item.get("mem_type", item.get("type", "note")),
-            item.get("text", item.get("content", "")),
             item.get("entities_json"),
             item.get("tags_json"),
-            item.get("supersedes_id", item.get("supersedes")),
+            item.get("supersedes_id"),
             item.get("contradicts_id"),
-            item.get("created_at", item.get("ts") or now_iso),
-            item.get("updated_at", item.get("ts") or now_iso),
-            item.get("last_used_at", item.get("last_used")),
+            item.get("last_used_at"),
             item.get("slot_key"),
         )
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO memory_items(
-                    id, ts, user_id, lane, type, entity, mkey, value, kind, bucket, importance, replaced_by,
-                    content, tags, confidence, status, expires_at, supersedes, last_used,
-                    scope, mem_type, text, entities_json, tags_json, supersedes_id, contradicts_id,
-                    created_at, updated_at, last_used_at, slot_key
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    id, created_at, updated_at, user_id, lane, type, entity, mkey, value, kind,
+                    bucket, importance, replaced_by, text, tags, confidence, status, expires_at,
+                    scope, mem_type, entities_json, tags_json, supersedes_id, contradicts_id,
+                    last_used_at, slot_key
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 payload,
             )
-            self._upsert_fts(conn, item_id, str(item.get("content", item.get("text", ""))), str(item.get("tags", "")), str(item.get("mkey", "")))
+            self._upsert_fts(conn, item_id, text, str(item.get("tags", "")), str(item.get("mkey", "")))
             self._upsert_vec(conn, item_id, embedding)
 
     def log_event(self, user_id: str, event_type: str, memory_id: Optional[str], payload: Optional[Dict[str, Any]] = None) -> None:
@@ -188,7 +243,7 @@ class SQLiteMemoryStore:
     def active_fact(self, user_id: str, entity: str, mkey: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memory_items WHERE user_id=? AND type='fact' AND entity=? AND mkey=? AND status='active' ORDER BY ts DESC LIMIT 1",
+                "SELECT * FROM memory_items WHERE user_id=? AND type='fact' AND entity=? AND mkey=? AND status='active' ORDER BY created_at DESC LIMIT 1",
                 (user_id, entity, mkey),
             ).fetchone()
         return dict(row) if row else None
@@ -198,7 +253,7 @@ class SQLiteMemoryStore:
             return None
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memory_items WHERE user_id=? AND slot_key=? AND status='active' ORDER BY ts DESC LIMIT 1",
+                "SELECT * FROM memory_items WHERE user_id=? AND slot_key=? AND status='active' ORDER BY created_at DESC LIMIT 1",
                 (user_id, slot_key),
             ).fetchone()
         return dict(row) if row else None
@@ -222,7 +277,7 @@ class SQLiteMemoryStore:
     def pinned_items(self, user_id: str, limit: int = 32) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM memory_items WHERE user_id=? AND lane='pinned' AND status='active' ORDER BY ts DESC LIMIT ?",
+                "SELECT * FROM memory_items WHERE user_id=? AND lane='pinned' AND status='active' ORDER BY created_at DESC LIMIT ?",
                 (user_id, int(limit)),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -230,7 +285,7 @@ class SQLiteMemoryStore:
     def latest_by_scope(self, user_id: str, scope: str, limit: int = 8) -> List[Dict[str, Any]]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT * FROM memory_items WHERE user_id=? AND scope=? AND status='active' ORDER BY ts DESC LIMIT ?",
+                "SELECT * FROM memory_items WHERE user_id=? AND scope=? AND status='active' ORDER BY created_at DESC LIMIT ?",
                 (user_id, scope, int(limit)),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -238,7 +293,7 @@ class SQLiteMemoryStore:
     def latest_session_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT * FROM memory_items WHERE user_id=? AND mem_type='summary' AND status='active' ORDER BY ts DESC LIMIT 1",
+                "SELECT * FROM memory_items WHERE user_id=? AND mem_type='summary' AND status='active' ORDER BY created_at DESC LIMIT 1",
                 (user_id,),
             ).fetchone()
         return dict(row) if row else None
@@ -297,7 +352,7 @@ class SQLiteMemoryStore:
         qmarks = ",".join(["?"] * len(ids))
         with self._connect() as conn:
             rows = conn.execute(
-                f"SELECT * FROM memory_items WHERE user_id=? AND id IN ({qmarks}) AND status='active' ORDER BY ts DESC",
+                f"SELECT * FROM memory_items WHERE user_id=? AND id IN ({qmarks}) AND status='active' ORDER BY created_at DESC",
                 [user_id] + ids,
             ).fetchall()
         return [dict(r) for r in rows]
@@ -371,6 +426,6 @@ class SQLiteMemoryStore:
             conf = float(row[0] or 0.0)
             conf = min(float(cap), max(0.0, conf + float(delta)))
             conn.execute(
-                "UPDATE memory_items SET confidence=?, last_used=?, last_used_at=?, updated_at=? WHERE id=?",
-                (conf, utcnow_iso(), utcnow_iso(), utcnow_iso(), item_id),
+                "UPDATE memory_items SET confidence=?, last_used_at=?, updated_at=? WHERE id=?",
+                (conf, utcnow_iso(), utcnow_iso(), item_id),
             )

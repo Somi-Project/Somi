@@ -5,7 +5,8 @@ PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS memory_items (
     id TEXT PRIMARY KEY,
-    ts TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    updated_at TEXT,
     user_id TEXT NOT NULL,
     lane TEXT NOT NULL,
     type TEXT NOT NULL,
@@ -16,22 +17,17 @@ CREATE TABLE IF NOT EXISTS memory_items (
     bucket TEXT DEFAULT 'general',
     importance REAL DEFAULT 0.5,
     replaced_by TEXT,
-    content TEXT NOT NULL,
+    text TEXT NOT NULL,
     tags TEXT,
     confidence REAL NOT NULL,
     status TEXT NOT NULL,
     expires_at TEXT,
-    supersedes TEXT,
-    last_used TEXT,
     scope TEXT DEFAULT 'conversation',
     mem_type TEXT DEFAULT 'note',
-    text TEXT DEFAULT '',
     entities_json TEXT,
     tags_json TEXT,
     supersedes_id TEXT,
     contradicts_id TEXT,
-    created_at TEXT,
-    updated_at TEXT,
     last_used_at TEXT,
     slot_key TEXT
 );
@@ -42,7 +38,7 @@ CREATE INDEX IF NOT EXISTS idx_memory_expires ON memory_items(expires_at);
 CREATE INDEX IF NOT EXISTS idx_memory_user_scope_status ON memory_items(user_id, scope, status);
 CREATE INDEX IF NOT EXISTS idx_memory_user_slot_status ON memory_items(user_id, slot_key, status);
 
-CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(content, tags, mkey, item_id UNINDEXED);
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(text, tags, mkey, item_id UNINDEXED);
 
 CREATE TABLE IF NOT EXISTS memory_events (
     id TEXT PRIMARY KEY,
