@@ -3,6 +3,7 @@ DEFAULT_MODEL = "qwen3:8b"
 MEMORY_MODEL = "phi3:3.8b"
 
 MEMORY_STORE_DIR = "memory_store"
+SEARXNG_BASE_URL = "http://localhost:8080"
 
 USE_MEMORY3 = True
 MEMORY_DB_PATH = "memory_store/memory.db"
