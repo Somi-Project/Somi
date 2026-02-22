@@ -20,7 +20,6 @@ from config.settings import (
     DEFAULT_TEMP,
     VISION_MODEL,
     SYSTEM_TIMEZONE,
-    USE_MEMORY2,
     USE_MEMORY3,
     CONTEXT_PROFILE,
     CHAT_CONTEXT_PROFILE,
@@ -31,6 +30,8 @@ from config.settings import (
     BUDGET_SEARCH_TOKENS,
     BUDGET_HISTORY_TOKENS,
     BUDGET_OUTPUT_RESERVE_TOKENS,
+    PROMPT_ENTERPRISE_ENABLED,
+    PROMPT_FORCE_LEGACY,
 )
 
 from rag import RAGHandler
@@ -909,22 +910,6 @@ class Agent:
             )
             extra_blocks.append(evidence_rules)
 
-        system_prompt = self.promptforge.build_system_prompt(
-            identity_block=identity_block,
-            current_time=current_time,
-            memory_context=memory_context,
-            search_context=search_context,
-            mode_context=mode_context,
-            extra_blocks=extra_blocks if extra_blocks else None,
-        )
-
-        system_prompt += (
-            "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): "
-            "please use the finance/conversion tools or search for current rates — old numbers from training are usually wrong."
-        )
-
-        max_tokens = self._token_budget(prompt, system_prompt, base_max_tokens)
-
         hist = self._get_history_list(active_user_id)
         history_keep = int(HISTORY_MAX_MESSAGES or 10)
         history_msgs = hist[-history_keep:] if hist else []
@@ -939,9 +924,31 @@ class Agent:
             total_hist_chars += len(c)
         history_msgs = list(reversed(trimmed_history))
 
+        history_for_system = history_msgs if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else None
+
+        system_prompt = self.promptforge.build_system_prompt(
+            identity_block=identity_block,
+            current_time=current_time,
+            memory_context=memory_context,
+            search_context=search_context,
+            mode_context=mode_context,
+            extra_blocks=extra_blocks if extra_blocks else None,
+            history=history_for_system,
+            mode="EXECUTE",
+            privilege="SAFE",
+        )
+
+        system_prompt += (
+            "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): "
+            "please use the finance/conversion tools or search for current rates — old numbers from training are usually wrong."
+        )
+
+
+        max_tokens = self._token_budget(prompt, system_prompt, base_max_tokens)
+
         messages = self.promptforge.build_messages(
             system_prompt=system_prompt,
-            history=history_msgs,
+            history=[] if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else history_msgs,
             user_prompt=prompt,
         )
 
