@@ -20,7 +20,6 @@ from config.settings import (
     DEFAULT_TEMP,
     VISION_MODEL,
     SYSTEM_TIMEZONE,
-    USE_MEMORY2,
     USE_MEMORY3,
     CONTEXT_PROFILE,
     CHAT_CONTEXT_PROFILE,
