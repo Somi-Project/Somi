@@ -22,6 +22,44 @@ class FinanceHandler:
     def __init__(self):
         self.timezone = pytz.timezone(SYSTEM_TIMEZONE)
 
+        # -----------------------------
+        # De-route guardrails
+        # -----------------------------
+        # Strong research / academic markers
+        self._non_finance_strong = {
+            "pmid", "doi", "arxiv", "nct",
+            "systematic review", "meta-analysis", "meta analysis",
+            "randomized", "randomised", "rct", "trial", "cochrane",
+            "guideline", "guidelines", "consensus",
+            "pubmed", "europepmc", "crossref",
+            "site:",  # site:edu style queries should not become ticker "SITE"
+        }
+
+        # High-signal finance cues (keep small and explicit)
+        self._finance_cues = {
+            "price", "quote", "ticker", "stock", "stocks", "share", "shares",
+            "market cap", "marketcap", "dividend", "earnings", "yield",
+            "fx", "forex", "exchange rate", "convert", "conversion",
+            "crypto", "bitcoin", "btc", "ethereum", "eth", "sol", "solana", "usdt",
+            "gold", "oil", "brent", "wti", "nasdaq", "dow", "s&p", "sp500", "dxy",
+        }
+
+        # Common false-positive "tickers" from NLP/search queries
+        # (expand aggressively; these are frequent English tokens and medical acronyms)
+        self._false_ticker_words = {
+            "WHO", "WHEN", "WHAT", "WHERE", "WHY", "HOW",
+            "SITE", "EDU", "ORG", "COM",
+            "AND", "OR", "NOT", "THE", "A", "AN", "TO", "IN", "ON", "OF", "FOR",
+            "THIS", "THAT", "THESE", "THOSE",
+            "NEWS", "LATEST", "TODAY", "UPDATE",
+            "GUIDE", "GUIDELINE", "GUIDELINES", "TRIAL", "RCT", "PMID", "DOI", "ARXIV", "NCT",
+            # medical frequent tokens that should never be treated as tickers without explicit finance cues
+            "BP", "DM", "HTN", "COPD", "CHF", "CAP", "PID", "MI", "CV", "CVA",
+        }
+
+        # Optional: if you still see random 3-letter codes being treated as tickers,
+        # you can add more stopwords here.
+
     def get_system_time(self):
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
 
@@ -52,26 +90,46 @@ class FinanceHandler:
 
         return q
 
+    def _has_finance_cues(self, q: str) -> bool:
+        ql = (q or "").lower()
+        return any(cue in ql for cue in self._finance_cues)
+
     def _extract_explicit_ticker(self, q: str) -> str | None:
         """
         Prefer explicit tickers typed by user:
         - AAPL, TSLA, BRK-B, BTCUSDT, EURUSD=X, ^GSPC, GC=F, DX-Y.NYB
+        IMPORTANT:
+          - Plain uppercase tokens (AAPL) are ONLY treated as explicit if finance cues exist.
+          - Syntax-heavy tickers (^, =X, =F, USDT, -, ., digits) are always accepted.
         """
         s = (q or "").strip()
+        if not s:
+            return None
 
-        patterns = [
-            r"\b\^[A-Z]{1,6}\b",                       # ^GSPC
-            r"\b[A-Z]{1,8}=X\b",                       # EURUSD=X
-            r"\b[A-Z]{1,6}=F\b",                       # GC=F
-            r"\b[A-Z0-9]{5,12}USDT\b",                 # BTCUSDT
-            r"\bDX-Y\.NYB\b",                          # DXY ticker
-            r"\b000001\.SS\b",                         # Shanghai composite style
-            r"\b[A-Z]{1,6}(?:[-.][A-Z]{1,4})?\b",       # AAPL, BRK-B (keep last so others win first)
+        # Syntax-heavy patterns (accept always)
+        patterns_strong = [
+            r"\b\^[A-Z]{1,6}\b",                 # ^GSPC
+            r"\b[A-Z]{1,8}=X\b",                 # EURUSD=X
+            r"\b[A-Z]{1,6}=F\b",                 # GC=F
+            r"\b[A-Z0-9]{2,12}USDT\b",           # BTCUSDT, ETHUSDT, etc.
+            r"\bDX-Y\.NYB\b",                    # DXY ticker
+            r"\b\d{6}\.SS\b",                    # 000001.SS
+            r"\b[A-Z]{1,6}[-.][A-Z0-9]{1,6}\b",  # BRK-B, RDS.A, etc.
         ]
-        for pat in patterns:
+        for pat in patterns_strong:
             m = re.search(pat, s)
             if m:
                 return m.group(0)
+
+        # Plain uppercase words (accept ONLY if finance cues exist)
+        if self._has_finance_cues(s):
+            m = re.search(r"\b[A-Z]{1,6}\b", s)
+            if m:
+                t = m.group(0).upper()
+                if t in self._false_ticker_words:
+                    return None
+                return t
+
         return None
 
     def _candidate_queries(self, query: str) -> list[str]:
@@ -83,21 +141,18 @@ class FinanceHandler:
 
         candidates = [raw, norm]
 
-        # stripped variants (sometimes the dictionaries are strict)
         stripped = norm
         stripped = stripped.replace("price", "").replace("rate", "").replace("exchange", "")
         stripped = stripped.replace("conversion", "").replace("value", "").strip()
         if stripped and stripped not in candidates:
             candidates.append(stripped)
 
-        # Try extracting "xxx/yyy" inside longer text
         m = re.search(r"\b([a-z]{3})/([a-z]{3})\b", norm)
         if m:
             pair = f"{m.group(1)}/{m.group(2)}"
             if pair not in candidates:
-                candidates.insert(0, pair)  # strongest
+                candidates.insert(0, pair)
 
-        # Remove empties / duplicates while preserving order
         out: list[str] = []
         seen = set()
         for c in candidates:
@@ -111,9 +166,6 @@ class FinanceHandler:
             out.append(c2)
         return out
 
-    # -----------------------------
-    # NEW: sentence forex pair extractor
-    # -----------------------------
     def _extract_fiat_pair(self, query: str) -> tuple[str, str] | None:
         """
         Extracts a fiat pair from messy sentences like:
@@ -123,22 +175,17 @@ class FinanceHandler:
           - 'usd/eur'
           - 'eurusd'
         Returns (BASE, QUOTE) or None.
-
-        Intentional: only supports 3-letter codes.
         """
         s = self._normalize_for_match(query)
 
-        # already normalized to xxx/yyy
         m = re.search(r"\b([a-z]{3})/([a-z]{3})\b", s)
         if m:
             return (m.group(1).upper(), m.group(2).upper())
 
-        # bare 6-letter pair
         m = re.fullmatch(r"([a-z]{3})([a-z]{3})", s)
         if m:
             return (m.group(1).upper(), m.group(2).upper())
 
-        # token scan (first two 3-letter codes)
         tokens = re.findall(r"\b[a-zA-Z]{3}\b", query)
         codes = [t.upper() for t in tokens]
         if len(codes) >= 2:
@@ -147,17 +194,72 @@ class FinanceHandler:
         return None
 
     # -----------------------------
+    # De-route logic (deterministic)
+    # -----------------------------
+    def _should_deroute_from_finance(self, query: str, *, channel: str) -> tuple[bool, str]:
+        """
+        Finance-side guardrail to stop false-positive routing.
+        Returns (True, reason) to signal caller to fall back.
+        Key rule: strong non-finance cues only force deroute when finance cues are absent.
+        """
+        q = self._clean_query(query)
+        ql = q.lower()
+
+        if not ql:
+            return True, "empty_query"
+
+        has_finance_cue = self._has_finance_cues(ql)
+
+        # Strong research/academic terms -> deroute UNLESS finance cues exist
+        if any(k in ql for k in self._non_finance_strong):
+            if not has_finance_cue:
+                return True, "strong_non_finance_keywords"
+            # finance cues exist -> allow finance to try (user may be mixing)
+            # example: "price of PMID..." is weird but user intent is finance-like.
+            # Let it proceed.
+
+        # General question patterns -> deroute if no finance cues
+        if (re.search(r"\bhow to\b", ql) or re.search(r"\bwhat is\b", ql)) and not has_finance_cue:
+            return True, "general_question_what_is_how_to"
+
+        # Explicit ticker syntax should NOT be derouted (except false ticker words)
+        explicit = self._extract_explicit_ticker(q)
+        if explicit:
+            if explicit.upper() in self._false_ticker_words and not has_finance_cue:
+                return True, "false_ticker_word"
+            return False, ""
+
+        # Shape checks
+        has_dollar = "$" in q
+        has_pair = bool(re.search(r"\b[a-z]{3}\s*(?:/|to)\s*[a-z]{3}\b", ql))
+        has_tickerish = False
+
+        # Ticker-ish uppercase tokens, but filter stopwords
+        toks = re.findall(r"\b[A-Z]{1,5}\b", q)
+        toks = [t for t in toks if t.upper() not in self._false_ticker_words]
+        if toks and has_finance_cue:
+            has_tickerish = True
+
+        # If there are no finance cues and no finance shapes, deroute.
+        if not has_finance_cue and not (has_dollar or has_pair):
+            return True, f"no_finance_signals_{channel}"
+
+        return False, ""
+
+    def _deroute_payload(self, query: str, reason: str) -> list:
+        return [{
+            "deroute": True,
+            "reason": reason,
+            "handler": "finance",
+            "title": "De-routed from finance",
+            "url": "",
+            "description": f"FinanceHandler declined this query: {reason}",
+        }]
+
+    # -----------------------------
     # Result formatting
     # -----------------------------
     def _format_crypto_result(self, crypto_response: str, query: str) -> dict:
-        """
-        Expected bcrypto response (examples):
-          - "Bitcoin (BTCUSDT): $69,310.36"
-          - "btc (BTCUSDT): $69310.36"
-        We parse robustly and return:
-          - description with the exact number
-          - price_usd numeric field (helps debugging + downstream)
-        """
         s = (crypto_response or "").strip()
 
         if not s or "Error" in s:
@@ -169,7 +271,6 @@ class FinanceHandler:
                 "source": "binance",
             }
 
-        # name (SYMBOL): $123,456.78
         m = re.search(
             r"^\s*(?P<name>.+?)\s*\((?P<symbol>[A-Z0-9]+)\)\s*:\s*\$(?P<price>[\d,]+(?:\.\d+)?)\s*$",
             s,
@@ -216,15 +317,20 @@ class FinanceHandler:
         query_lower = query.lower().strip()
         logger.info(f"Processing stock/commodity query: '{query}' at {self.get_system_time()}")
 
+        deroute, reason = self._should_deroute_from_finance(query, channel="stocks_commodities")
+        if deroute:
+            logger.info(f"De-routing stock/commodity query: reason={reason} query='{query}'")
+            return self._deroute_payload(query, reason)
+
         ticker = None
 
-        # 0) Explicit ticker wins immediately (user typed AAPL, ^GSPC, GC=F, etc.)
+        # 0) Explicit ticker wins immediately
         explicit = self._extract_explicit_ticker(query)
         if explicit:
             ticker = explicit
             logger.info(f"Using explicit ticker '{ticker}' from query '{query}'")
 
-        # 1) Stocks/ETFs via dictionary suggestions (multiple candidate strings)
+        # 1) Stocks/ETFs via dictionary suggestions
         if not ticker:
             for cand in self._candidate_queries(query):
                 ticker_list = get_stock_ticker_suggestions(cand)
@@ -232,7 +338,7 @@ class FinanceHandler:
                     ticker = ticker_list[0]
                     break
 
-        # 2) Commodities (skip futures for ETF-ish queries)
+        # 2) Commodities
         if not ticker and not any(k in query_lower for k in ["ishares", "spdr", "etf", "trust"]):
             for cand in self._candidate_queries(query):
                 ticker_list = get_commodity_ticker_suggestions(cand)
@@ -255,6 +361,11 @@ class FinanceHandler:
                 "url": "",
                 "description": "No matching stock, commodity, or index ticker found for the query.",
             }]
+
+        # Guard: obvious false token
+        if ticker.upper() in self._false_ticker_words and not self._has_finance_cues(query_lower):
+            logger.info(f"De-routing due to false ticker word '{ticker}' from query '{query}'")
+            return self._deroute_payload(query, "false_ticker_word_match")
 
         logger.info(f"Using ticker '{ticker}' for query '{query}'")
 
@@ -324,6 +435,13 @@ class FinanceHandler:
             logger.info("Memory usage disabled for crypto query")
 
         query = self._clean_query(query)
+        ql = query.lower()
+
+        deroute, reason = self._should_deroute_from_finance(query, channel="crypto")
+        # allow crypto if explicit crypto cues exist
+        if deroute and not any(k in ql for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana", "usdt")):
+            logger.info(f"De-routing crypto query: reason={reason} query='{query}'")
+            return self._deroute_payload(query, reason)
 
         for attempt in range(retries):
             try:
@@ -354,7 +472,16 @@ class FinanceHandler:
             logger.info("Memory usage disabled for forex query")
 
         query = self._clean_query(query)
+        ql = query.lower()
         logger.info(f"Processing forex query: '{query}' at {self.get_system_time()}")
+
+        deroute, reason = self._should_deroute_from_finance(query, channel="forex")
+        has_pair_shape = bool(re.search(r"\b[a-z]{3}\s*(?:/|to)\s*[a-z]{3}\b", ql)) or bool(
+            re.fullmatch(r"[a-z]{6}", self._normalize_for_match(query))
+        )
+        if deroute and not has_pair_shape and not any(k in ql for k in ("fx", "forex", "exchange rate", "convert", "conversion")):
+            logger.info(f"De-routing forex query: reason={reason} query='{query}'")
+            return self._deroute_payload(query, reason)
 
         ticker = None
 
@@ -371,7 +498,7 @@ class FinanceHandler:
                 ticker = f"{base}{quote}=X"
                 logger.info(f"Extracted fiat pair {base}/{quote} -> '{ticker}' from query '{query}'")
 
-            # 2) Your existing dictionary-based suggestion fallback
+            # 2) Dictionary-based suggestion fallback
             if not ticker:
                 for cand in self._candidate_queries(query):
                     ticker_list = get_forex_ticker_suggestions(cand)
@@ -397,7 +524,6 @@ class FinanceHandler:
                 if price == "N/A":
                     raise ValueError("No valid rate from yfinance")
 
-                # numeric rate for downstream calculation
                 rate_val = None
                 try:
                     rate_val = float(price)
