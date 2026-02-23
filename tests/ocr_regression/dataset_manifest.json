@@ -1,0 +1,7 @@
+[
+  {
+    "id": "sample_general",
+    "mode": "general",
+    "images": ["tests/ocr_regression/data/sample.png"]
+  }
+]
