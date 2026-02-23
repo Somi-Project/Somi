@@ -22,7 +22,7 @@ Before running Somi, ensure you have the following installed:
 - **Python 3.11.0+**: [Download Python](https://www.python.org/downloads/release/python-3110/)
 - **Git**: [Install Git](https://git-scm.com/downloads)
 - **Node.js** (optional, for Playwright): [Download Node.js](https://nodejs.org/) if not using pre-installed Playwright binaries.
-- **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/settings.py`. As well as Api keys
+- **Twitter Account**: Credentials (`TWITTER_USERNAME` and `TWITTER_PASSWORD`) stored in `config/twittersettings.py`. As well as Api keys
 - **Telegram Token**: Install Telegram, message @Botfather send the message "/newbot" and setup to get a Name and Bot Token
 - **Ollama**: An AI model server running locally at `http://127.0.0.1:11434` (e.g., LLaMA). [Install Ollama](https://ollama.ai/).
 

@@ -1,0 +1,8 @@
+ARTICLE_SELECTORS = ["article[data-testid='tweet']", "article"]
+TWEET_TEXT_SELECTORS = ["div[data-testid='tweetText']", "div[lang]"]
+STATUS_LINK_SELECTORS = ["a[href*='/status/']"]
+REPLY_BUTTON_SELECTORS = ["button[data-testid='reply']", "div[data-testid='reply']"]
+COMPOSER_SELECTORS = ["div[data-testid='tweetTextarea_0']", "div[role='textbox']"]
+SEND_BUTTON_SELECTORS = ["button[data-testid='tweetButton']", "button[data-testid='tweetButtonInline']"]
+POPUP_SELECTORS = ["div[role='dialog']", "div[data-testid='sheetDialog']"]
+POPUP_CLOSE_SELECTORS = ["button[aria-label='Close']", "button[data-testid='app-bar-close']"]

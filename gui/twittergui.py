@@ -14,7 +14,7 @@ from datetime import datetime
 import importlib
 from gui.themes import dialog_stylesheet
 import logging
-from config import settings
+from config import twittersettings as settings
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
@@ -330,7 +330,7 @@ def twitter_autoresponse_toggle(app):
         dialog.exec()
 
 def twitter_settings(app):
-    """Display and edit Twitter settings from config/settings.py."""
+    """Display and edit Twitter settings from config/twittersettings.py."""
     logger.info("Opening Twitter Settings dialog...")
     settings_dialog = QDialog(app)
     settings_dialog.setWindowTitle("Twitter Settings")
@@ -482,7 +482,7 @@ def twitter_settings(app):
                 return
 
             try:
-                settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "settings.py")
+                settings_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "config", "twittersettings.py")
                 with open(settings_path, "r") as f:
                     lines = f.readlines()
 
@@ -547,7 +547,7 @@ def twitter_settings(app):
                     else:
                         new_lines.append(line)
 
-                # Write the updated content back to settings.py
+                # Write the updated content back to twittersettings.py
                 with open(settings_path, "w") as f:
                     f.writelines(new_lines)
 
