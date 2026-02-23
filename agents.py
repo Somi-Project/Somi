@@ -40,6 +40,7 @@ from handlers.websearch_tools.conversion import parse_conversion_request  # pars
 from handlers.routing import decide_route
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
+from handlers.toolbox_handler import create_tool_job, dispatch_or_run
 
 from handlers.memory import Memory3Manager
 from promptforge import PromptForge
@@ -737,6 +738,20 @@ class Agent:
         # Call-level user_id override (Telegram/WhatsApp multi-chat)
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
+
+        toolbox_create = re.match(r"^create tool\s+([a-zA-Z0-9_\-]+)(?:\s*:\s*(.+))?$", prompt.strip(), flags=re.IGNORECASE)
+        if toolbox_create:
+            tool_name = toolbox_create.group(1)
+            description = toolbox_create.group(2) or "Tool created from chat intent"
+            result = create_tool_job(tool_name, description, active=False)
+            return f"Tool job queued/completed: {json.dumps(result)}"
+
+        toolbox_run = re.match(r"^run tool\s+([a-zA-Z0-9_\-]+)(?:\s+(.*))?$", prompt.strip(), flags=re.IGNORECASE)
+        if toolbox_run:
+            tool_name = toolbox_run.group(1)
+            tool_args = {"name": (toolbox_run.group(2) or "friend").strip()}
+            result = dispatch_or_run(tool_name, tool_args)
+            return f"Tool output: {json.dumps(result)}"
 
         self._ensure_async_clients_for_current_loop()
 
