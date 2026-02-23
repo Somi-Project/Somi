@@ -4,6 +4,8 @@ from handlers.twitter import TwitterHandler
 from handlers.telegram import TelegramHandler
 from config.settings import (
     DEFAULT_MODEL, DEFAULT_TEMP,
+)
+from config.twittersettings import (
     AUTO_POST_INTERVAL_MINUTES, AUTO_POST_INTERVAL_LOWER_VARIATION,
     AUTO_POST_INTERVAL_UPPER_VARIATION, AUTO_REPLY_INTERVAL_MINUTES,
     AUTO_REPLY_INTERVAL_LOWER_VARIATION, AUTO_REPLY_INTERVAL_UPPER_VARIATION
@@ -179,7 +181,7 @@ async def aireply(name, limit):
         click.echo("please enter a valid personality name")
         return
     display_name = agent_key.replace("Name: ", "")
-    handler = TwitterHandler(character_name=display_name)
+    handler = TwitterHandler(character_name=agent_key)
     await handler.reply_to_mentions(limit=limit)
     click.echo(f"Processed {limit} mentions for {display_name}.")
 
@@ -194,7 +196,7 @@ async def aiautoreply(name, limit, use_studies):
         click.echo("please enter a valid personality name")
         return
     display_name = agent_key.replace("Name: ", "")
-    handler = TwitterHandler(character_name=display_name, use_studies=use_studies)
+    handler = TwitterHandler(character_name=agent_key, use_studies=use_studies)
     try:
         await handler.initialize()
         fast_track_replies = {}

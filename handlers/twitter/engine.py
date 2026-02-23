@@ -13,11 +13,21 @@ from pathlib import Path
 import tweepy
 from playwright.async_api import async_playwright
 from config.settings import (
-    TWITTER_USERNAME, TWITTER_PASSWORD, TWITTER_API, DEFAULT_MODEL, VISION_MODEL, DEFAULT_TEMP,
+    DEFAULT_MODEL, VISION_MODEL, DEFAULT_TEMP,
+    SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL
+)
+from config.twittersettings import (
+    TWITTER_USERNAME, TWITTER_PASSWORD, TWITTER_API, TWITTER_DRY_RUN,
     AUTO_POST_INTERVAL_MINUTES, AUTO_POST_INTERVAL_LOWER_VARIATION,
     AUTO_POST_INTERVAL_UPPER_VARIATION, AUTO_REPLY_INTERVAL_MINUTES,
     AUTO_REPLY_INTERVAL_LOWER_VARIATION, AUTO_REPLY_INTERVAL_UPPER_VARIATION,
-    SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL
+    TWITTER_PROFILE, TWITTER_GROWTH
+)
+from handlers.twitter.state_store import StateStore
+from handlers.twitter.policy import should_noop
+from handlers.twitter.selectors import (
+    ARTICLE_SELECTORS, TWEET_TEXT_SELECTORS, STATUS_LINK_SELECTORS, REPLY_BUTTON_SELECTORS,
+    COMPOSER_SELECTORS, SEND_BUTTON_SELECTORS, POPUP_CLOSE_SELECTORS
 )
 from handlers.websearch import WebSearchHandler
 from handlers.time_handler import TimeHandler
@@ -105,6 +115,7 @@ class TwitterHandler:
         self.cookie_file = "twitter_cookies.json"
         self.authenticated = False
         self.repcache = self._load_repcache()
+        self.state_store = StateStore()
         self._setup_memory_storage()
         try:
             self.api_client = tweepy.Client(
@@ -566,6 +577,30 @@ Input: "{input_text}"
             await self._cleanup()
             raise
 
+    async def _is_authenticated_dom(self):
+        auth_selectors = [
+            "a[data-testid='AppTabBar_Home_Link']",
+            "a[aria-label='Home']",
+            "[data-testid='SideNav_NewTweet_Button']",
+        ]
+        for selector in auth_selectors:
+            try:
+                if await self.page.locator(selector).first.is_visible(timeout=1500):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    async def _first_visible_locator(self, selectors, timeout_ms=8000):
+        for selector in selectors:
+            try:
+                loc = self.page.locator(selector).first
+                await loc.wait_for(state="visible", timeout=timeout_ms)
+                return loc
+            except Exception:
+                continue
+        return None
+
     async def _load_cookies(self):
         max_retries = 3
         for attempt in range(max_retries):
@@ -574,9 +609,9 @@ Input: "{input_text}"
                 with open(self.cookie_file, "r") as f:
                     cookies = json.load(f)
                     await self.context.add_cookies(cookies)
-                await self.page.goto("https://x.com", timeout=60000)
+                await self.page.goto("https://x.com/home", timeout=60000)
                 await asyncio.sleep(2)
-                if "login" in self.page.url.lower():
+                if not await self._is_authenticated_dom():
                     raise Exception("Cookies invalid, login required")
                 self.authenticated = True
                 logger.info("Cookies loaded into Playwright.")
@@ -591,14 +626,48 @@ Input: "{input_text}"
     async def _login_and_save_cookies(self):
         logger.info("No valid cookies found. Logging in...")
         max_retries = 3
+        username_selectors = [
+            "input[name='text']",
+            "input[autocomplete='username']",
+            "input[autocomplete='email']",
+            "input[inputmode='text']",
+        ]
+        password_selectors = [
+            "input[name='password']",
+            "input[autocomplete='current-password']",
+            "input[type='password']",
+        ]
         for attempt in range(max_retries):
             try:
-                await self.page.goto("https://x.com/login", timeout=60000)
-                await self.page.wait_for_selector("input[name='text']", timeout=40000)
-                await self._type_slowly(self.page.locator("input[name='text']"), TWITTER_USERNAME + "\n")
-                await self.page.wait_for_selector("input[name='password']", timeout=40000)
-                await self._type_slowly(self.page.locator("input[name='password']"), TWITTER_PASSWORD + "\n")
-                await self.page.wait_for_url(lambda url: "login" not in url.lower(), timeout=15000)
+                await self.page.goto("https://x.com/i/flow/login", timeout=60000)
+                await asyncio.sleep(2)
+
+                username_input = await self._first_visible_locator(username_selectors, timeout_ms=15000)
+                if not username_input:
+                    raise Exception("Username field not found on login flow")
+                await username_input.click()
+                await self._type_slowly(username_input, TWITTER_USERNAME)
+
+                for next_name in ["Next", "Log in", "Next>"]:
+                    try:
+                        btn = self.page.get_by_role("button", name=next_name)
+                        if await btn.count() > 0:
+                            await btn.first.click(timeout=3000)
+                            break
+                    except Exception:
+                        continue
+
+                await asyncio.sleep(2)
+                password_input = await self._first_visible_locator(password_selectors, timeout_ms=20000)
+                if not password_input:
+                    raise Exception("Password field not found on login flow")
+                await password_input.click()
+                await self._type_slowly(password_input, TWITTER_PASSWORD + "\n")
+
+                await asyncio.sleep(6)
+                if not await self._is_authenticated_dom():
+                    raise Exception(f"Login flow did not reach authenticated state. URL={self.page.url}")
+
                 cookies = await self.context.cookies()
                 with open(self.cookie_file, 'w') as f:
                     json.dump(cookies, f)
@@ -608,6 +677,7 @@ Input: "{input_text}"
             except Exception as e:
                 logger.error(f"Login failed (attempt {attempt + 1}): {str(e)}")
                 if attempt == max_retries - 1:
+                    await self._dump_debug_artifacts("login_failure")
                     raise
                 await asyncio.sleep(5)
 
@@ -761,6 +831,9 @@ Input: "{input_text}"
             return []
 
     async def post(self, message, cleanup=True):
+        if TWITTER_DRY_RUN:
+            logger.info(f"[DRY RUN] Would post: {message}")
+            return f"[DRY RUN] Post skipped: {message}"
         try:
             if not self.page:
                 await self.initialize()
@@ -805,7 +878,7 @@ Input: "{input_text}"
                 )
                 for attempt in range(2):
                     try:
-                        post_button.click(timeout=5000)
+                        await post_button.click(timeout=5000)
                         break
                     except Exception as e:
                         logger.warning(f"Native click failed (retry attempt {attempt + 1}): {str(e)}")
@@ -823,240 +896,210 @@ Input: "{input_text}"
             if cleanup:
                 await self._cleanup()
 
+    async def _dump_debug_artifacts(self, tag: str = "playwright_error"):
+        try:
+            ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+            debug_dir = Path("sessions/logs/twitter_debug")
+            debug_dir.mkdir(parents=True, exist_ok=True)
+            html_path = debug_dir / f"{ts}_{tag}.html"
+            png_path = debug_dir / f"{ts}_{tag}.png"
+            html_path.write_text(await self.page.content(), encoding="utf-8")
+            await self.page.screenshot(path=str(png_path), full_page=True)
+            logger.error(f"Saved twitter debug artifacts: {html_path} | {png_path}")
+        except Exception as e:
+            logger.error(f"Failed to save debug artifacts: {e}")
+
+    async def _dismiss_popups(self):
+        try:
+            await self.page.keyboard.press("Escape")
+        except Exception:
+            pass
+        for selector in POPUP_CLOSE_SELECTORS:
+            try:
+                buttons = await self.page.query_selector_all(selector)
+                for btn in buttons[:3]:
+                    try:
+                        await btn.click(timeout=1000)
+                    except Exception:
+                        try:
+                            await self.page.evaluate("el => el.click()", btn)
+                        except Exception:
+                            continue
+            except Exception:
+                continue
+
+    async def _first_in(self, root, selectors):
+        for sel in selectors:
+            try:
+                el = await root.query_selector(sel)
+                if el:
+                    return el
+            except Exception:
+                continue
+        return None
+
+    async def _safe_click(self, element):
+        try:
+            await element.click(timeout=4000)
+            return True
+        except Exception:
+            try:
+                await self.page.evaluate("el => el.click()", element)
+                return True
+            except Exception:
+                return False
+
+    async def _extract_mentions_timeline_first(self, limit=2):
+        mentions = []
+        cards = await self.page.query_selector_all(ARTICLE_SELECTORS[0])
+        for card in cards:
+            status_link = await self._first_in(card, STATUS_LINK_SELECTORS)
+            text_el = await self._first_in(card, TWEET_TEXT_SELECTORS)
+            reply_btn = await self._first_in(card, REPLY_BUTTON_SELECTORS)
+            if not status_link or not text_el or not reply_btn:
+                continue
+            href = await status_link.get_attribute("href") or ""
+            m = re.search(r"/([^/]+)/status/(\d+)", href)
+            if not m:
+                continue
+            username, tweet_id = m.group(1), m.group(2)
+            text = (await text_el.inner_text() or "").strip()
+            mentions.append({
+                "username": username.lstrip("@"),
+                "tweet_id": tweet_id,
+                "text": text,
+                "card": card,
+                "reply_button": reply_btn,
+            })
+            if len(mentions) >= limit:
+                break
+        return mentions
+
     async def reply_to_mentions(self, limit=2, cleanup=True):
+        if should_noop():
+            logger.info("Policy no-op triggered; skipping mention replies this cycle.")
+            return 0
+        if self.state_store.in_observe_only():
+            logger.warning("Observe-only mode active; skipping replies.")
+            return 0
+
         mentions_processed = 0
         try:
             if not self.page:
                 await self.initialize()
-            try:
-                await self.page.goto("https://x.com/notifications/mentions", timeout=60000)
-                await self._check_for_prompts()
-                await self.page.wait_for_selector("article[data-testid='tweet']", timeout=15000)
-                logger.info("Mentions page loaded.")
-                mentions = await self.page.query_selector_all("article[data-testid='tweet']")
-                api_mode = False
-            except Exception as e:
-                logger.warning(f"Failed to load mentions via Playwright: {str(e)}. Falling back to API.")
-                mentions_data = await self._fetch_mentions_with_api(limit)
-                if not mentions_data:
-                    logger.error("No mentions fetched via API.")
-                    return mentions_processed
-                mentions = None
-                api_mode = True
 
-            if api_mode:
-                mentions_iterable = mentions_data
-            else:
-                mentions_iterable = range(min(len(mentions), limit))
+            if not self.state_store.can_take_hourly_action(TWITTER_PROFILE.get("max_actions_per_hour", 6)):
+                logger.info("Hourly action cap reached; skipping cycle.")
+                return 0
 
-            for mention_index in mentions_iterable:
-                try:
-                    if api_mode:
-                        if mention_index >= len(mentions_data):
-                            logger.info("No more mentions to process.")
-                            break
-                        mention = mentions_data[mention_index]
-                        tweet_id = mention["tweet_id"]
-                        username = mention["username"]
-                        text = mention["text"]
-                        logger.info(f"Processing API mention {mention_index + 1} for @{username}.")
-                    else:
-                        if mention_index >= len(mentions):
-                            logger.info("No more mentions to process.")
-                            break
-                        logger.info(f"Processing mention {mention_index + 1}.")
-                        clicked = await self.page.evaluate(
-                            """(index) => {
-                                const mentions = document.querySelectorAll("article[data-testid='tweet']");
-                                if (index >= mentions.length) return false;
-                                const mention = mentions[index];
-                                const tweetText = mention.querySelector("div[data-testid='tweetText']");
-                                if (tweetText) {
-                                    tweetText.click();
-                                    return true;
-                                }
-                                return false;
-                            }""",
-                            mention_index
-                        )
-                        if not clicked:
-                            raise Exception("Could not find or click tweet text.")
-                        await self._check_for_prompts()
-                        await self.page.wait_for_selector("div[data-testid='tweetText']", timeout=15000)
-                        tweet_url = self.page.url
-                        logger.info(f"Tweet page loaded. URL: {tweet_url}")
-                        element = await self.page.query_selector("a[role='link'][href^='/']")
-                        if element:
-                            username = (await element.inner_text()).lstrip('@')
-                        else:
-                            raise Exception("Could not find username element")
-                        element = await self.page.query_selector("div[data-testid='tweetText']")
-                        if element:
-                            text = await element.inner_text()
-                        else:
-                            raise Exception("Could not find tweet text element")
-                        tweet_id = tweet_url.split('/')[-1]
+            await self.page.goto("https://x.com/notifications/mentions", timeout=60000)
+            await self._dismiss_popups()
+            await self.page.wait_for_selector(ARTICLE_SELECTORS[0], timeout=20000)
 
-                    user_id = f"twitter_{username}"
-                    processed_tweets = self.repcache.get("processed_tweets", [])
-                    if any(entry['tweet_id'] == tweet_id for entry in processed_tweets):
-                        logger.info(f"Skipping duplicate tweet ID {tweet_id}")
-                        continue
-                    tweet_embedding = self.embeddings.encode([text])[0]
-                    tweet_embedding_np = np.array([tweet_embedding], dtype=np.float32)
-                    for entry in processed_tweets:
-                        if 'embedding' in entry:
-                            cached_embedding = np.array(entry['embedding'], dtype=np.float32)
-                            distance = np.linalg.norm(tweet_embedding_np - cached_embedding)
-                            if distance < SIMILARITY_THRESHOLD:
-                                logger.info(f"Skipping similar tweet ID {tweet_id}, distance: {distance}")
-                                continue
-                    image_element = None
-                    if not api_mode:
-                        image_element = await self.page.query_selector("img[data-testid='tweetPhoto']")
-                    reply_message = ""
-                    if image_element:
-                        image_url = await image_element.get_attribute("src")
-                        image_path = os.path.join(IMAGES_DIR, f"tweet_{tweet_id}.jpg")
-                        async with self.page.context.request as request:
-                            response = await request.get(image_url)
-                            with open(image_path, "wb") as f:
-                                f.write(await response.body())
-                        caption = text or "No caption provided"
-                        reply_message = await self.analyze_image(image_path, caption, user_id)
-                    else:
-                        reply_message = await self.generate_reply(text, username, user_id)
-                    if len(reply_message) > 280:
-                        reply_message = reply_message[:280].rsplit(' ', 1)[0]
-                    logger.info(f"Generated reply: {reply_message} (length: {len(reply_message)})")
+            mentions = await self._extract_mentions_timeline_first(limit=min(limit, TWITTER_PROFILE.get("mentions_per_cycle", 1)))
+            if not mentions:
+                logger.info("No mentions found in timeline-first pass.")
+                return 0
 
-                    if not api_mode:
-                        try:
-                            await self._check_for_prompts()
-                            reply_box = await self.page.wait_for_selector("div[role='textbox']", timeout=15000)
-                            await reply_box.click()
-                            await self._type_slowly(self.page.locator("div[role='textbox']"), reply_message)
-                            self.repcache.setdefault(user_id, []).append({
-                                'tweet_id': tweet_id,
-                                'user': username,
-                                'text': text,
-                                'reply': reply_message,
-                                'timestamp': time.time(),
-                                'embedding': tweet_embedding.tolist()
-                            })
-                            self.repcache["processed_tweets"].append({
-                                'tweet_id': tweet_id,
-                                'timestamp': time.time(),
-                                'embedding': tweet_embedding.tolist()
-                            })
-                            self._save_repcache()
-                            should_store, mem_type, mem_content = self.process_memory(text, reply_message, user_id)
-                            if should_store:
-                                self.store_memory(mem_content, user_id, mem_type)
-                            await asyncio.sleep(2)
-                            await self._check_for_prompts()
-                            reply_button = await self.page.wait_for_selector("button[data-testid='tweetButtonInline']", timeout=15000)
-                            try:
-                                await reply_button.click()
-                            except Exception as e:
-                                logger.warning(f"Native click failed: {str(e)}. Using JavaScript click.")
-                                await self.page.evaluate("element => element.click()", reply_button)
-                            await asyncio.sleep(3)
-                            await self._check_for_prompts()
-                            logger.info(f"Verifying reply to @{username}...")
-                            await self.page.goto(tweet_url, timeout=60000)
-                            await self._check_for_prompts()
-                            await self.page.wait_for_selector("div[data-testid='tweetText']", timeout=15000)
-                            reply_found = False
-                            replies = await self.page.query_selector_all("div[data-testid='tweetText']")
-                            for reply in replies:
-                                if reply_message in (await reply.inner_text()):
-                                    reply_found = True
-                                    break
-                            if reply_found:
-                                logger.info(f"Reply confirmed: Successfully replied to @{username} via Playwright.")
-                                print(f"Reply confirmed: Successfully replied to @{username}: {reply_message}")
-                            else:
-                                logger.warning(f"Reply not found for @{username}. Falling back to API.")
-                                success = await self._reply_with_api(tweet_id, username, reply_message)
-                                if success:
-                                    logger.info(f"Reply confirmed: Successfully replied to @{username} via API.")
-                                    print(f"Reply confirmed: Successfully replied to @{username} via API: {reply_message}")
-                                else:
-                                    logger.error(f"Failed to reply to @{username} via API.")
-                                    print(f"Reply not sent to @{username} via API")
-                            mentions_processed += 1
-                        except Exception as e:
-                            logger.warning(f"Playwright reply failed for @{username}: {str(e)}. Falling back to API.")
-                            success = await self._reply_with_api(tweet_id, username, reply_message)
-                            if success:
-                                self.repcache.setdefault(user_id, []).append({
-                                    'tweet_id': tweet_id,
-                                    'user': username,
-                                    'text': text,
-                                    'reply': reply_message,
-                                    'timestamp': time.time(),
-                                    'embedding': tweet_embedding.tolist()
-                                })
-                                self.repcache["processed_tweets"].append({
-                                    'tweet_id': tweet_id,
-                                    'timestamp': time.time(),
-                                    'embedding': tweet_embedding.tolist()
-                                })
-                                self._save_repcache()
-                                should_store, mem_type, mem_content = self.process_memory(text, reply_message, user_id)
-                                if should_store:
-                                    self.store_memory(mem_content, user_id, mem_type)
-                                logger.info(f"Successfully replied to @{username} via API.")
-                                print(f"Reply confirmed: Successfully replied to @{username} via API: {reply_message}")
-                                mentions_processed += 1
-                            else:
-                                logger.error(f"Failed to reply to @{username} via API.")
-                                print(f"Reply not sent to @{username}")
-                    else:
-                        success = await self._reply_with_api(tweet_id, username, reply_message)
-                        if success:
-                            self.repcache.setdefault(user_id, []).append({
-                                'tweet_id': tweet_id,
-                                'user': username,
-                                'text': text,
-                                'reply': reply_message,
-                                'timestamp': time.time(),
-                                'embedding': tweet_embedding.tolist()
-                            })
-                            self.repcache["processed_tweets"].append({
-                                'tweet_id': tweet_id,
-                                'timestamp': time.time(),
-                                'embedding': tweet_embedding.tolist()
-                            })
-                            self._save_repcache()
-                            should_store, mem_type, mem_content = self.process_memory(text, reply_message, user_id)
-                            if should_store:
-                                self.store_memory(mem_content, user_id, mem_type)
-                            logger.info(f"Successfully replied to @{username} via API.")
-                            print(f"Reply confirmed: Successfully replied to @{username} via API: {reply_message}")
-                            mentions_processed += 1
-                        else:
-                            logger.error(f"Failed to reply to @{username} via API.")
-                            print(f"Reply not sent to @{username}")
+            for mention in mentions:
+                tweet_id = mention["tweet_id"]
+                username = mention["username"]
+                text = mention["text"]
 
-                except Exception as e:
-                    logger.error(f"Failed to process mention {mention_index + 1}: {str(e)}")
-                    if not api_mode:
-                        with open("debug_reply_page.html", "w", encoding="utf-8") as f:
-                            f.write(await self.page.content())
-                    print(f"Error replying to mention {mention_index + 1}: {str(e)}")
-            logger.info(f"Processed {mentions_processed} mentions.")
+                if self.state_store.seen(tweet_id):
+                    logger.info(f"Skipping already processed tweet_id={tweet_id}")
+                    continue
+
+                if not self.state_store.can_reply_user(username, TWITTER_PROFILE.get("per_user_reply_cap_per_hour", 2)):
+                    logger.info(f"Per-user hourly cap reached for @{username}; skipping.")
+                    continue
+
+                if TWITTER_PROFILE.get("skip_low_effort_mentions", True) and len(text.strip()) < 10:
+                    logger.info(f"Skipping low-effort mention tweet_id={tweet_id}")
+                    self.state_store.mark_processed(tweet_id, "low_effort_skip")
+                    continue
+
+                user_id = f"twitter_{username}"
+                reply_message = await self.generate_reply(text, user_id)
+                if not reply_message:
+                    continue
+
+                min_chars, max_chars = TWITTER_PROFILE.get("reply_char_range", (30, 160))
+                reply_message = reply_message.strip()
+                if len(reply_message) < min_chars:
+                    reply_message = (reply_message + " Appreciate your point—curious how you’d apply this in practice?").strip()
+                reply_message = reply_message[:max_chars]
+
+                await self._dismiss_popups()
+                if not await self._safe_click(mention["reply_button"]):
+                    logger.warning(f"Failed to open inline reply for tweet_id={tweet_id}")
+                    self.state_store.register_failure()
+                    continue
+
+                composer = await self._first_in(self.page, COMPOSER_SELECTORS)
+                if not composer:
+                    logger.warning("Reply composer not found.")
+                    self.state_store.register_failure()
+                    continue
+
+                await composer.click()
+                await self._type_slowly(composer, reply_message)
+                await asyncio.sleep(0.8)
+
+                if TWITTER_DRY_RUN:
+                    logger.info(f"[DRY RUN] Would reply to @{username} ({tweet_id}): {reply_message}")
+                    self.state_store.mark_processed(tweet_id, "dry_run_reply")
+                    mentions_processed += 1
+                    continue
+
+                send_btn = await self._first_in(self.page, SEND_BUTTON_SELECTORS)
+                if not send_btn or not await self._safe_click(send_btn):
+                    logger.warning("Failed to click inline send button.")
+                    self.state_store.register_failure()
+                    continue
+
+                self.state_store.mark_processed(tweet_id, "mention_reply")
+                self.state_store.mark_reply_user(username)
+                self.state_store.mark_hourly_action()
+                self.state_store.mark_daily_count("replies")
+                self.state_store.clear_failures()
+
+                self.repcache.setdefault(user_id, []).append({
+                    'tweet_id': tweet_id,
+                    'user': username,
+                    'text': text,
+                    'reply': reply_message,
+                    'timestamp': time.time(),
+                })
+                self.repcache.setdefault("processed_tweets", []).append({
+                    'tweet_id': tweet_id,
+                    'timestamp': time.time(),
+                })
+                self._save_repcache()
+                logger.info(f"Replied inline to @{username} (tweet_id={tweet_id}).")
+                mentions_processed += 1
+
+                if mentions_processed >= TWITTER_PROFILE.get("max_replies_per_hour", 4):
+                    logger.info("Reached configured reply budget for cycle/hour.")
+                    break
+
             return mentions_processed
         except Exception as e:
             logger.error(f"Error in reply_to_mentions: {str(e)}")
-            await self._refresh_page()
+            self.state_store.register_failure()
+            if self.state_store.get_failure_streak() >= 3:
+                await self._dump_debug_artifacts("mention_failure")
+                self.state_store.set_observe_only(30 * 60)
+                logger.error("Entering observe-only mode for 30 minutes due to repeated failures.")
             return mentions_processed
         finally:
             if cleanup:
                 await self._cleanup()
 
     async def run_automation(self, post_limit=1, reply_limit=2, run_once=False):
+        if not TWITTER_PROFILE.get("enabled", True):
+            logger.info("Twitter profile disabled; exiting automation loop.")
+            return
         try:
             await self.initialize()
             while True:

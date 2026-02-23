@@ -35,25 +35,8 @@ RAG_WEBSITES = [
 
 # System timezone
 SYSTEM_TIMEZONE = "America/New_York"
-TWITTER_USERNAME = "placeholder"
-TWITTER_PASSWORD = "placeholder"
 # Twitter API credentials
-TWITTER_API = {
-    "api_key": "placeholder",
-    "api_secret": "placeholder",
-    "access_token": "placeholder",
-    "access_token_secret": "placeholder",
-    "bearer_token": "placeholder",
-    "client_id": "placeholder",
-    "client_secret": "placeholder",
-}
 # Twitter Auto-post and auto-reply intervals in minutes
-AUTO_POST_INTERVAL_MINUTES = 242
-AUTO_POST_INTERVAL_LOWER_VARIATION = 20  # -20 minutes
-AUTO_POST_INTERVAL_UPPER_VARIATION = 30  # +30 minutes
-AUTO_REPLY_INTERVAL_MINUTES = 240
-AUTO_REPLY_INTERVAL_LOWER_VARIATION = 20  # -20 minutes
-AUTO_REPLY_INTERVAL_UPPER_VARIATION = 30  # +30 minutes
 
 # Telegram permissions you can message @userinfobot on telegram for your user ID 
 TELEGRAM_BOT_OWNER_IDS = {
