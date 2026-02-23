@@ -1,0 +1,44 @@
+{
+  "tools": [
+    {
+      "name": "hello_tool",
+      "version": "0.1.0",
+      "path": "tools/installed/hello_tool/0.1.0",
+      "hashes": {
+        "manifest.json": "74564b483435492fc56ef75ea659c55008368e4e37b1da6489dee63b01c21a2f",
+        "tool.py": "87608720cc2c9c73f1cefdb561d7580b9a43fc139b4ccb331b6adf159aa35135",
+        "README.md": "d68c3d44c7d52263bbc8aaa704751c97bb3d6a2ada53255360c114af3980da34",
+        "test_tool.py": "70da1e5d0748c36da4937e0cc3187d5e99e90d523b1686a9d0c2b444e48b8f9f"
+      },
+      "enabled": true,
+      "aliases": [
+        "hello_tool"
+      ],
+      "examples": [
+        "run hello_tool"
+      ],
+      "tags": [
+        "mvp"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    {
+      "name": "dummy",
+      "version": "0.1.0",
+      "path": "tools/installed/dummy/0.1.0",
+      "hashes": {
+        "manifest.json": "7b023c9238d48f74cf0d7872c23408363bfc9cfa654e709c66998836c39c6ca1",
+        "tool.py": "8fad9e8183606e3a85ac4ce1830b46cb4a201e139d49f277658b1e9b40f5b0c4"
+      },
+      "enabled": true
+    }
+  ]
+}

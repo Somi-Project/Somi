@@ -1,0 +1,9 @@
+{
+  "job_id": "9707645a",
+  "state": "COMPLETED",
+  "objective": "create hello_tool",
+  "result": {
+    "safe_boundary": true,
+    "message": "SAFE mode blocks installation"
+  }
+}

@@ -34,7 +34,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from gui import aicoregui, speechgui, telegramgui, twittergui
+from gui import aicoregui, executivegui, speechgui, telegramgui, toolboxgui, twittergui
 from gui.themes import app_stylesheet, dialog_stylesheet, get_theme_name, list_themes, set_theme
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
@@ -382,6 +382,8 @@ class SomiAIGUI(QMainWindow):
         self.tabs.addTab(activity_tab, "Activity")
         self.tabs.addTab(console_tab, "Raw Console")
         self.tabs.addTab(diag_tab, "Diagnostics")
+        self.tabs.addTab(toolboxgui.ToolboxPanel(self), "Toolbox")
+        self.tabs.addTab(executivegui.ExecutivePanel(self), "Executive")
         self.main_layout.addWidget(self.tabs)
 
     def build_quick_action_bar(self):

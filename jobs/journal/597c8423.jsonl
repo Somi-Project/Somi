@@ -1,0 +1,6 @@
+{"ts": "2026-02-22T21:22:04.940160+00:00", "kind": "fs.mkdir", "summary": "Create directory", "data": {"path": "/workspace/Somi/tools/workspace/hello_tool"}}
+{"ts": "2026-02-22T21:22:04.940510+00:00", "kind": "fs.write", "summary": "Write file", "data": {"path": "/workspace/Somi/tools/workspace/hello_tool/manifest.json", "bytes": 295}}
+{"ts": "2026-02-22T21:22:04.940767+00:00", "kind": "fs.write", "summary": "Write file", "data": {"path": "/workspace/Somi/tools/workspace/hello_tool/tool.py", "bytes": 175}}
+{"ts": "2026-02-22T21:22:04.940985+00:00", "kind": "fs.write", "summary": "Write file", "data": {"path": "/workspace/Somi/tools/workspace/hello_tool/test_tool.py", "bytes": 153}}
+{"ts": "2026-02-22T21:22:04.941197+00:00", "kind": "fs.write", "summary": "Write file", "data": {"path": "/workspace/Somi/tools/workspace/hello_tool/README.md", "bytes": 45}}
+{"ts": "2026-02-22T21:22:05.223931+00:00", "kind": "tool.install", "summary": "Installed tool", "data": {"name": "hello_tool", "version": "0.1.0", "path": "tools/installed/hello_tool/0.1.0"}}

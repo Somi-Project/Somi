@@ -1,0 +1,9 @@
+{
+  "name": "hello_tool",
+  "version": "0.1.0",
+  "description": "Returns greeting + system time",
+  "aliases": ["hello_tool"],
+  "examples": ["run hello_tool"],
+  "tags": ["mvp"],
+  "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "additionalProperties": false}
+}
