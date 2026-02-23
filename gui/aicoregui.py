@@ -1,10 +1,11 @@
 from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit,
-    QComboBox, QCheckBox, QMessageBox, QWidget
+    QComboBox, QCheckBox, QMessageBox, QWidget, QFileDialog, QInputDialog
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont
 import asyncio
+import json
 import subprocess
 import time
 from concurrent.futures import CancelledError
@@ -24,6 +25,8 @@ import torch
 import sys
 import signal
 from gui.themes import COLORS, dialog_stylesheet
+from handlers.ocr.contracts import OcrRequest
+from handlers.ocr.pipeline import run_ocr
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -267,6 +270,23 @@ class ChatWorker(QThread):
         self.quit()
         self.wait()
 
+
+class OcrWorker(QThread):
+    result_signal = pyqtSignal(object)
+    error_signal = pyqtSignal(str)
+
+    def __init__(self, req, parent=None):
+        super().__init__(parent)
+        self.req = req
+
+    def run(self):
+        try:
+            result = run_ocr(self.req)
+            self.result_signal.emit(result)
+        except Exception as e:
+            self.error_signal.emit(f"OCR failed: {str(e)}")
+
+
 def ai_chat(app):
     logger.info("Opening AI Chat subwindow...")
     chat_window = QDialog(app)
@@ -303,6 +323,19 @@ def ai_chat(app):
     prompt_entry.setStyleSheet(_themed_input_style(12))
     prompt_entry.setFont(QFont("Arial", 12))
     layout.addWidget(prompt_entry)
+
+    selected_image_path = ""
+    ocr_worker = None
+    image_label = QLabel("Image: none")
+    layout.addWidget(image_label)
+    image_buttons = QWidget()
+    image_buttons_layout = QHBoxLayout()
+    image_buttons.setLayout(image_buttons_layout)
+    upload_image_button = QPushButton("Upload Image")
+    clear_image_button = QPushButton("Clear Image")
+    image_buttons_layout.addWidget(upload_image_button)
+    image_buttons_layout.addWidget(clear_image_button)
+    layout.addWidget(image_buttons)
 
     chat_worker = None
     spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -372,6 +405,9 @@ def ai_chat(app):
         if chat_worker and chat_worker.isRunning():
             chat_worker.stop()
             chat_worker.wait()
+        if ocr_worker and ocr_worker.isRunning():
+            ocr_worker.requestInterruption()
+            ocr_worker.wait(100)
 
         chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
         chat_worker.response_signal.connect(on_response)
@@ -397,7 +433,7 @@ def ai_chat(app):
 
         if chat_worker and chat_worker.isRunning():
             if chat_worker.is_busy():
-                QMessageBox.warning(chat_window, "Warning", "Please wait for the current response to finish (or stop it) before switching agents.")
+                set_status("Busy — stop current response before switching agent")
                 return
             if not chat_worker.update_agent(agent_key, use_studies_check.isChecked()):
                 chat_area.append(f"Agent unchanged: {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
@@ -416,10 +452,73 @@ def ai_chat(app):
             chat_area.clear()
             chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
 
+    def choose_image():
+        nonlocal selected_image_path
+        path, _ = QFileDialog.getOpenFileName(chat_window, "Select image", "", "Images (*.png *.jpg *.jpeg *.bmp *.webp)")
+        if path:
+            selected_image_path = path
+            image_label.setText(f"Image: {path}")
+
+    def clear_image():
+        nonlocal selected_image_path
+        selected_image_path = ""
+        image_label.setText("Image: none")
+
+    def open_ocr_settings():
+        folder = QFileDialog.getExistingDirectory(chat_window, "Select OCR export folder")
+        if folder:
+            os.makedirs("config", exist_ok=True)
+            Path("config/storage.json").write_text('{"excel_output_folder": ' + json.dumps(folder) + '}', encoding="utf-8")
+            set_status("OCR settings saved")
+
+    def open_schema_editor():
+        schema_path = Path("config/extraction_schemas/default.json")
+        schema_path.parent.mkdir(parents=True, exist_ok=True)
+        if not schema_path.exists():
+            schema_path.write_text('{"schema_id":"default","version":"1.0","fields":[],"output_columns":[],"example":{}}', encoding="utf-8")
+        txt, ok = QInputDialog.getMultiLineText(chat_window, "OCR Schema Editor", "Edit default schema JSON:", schema_path.read_text(encoding="utf-8"))
+        if ok:
+            try:
+                json.loads(txt)
+                schema_path.write_text(txt, encoding="utf-8")
+                set_status("Schema saved")
+            except Exception as exc:
+                QMessageBox.critical(chat_window, "Error", f"Invalid JSON: {exc}")
+
+    def handle_ocr_result(result):
+        nonlocal ocr_worker
+        selected_name = name_combo.currentText()
+        body = result.structured_text if result.structured_text else result.raw_text
+        chat_area.append("You: [image + prompt]\n")
+        chat_area.append(f"{selected_name}: {body}\n")
+        if result.exports.get("excel_path"):
+            chat_area.append(f"Excel saved: {result.exports['excel_path']}\n")
+        prompt_entry.setEnabled(True)
+        send_button.setEnabled(True)
+        stop_button.setEnabled(False)
+        set_status("Done")
+        ocr_worker = None
+
+    def run_ocr_from_ui(prompt):
+        nonlocal ocr_worker, selected_image_path
+        mode = "auto"
+        lower = (prompt or "").lower()
+        struct_triggers = [t.lower() for t in (getattr(settings, "REGISTRY_TRIGGERS", []) + getattr(settings, "OCR_TRIGGERS", []) + getattr(settings, "STRUCTURED_OCR_TRIGGERS", []))]
+        general_triggers = [t.lower() for t in getattr(settings, "GENERAL_OCR_TRIGGERS", ["ocr"])]
+        if any(t in lower for t in struct_triggers):
+            mode = "structured"
+        elif any(t in lower for t in general_triggers):
+            mode = "general"
+        req = OcrRequest(image_paths=[selected_image_path], prompt=prompt, mode=mode, source="gui")
+        ocr_worker = OcrWorker(req)
+        ocr_worker.result_signal.connect(handle_ocr_result)
+        ocr_worker.error_signal.connect(on_worker_error)
+        ocr_worker.start()
+
     def show_typing_indicator():
         nonlocal chat_worker
         if not chat_worker or not chat_worker.isRunning():
-            QMessageBox.warning(chat_window, "Warning", "Chat is still connecting. Please wait.")
+            set_status("Connecting — please wait")
             return
         prompt = prompt_entry.text().strip()
         if not prompt:
@@ -429,22 +528,31 @@ def ai_chat(app):
         prompt_entry.setEnabled(False)
         send_button.setEnabled(False)
         stop_button.setEnabled(True)
-        chat_worker.process_prompt(prompt)
+        if selected_image_path:
+            run_ocr_from_ui(prompt)
+        else:
+            chat_worker.process_prompt(prompt)
         prompt_entry.clear()
 
     def stop_generation():
-        nonlocal chat_worker
+        nonlocal chat_worker, ocr_worker
         if chat_worker and chat_worker.isRunning():
             chat_worker.cancel_current()
+        if ocr_worker and ocr_worker.isRunning():
+            ocr_worker.requestInterruption()
+            ocr_worker.wait(50)
         prompt_entry.setEnabled(True)
         send_button.setEnabled(True)
         stop_button.setEnabled(False)
 
     def quit_chat():
-        nonlocal chat_worker
+        nonlocal chat_worker, ocr_worker
         if chat_worker and chat_worker.isRunning():
             chat_worker.stop()
             chat_worker.wait()
+        if ocr_worker and ocr_worker.isRunning():
+            ocr_worker.requestInterruption()
+            ocr_worker.wait(100)
         spinner_timer.stop()
         app.output_area.append(f"[{datetime.now().strftime('%H:%M:%S')}] Chat session ended.\n")
         app.output_area.ensureCursorVisible()
@@ -465,10 +573,20 @@ def ai_chat(app):
     stop_button.clicked.connect(stop_generation)
     layout.addWidget(stop_button)
 
+    ocr_settings_button = QPushButton("OCR Settings")
+    ocr_settings_button.clicked.connect(open_ocr_settings)
+    layout.addWidget(ocr_settings_button)
+
+    schema_editor_button = QPushButton("OCR Schema Editor")
+    schema_editor_button.clicked.connect(open_schema_editor)
+    layout.addWidget(schema_editor_button)
+
     quit_button = QPushButton("Quit")
     quit_button.clicked.connect(quit_chat)
     layout.addWidget(quit_button)
 
+    upload_image_button.clicked.connect(choose_image)
+    clear_image_button.clicked.connect(clear_image)
     prompt_entry.returnPressed.connect(show_typing_indicator)
     spinner_timer.timeout.connect(tick_spinner)
 

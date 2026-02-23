@@ -96,17 +96,10 @@ from config.extraction_schema import (
     POST_PROCESSING,
     OUTPUT_COLUMNS
 )
+from handlers.ocr.contracts import OcrRequest
+from handlers.ocr.pipeline import run_ocr
 
-# Safe OCR import
-OCR_REGISTRY_READY = False
-process_registry_photo = None
-_call_qwen = None
-try:
-    from handlers.ocr_registry import process_registry_photo, _call_qwen
-    OCR_REGISTRY_READY = True
-    logging.getLogger(__name__).info("Universal form OCR module loaded")
-except Exception as e:
-    logging.getLogger(__name__).warning(f"OCR not available: {e}")
+OCR_PIPELINE_READY = True
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -752,7 +745,7 @@ class TelegramHandler:
 
         try:
             # SERIES MODE OCR (OWNER ONLY) — unchanged internals, just gated
-            if user_id_int in self.active_series_users and is_ocr_request and OCR_REGISTRY_READY:
+            if user_id_int in self.active_series_users and is_ocr_request and OCR_PIPELINE_READY:
                 if not is_owner:
                     await update.message.reply_text("Series OCR is restricted.")
                     return
@@ -760,28 +753,12 @@ class TelegramHandler:
                 await update.message.reply_text("Adding page to series…")
 
                 async with self.global_ocr_sem:
-                    raw_text = await asyncio.to_thread(_call_qwen, photo_path)
+                    result = await asyncio.to_thread(
+                        run_ocr,
+                        OcrRequest(image_paths=[photo_path], prompt=caption, mode="structured", source="telegram"),
+                    )
 
-                entries = []
-                pattern = re.compile(r"ENTRY\s*\d+\s*\n(.*?)(?=ENTRY\s*\d+|\Z)", re.DOTALL | re.IGNORECASE)
-                for block_match in pattern.finditer(raw_text):
-                    block = block_match.group(1)
-                    entry = {}
-                    for line in block.split("\n"):
-                        if ":" not in line:
-                            continue
-                        key, val = line.split(":", 1)
-                        key = key.strip()
-                        val = val.strip()
-                        if val in ("—", "–", "-"):
-                            val = ""
-
-                        if key in EXTRACTION_FIELDS:
-                            cleaner = POST_PROCESSING.get(key, lambda x: x)
-                            entry[key] = cleaner(val)
-
-                    if entry:
-                        entries.append(entry)
+                entries = result.structured_records or []
 
                 if entries:
                     self.series_sessions[user_id_int].extend(entries)
@@ -794,11 +771,18 @@ class TelegramHandler:
                 return
 
             # SINGLE IMAGE OCR — public allowed but globally throttled
-            if is_ocr_request and OCR_REGISTRY_READY:
+            if is_ocr_request and OCR_PIPELINE_READY:
                 ack = await update.message.reply_text("Analyzing form…")
                 async with self.global_ocr_sem:
-                    await process_registry_photo(photo_path, update, context)
-                # process_registry_photo handles its own replies; we keep ack simple
+                    result = await asyncio.to_thread(
+                        run_ocr,
+                        OcrRequest(image_paths=[photo_path], prompt=caption, mode="auto", source="telegram"),
+                    )
+                body = result.structured_text if result.structured_text else result.raw_text
+                msg = body or "No text extracted."
+                if result.exports.get("excel_path"):
+                    msg += f"\n\nExcel saved: {result.exports['excel_path']}"
+                await update.message.reply_text(msg, parse_mode=None)
                 try:
                     await ack.delete()
                 except Exception:

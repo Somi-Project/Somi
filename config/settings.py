@@ -226,3 +226,28 @@ PROMPT_BUDGET_MEMORY_WORKING = 700
 PROMPT_BUDGET_EVIDENCE = 1200
 PROMPT_BUDGET_HISTORY = 2200
 PROMPT_BUDGET_USER_RESERVE = 450
+
+
+# OCR triggers
+GENERAL_OCR_TRIGGERS = ["ocr", "extract text", "scan", "read this", "transcribe", "digitize"]
+STRUCTURED_OCR_TRIGGERS = []  # optional; can alias REGISTRY_TRIGGERS
+
+# OCR pipeline options
+OCR_CACHE_ENABLED = True
+OCR_CACHE_TTL_DAYS = 30
+OCR_CACHE_MAX_ITEMS = 2000
+
+OCR_SECOND_PASS = True
+OCR_MAX_PASSES = 2
+
+OCR_TEMPERATURE = 0.0
+OCR_TIMEOUT_SEC = 120
+OCR_NUM_PREDICT = 1024
+OCR_MAX_CONCURRENCY = 2
+
+OCR_PREPROCESS_POLICY = "auto"  # "off" | "auto" | "force"
+OCR_MIN_COVERAGE = 0.70
+OCR_MAX_UNK_RATIO = 0.05
+
+# Optional fast-first model; keep None if not used
+OCR_FAST_MODEL = None  # e.g. "some-vision-ocr-small"
