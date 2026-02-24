@@ -1,0 +1,6 @@
+{
+  "name": "cli.exec",
+  "version": "0.1.0",
+  "description": "Execute a CLI binary with argv in toolbox sandbox",
+  "entry": "tool.py"
+}
