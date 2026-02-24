@@ -41,6 +41,8 @@ from handlers.routing import decide_route
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
 from handlers.toolbox_handler import create_tool_job, dispatch_or_run
+from handlers.skills.dispatch import handle_skill_command
+from handlers.skills.registry import build_registry_snapshot
 
 from handlers.memory import Memory3Manager
 from promptforge import PromptForge
@@ -86,6 +88,7 @@ class Agent:
         self._mem_write_sem = asyncio.Semaphore(1)
         self._last_due_injected_at: Dict[str, float] = {}
         self._due_inject_cooldown_seconds = 300.0
+        self._forced_skill_keys_by_user: Dict[str, List[str]] = {}
 
         # Load personality config
         try:
@@ -727,6 +730,7 @@ class Agent:
         user_id: str = "default_user",
         dementia_friendly: bool = False,
         long_form: bool = False,
+        forced_skill_keys: Optional[List[str]] = None,
     ) -> str:
         start_total = time.time()
         self.turn_counter += 1
@@ -738,6 +742,12 @@ class Agent:
         # Call-level user_id override (Telegram/WhatsApp multi-chat)
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
+
+        skill_cmd = handle_skill_command(prompt)
+        if skill_cmd.handled:
+            if skill_cmd.forced_skill_keys:
+                self._forced_skill_keys_by_user[active_user_id] = list(skill_cmd.forced_skill_keys)
+            return skill_cmd.response
 
         toolbox_create = re.match(r"^create tool\s+([a-zA-Z0-9_\-]+)(?:\s*:\s*(.+))?$", prompt.strip(), flags=re.IGNORECASE)
         if toolbox_create:
@@ -891,6 +901,43 @@ class Agent:
             mode_context = "Story mode active. Continue the story coherently. End with 'Want more?'"
 
         extra_blocks = []
+
+        extra_blocks.append(
+            "## Skills\n"
+            "Skills are available via /skill list and runnable with /skill run <name> ..."
+        )
+        extra_blocks.append(
+            "## Skills/Toolbox Truthfulness Rules\n"
+            "- Only say a skill/tool was executed if dispatch returned a concrete result.\n"
+            "- If blocked, ineligible, or dry-run, state that clearly and provide next safe step.\n"
+            "- Prefer /skill commands for user-requested automations over ad-hoc claims."
+        )
+        try:
+            skills_snapshot = build_registry_snapshot()
+            skill_lines = []
+            for item in skills_snapshot.get("snapshot", {}).get("eligible", [])[:20]:
+                emoji = (item.get("emoji") or "").strip()
+                prefix = f"{emoji} " if emoji else ""
+                skill_lines.append(f"- {prefix}{item.get('name')} ({item.get('key')}): {item.get('desc')}")
+            if skill_lines:
+                extra_blocks.append("## Skills Catalog\n" + "\n".join(skill_lines))
+        except Exception:
+            pass
+
+        forced_keys_effective = forced_skill_keys or self._forced_skill_keys_by_user.pop(active_user_id, [])
+        if forced_keys_effective:
+            try:
+                skill_state = build_registry_snapshot()
+                eligible = skill_state.get("eligible", {})
+                inject_blocks = []
+                for key in forced_keys_effective:
+                    doc = eligible.get(key)
+                    if doc and doc.body_md:
+                        inject_blocks.append(f"### Skill: {doc.name} ({doc.skill_key})\n{doc.body_md}")
+                if inject_blocks:
+                    extra_blocks.append("## Forced Skill Guidance\n" + "\n\n".join(inject_blocks))
+            except Exception:
+                pass
         if rag_block:
             extra_blocks.append(rag_block)
 
