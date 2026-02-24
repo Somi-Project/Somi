@@ -18,12 +18,14 @@ from toolbox.registry import ToolRegistry
 def run_nl(text: str):
     m = re.search(r"hello.*for\s+([A-Za-z0-9_-]+)", text.lower())
     name = m.group(1) if m else "friend"
-    ctx = ToolContext(capabilities={"tool.run", "fs.read"}, privilege=PrivilegeLevel.SAFE)
+    ctx = ToolContext(
+        capabilities={"tool.run", "fs.read"}, privilege=PrivilegeLevel.SAFE
+    )
     return ToolboxDispatch().run("hello_tool", {"name": name.title()}, ctx)
 
 
 def _emit_result(result: dict) -> int:
-    print(json.dumps(result, indent=2))
+    print(json.dumps(result, indent=2, default=str))
     return 1 if isinstance(result, dict) and "error" in result else 0
 
 
@@ -79,14 +81,18 @@ def main():
             )
             return _emit_result(out)
         if args.cmd == "create-tool":
-            out = JobsEngine().run_create_tool(args.name, args.description, args.mode, args.active, PrintStepSink())
+            out = JobsEngine().run_create_tool(
+                args.name, args.description, args.mode, args.active, PrintStepSink()
+            )
             return _emit_result(out)
         if args.cmd == "list-tools":
             print(json.dumps(ToolRegistry().list_tools(), indent=2))
             return 0
         if args.cmd == "run":
             payload = json.loads(args.args)
-            ctx = ToolContext(capabilities={"tool.run", "fs.read"}, privilege=PrivilegeLevel.SAFE)
+            ctx = ToolContext(
+                capabilities={"tool.run", "fs.read"}, privilege=PrivilegeLevel.SAFE
+            )
             return _emit_result(ToolboxDispatch().run(args.tool, payload, ctx))
         if args.cmd == "run-nl":
             return _emit_result(run_nl(args.text))
@@ -98,12 +104,21 @@ def main():
         if args.cmd == "exec":
             engine = ExecutiveEngine()
             if args.exec_cmd in ("status", "list"):
-                print(json.dumps({"paused": engine.paused, "items": engine.queue.list()}, indent=2))
+                print(
+                    json.dumps(
+                        {"paused": engine.paused, "items": engine.queue.list()},
+                        indent=2,
+                    )
+                )
                 return 0
             if args.exec_cmd == "tick":
                 return _emit_result(engine.tick())
             if args.exec_cmd == "approve":
-                return _emit_result(engine.approve_and_run(args.intent_id, approval_token=args.token or None))
+                return _emit_result(
+                    engine.approve_and_run(
+                        args.intent_id, approval_token=args.token or None
+                    )
+                )
             if args.exec_cmd == "reject":
                 return _emit_result(engine.queue.set_state(args.intent_id, "REJECTED"))
             if args.exec_cmd == "pause":
@@ -114,7 +129,13 @@ def main():
 
         ap.print_help()
         return 2
-    except (json.JSONDecodeError, VerifyError, PolicyError, FileNotFoundError, ValueError) as exc:
+    except (
+        json.JSONDecodeError,
+        VerifyError,
+        PolicyError,
+        FileNotFoundError,
+        ValueError,
+    ) as exc:
         print(json.dumps({"error": str(exc)}))
         return 1
 
