@@ -39,6 +39,61 @@
         "tool.py": "8fad9e8183606e3a85ac4ce1830b46cb4a201e139d49f277658b1e9b40f5b0c4"
       },
       "enabled": true
+    },
+    {
+      "name": "cli.exec",
+      "version": "0.1.0",
+      "path": "tools/installed/cli_exec/0.1.0",
+      "hashes": {
+        "manifest.json": "c46ef3204388cce02ea7d4d61358486f9dfaab616781851a3f9ef13b62550b3f",
+        "tool.py": "a98e492b7def575d757e6db197477a29f7f4c9d222826e6adb7dfdf172f965f7",
+        "README.md": "b2780d599dfc4e5ef3b032d4a81691c52b3ae80f16a6461f52be5da1c39c66ab"
+      },
+      "enabled": true,
+      "aliases": [
+        "cli.exec",
+        "cli_exec"
+      ],
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "skill_key": {
+            "type": "string"
+          },
+          "bin": {
+            "type": "string"
+          },
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cwd": {
+            "type": "string"
+          },
+          "timeout_s": {
+            "type": "integer"
+          },
+          "pty": {
+            "type": "boolean"
+          },
+          "env": {
+            "type": "object"
+          },
+          "allowed_bins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "bin",
+          "argv"
+        ],
+        "additionalProperties": false
+      }
     }
   ]
 }
