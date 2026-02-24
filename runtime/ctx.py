@@ -12,6 +12,9 @@ class ToolContext:
     privilege: PrivilegeLevel = PrivilegeLevel.SAFE
     cancel_token: CancelToken = field(default_factory=CancelToken)
     journal: object | None = None
+    log: object | None = None
+    fs: object | None = None
+    http: object | None = None
 
 
 @dataclass

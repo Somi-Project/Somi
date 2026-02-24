@@ -4,22 +4,43 @@ import ast
 import json
 import os
 import subprocess
-import sys
 from pathlib import Path
 
-from runtime.errors import VerifyError
+from config import toolboxsettings as tbs
+from runtime.approval import ApprovalReceipt, validate_receipt
+from runtime.audit import append_event
+from runtime.errors import PolicyError, VerifyError
 from runtime.hashing import sha256_file
+from runtime.risk import assess
+from runtime.ticketing import ExecutionTicket, ticket_hash
 from toolbox.registry import ToolRegistry
 
 
 class ToolLoader:
-    def __init__(self, registry: ToolRegistry | None = None, timeout_s: int = 20, output_cap: int = 8000) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry | None = None,
+        timeout_s: int | None = None,
+        output_cap: int = 8000,
+    ) -> None:
         self.registry = registry or ToolRegistry()
-        self.timeout_s = timeout_s
+        self.timeout_s = timeout_s or tbs.EXEC_TIMEOUT_SECONDS
         self.output_cap = output_cap
 
     def _verify(self, entry: dict) -> None:
-        for rel, expected in entry.get("hashes", {}).items():
+        hashes = entry.get("hashes", {})
+        expected_files = sorted(hashes.keys())
+        actual_files: list[str] = []
+        for file_path in Path(entry["path"]).rglob("*"):
+            if not file_path.is_file():
+                continue
+            rel = str(file_path.relative_to(entry["path"]))
+            if rel.startswith(".sandbox_home/"):
+                continue
+            actual_files.append(rel)
+        if sorted(actual_files) != expected_files:
+            raise VerifyError("Installed file set mismatch")
+        for rel, expected in hashes.items():
             target = Path(entry["path"]) / rel
             if not target.exists() or not target.is_file():
                 raise VerifyError(f"Missing hashed file: {rel}")
@@ -29,11 +50,7 @@ class ToolLoader:
 
     def _validate_contract(self, tool_path: Path) -> None:
         source = tool_path.read_text(encoding="utf-8")
-        try:
-            tree = ast.parse(source)
-        except SyntaxError as exc:
-            raise VerifyError(f"tool.py syntax error: {exc}") from exc
-
+        tree = ast.parse(source)
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and node.name == "run":
                 args = [a.arg for a in node.args.args]
@@ -42,73 +59,98 @@ class ToolLoader:
                 raise VerifyError("tool.py run signature must be run(args, ctx)")
         raise VerifyError("tool.py missing callable run(args, ctx)")
 
-    def _build_preexec_fn(self):
-        def _preexec() -> None:
-            import resource
+    def _validate_runtime_guards(self, ticket: ExecutionTicket) -> None:
+        cmd_text = "\n".join(" ".join(c).lower() for c in ticket.commands)
+        if tbs.TOOLBOX_MODE != "system_agent":
+            for pat in tbs.NEVER_DO_PATTERNS:
+                if pat.lower() in cmd_text:
+                    raise PolicyError(
+                        f"Command pattern blocked by NEVER_DO policy: {pat}"
+                    )
+            if ticket.allow_system_wide:
+                raise PolicyError("System-wide execution requires system_agent mode")
+            protected = [Path(p).expanduser().resolve() for p in tbs.PROTECTED_PATHS]
+            for rw in ticket.paths_rw:
+                path = Path(rw).expanduser().resolve()
+                if any(str(path).startswith(str(prot)) for prot in protected):
+                    raise PolicyError(f"Protected path blocked: {rw}")
+        if tbs.TOOLBOX_MODE == "guided":
+            staging_root = (
+                Path("sessions/jobs") / ticket.job_id / "staging_repo"
+            ).resolve()
+            cwd = Path(ticket.cwd).expanduser().resolve()
+            if not str(cwd).startswith(str(staging_root)):
+                raise PolicyError(
+                    "GUIDED mode allows execution only in staging workspace"
+                )
 
-            # CPU seconds hard-limit and address space cap (best effort).
-            resource.setrlimit(resource.RLIMIT_CPU, (self.timeout_s, self.timeout_s))
-            mem = 512 * 1024 * 1024
-            resource.setrlimit(resource.RLIMIT_AS, (mem, mem))
-            resource.setrlimit(resource.RLIMIT_FSIZE, (1024 * 1024, 1024 * 1024))
-            resource.setrlimit(resource.RLIMIT_NOFILE, (64, 64))
-            # NOTE: UID/GID drop is environment-dependent and omitted here to avoid
-            # interpreter permission failures in managed runtimes.
-
-
-        return _preexec if os.name == "posix" else None
-
-    def load(self, name: str):
+    def propose_exec(
+        self, name: str, args: dict, job_id: str = "manual"
+    ) -> ExecutionTicket:
         entry = self.registry.find(name)
         if not entry:
             raise VerifyError(f"Tool not found: {name}")
         self._verify(entry)
         tool_path = Path(entry["path"]) / "tool.py"
-        if not tool_path.exists():
-            raise VerifyError("tool.py missing from installed tool path")
         self._validate_contract(tool_path)
+        code = (
+            "import json,importlib.util\n"
+            "args=json.loads(__import__('sys').argv[1])\n"
+            "spec=importlib.util.spec_from_file_location('tool_runtime', 'tool.py')\n"
+            "mod=importlib.util.module_from_spec(spec)\n"
+            "spec.loader.exec_module(mod)\n"
+            "print(json.dumps(mod.run(args, {'approved': True})))\n"
+        )
+        return ExecutionTicket(
+            job_id=job_id,
+            action="execute",
+            commands=[["python", "-I", "-c", code, json.dumps(args)]],
+            cwd=entry["path"],
+            allow_network=tbs.ALLOW_NETWORK,
+            allow_external_apps=tbs.ALLOW_EXTERNAL_APPS,
+            allow_delete=tbs.ALLOW_DELETE_ACTIONS,
+            allow_system_wide=tbs.ALLOW_SYSTEM_WIDE_ACTIONS,
+            paths_rw=[entry["path"]],
+            timeout_seconds=self.timeout_s,
+        )
 
-        def run_in_subprocess(args: dict, _ctx):
-            code = (
-                "import json\n"
-                "import importlib.util\n"
-                "import socket\n"
-                "def _blocked(*a, **k):\n"
-                "    raise RuntimeError('Network disabled by toolbox sandbox')\n"
-                "socket.socket = _blocked\n"
-                "socket.create_connection = _blocked\n"
-                "args=json.loads(__import__('sys').argv[1])\n"
-                "spec=importlib.util.spec_from_file_location('tool_runtime', 'tool.py')\n"
-                "mod=importlib.util.module_from_spec(spec)\n"
-                "spec.loader.exec_module(mod)\n"
-                "result=mod.run(args,None)\n"
-                "print(json.dumps(result))\n"
+    def execute_with_approval(
+        self, ticket: ExecutionTicket, receipt: ApprovalReceipt | None
+    ) -> dict:
+        th = ticket_hash(ticket)
+        report = assess(ticket, settings=tbs)
+        validate_receipt(th, receipt, report.tier)
+        append_event(
+            ticket.job_id, "approval granted", {"ticket_hash": th, "risk": report.tier}
+        )
+        if tbs.TOOLBOX_MODE == "safe":
+            raise PolicyError("SAFE mode cannot execute")
+        self._validate_runtime_guards(ticket)
+
+        cmd = ticket.commands[0]
+        env = {"PATH": os.environ.get("PATH", ""), **ticket.env_overrides}
+        proc = subprocess.run(
+            cmd,
+            cwd=ticket.cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=ticket.timeout_seconds,
+        )
+        out = (proc.stdout + proc.stderr)[: self.output_cap]
+        append_event(
+            ticket.job_id,
+            "execution ended",
+            {"ticket_hash": th, "code": proc.returncode},
+        )
+        if proc.returncode != 0:
+            raise VerifyError(f"Tool execution failed: {out}")
+        return json.loads(proc.stdout.strip() or "{}")
+
+    def load(self, name: str):
+        def run_tool(args: dict, ctx):
+            raise PolicyError(
+                "Direct tool execution disabled; use propose_exec + execute_with_approval"
             )
-            sandbox_home = str(Path(entry["path"]) / ".sandbox_home")
-            Path(sandbox_home).mkdir(parents=True, exist_ok=True)
-            env = {
-                "PATH": os.environ.get("PATH", ""),
-                "HOME": sandbox_home,
-                "PYTHONNOUSERSITE": "1",
-            }
-            try:
-                proc = subprocess.run(
-                    [sys.executable, "-I", "-c", code, json.dumps(args)],
-                    cwd=str(Path(entry["path"])),
-                    env=env,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_s,
-                    preexec_fn=self._build_preexec_fn(),
-                )
-            except subprocess.TimeoutExpired as exc:
-                raise VerifyError(f"Tool timed out after {self.timeout_s}s") from exc
-            out = (proc.stdout + proc.stderr)[: self.output_cap].strip()
-            if proc.returncode != 0:
-                raise VerifyError(f"Tool execution failed: {out}")
-            try:
-                return json.loads(proc.stdout.strip() or "{}")
-            except json.JSONDecodeError as exc:
-                raise VerifyError(f"Tool returned non-JSON output: {out}") from exc
 
-        return run_in_subprocess
+        return run_tool

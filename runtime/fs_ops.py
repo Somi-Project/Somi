@@ -27,7 +27,9 @@ class FSOps:
         p = self.sandbox.resolve(path)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(content, encoding="utf-8")
-        self.journal.append("fs.write", "Write file", {"path": str(p), "bytes": len(data)})
+        self.journal.append(
+            "fs.write", "Write file", {"path": str(p), "bytes": len(data)}
+        )
 
     def mkdir(self, path: str) -> None:
         require_cap(self.ctx, CAP_FS_WRITE)
@@ -38,6 +40,11 @@ class FSOps:
     def list_dir(self, path: str) -> list[str]:
         require_cap(self.ctx, CAP_FS_READ)
         p = self.sandbox.resolve(path)
-        out = sorted([x.name for x in p.iterdir()]) if p.exists() else []
-        self.journal.append("fs.list", "List directory", {"path": str(p), "count": len(out)})
+        if not p.exists() or not p.is_dir():
+            out = []
+        else:
+            out = sorted([x.name for x in p.iterdir()])
+        self.journal.append(
+            "fs.list", "List directory", {"path": str(p), "count": len(out)}
+        )
         return out
