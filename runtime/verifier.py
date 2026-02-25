@@ -37,7 +37,7 @@ def verify_static(tool_dir: str) -> None:
 def verify_exec(
     tool_dir: str, ticket: ExecutionTicket, receipt: ApprovalReceipt | None
 ) -> list[dict]:
-    if tbs.TOOLBOX_MODE == "safe":
+    if tbs.normalized_mode() == tbs.MODE_SAFE:
         raise PolicyError("verify_exec is disabled in SAFE mode")
     if not Path(tool_dir).exists():
         raise VerifyError("verify_exec tool_dir does not exist")

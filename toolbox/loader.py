@@ -12,7 +12,7 @@ from runtime.audit import append_event
 from runtime.errors import PolicyError, VerifyError
 from runtime.hashing import sha256_file
 from runtime.risk import assess
-from runtime.ticketing import ExecutionTicket, ticket_hash
+from runtime.ticketing import ExecutionTicket, ticket_hash, validate_ticket_integrity
 from toolbox.registry import ToolRegistry
 
 
@@ -61,7 +61,7 @@ class ToolLoader:
 
     def _validate_runtime_guards(self, ticket: ExecutionTicket) -> None:
         cmd_text = "\n".join(" ".join(c).lower() for c in ticket.commands)
-        if tbs.TOOLBOX_MODE != "system_agent":
+        if tbs.normalized_mode() != tbs.MODE_SYSTEM_AGENT:
             for pat in tbs.NEVER_DO_PATTERNS:
                 if pat.lower() in cmd_text:
                     raise PolicyError(
@@ -74,7 +74,7 @@ class ToolLoader:
                 path = Path(rw).expanduser().resolve()
                 if any(str(path).startswith(str(prot)) for prot in protected):
                     raise PolicyError(f"Protected path blocked: {rw}")
-        if tbs.TOOLBOX_MODE == "guided":
+        if tbs.normalized_mode() == tbs.MODE_GUIDED:
             staging_root = (
                 Path("sessions/jobs") / ticket.job_id / "staging_repo"
             ).resolve()
@@ -120,10 +120,11 @@ class ToolLoader:
         th = ticket_hash(ticket)
         report = assess(ticket, settings=tbs)
         validate_receipt(th, receipt, report.tier)
+        validate_ticket_integrity(ticket, receipt.ticket_hash if receipt else th)
         append_event(
             ticket.job_id, "approval granted", {"ticket_hash": th, "risk": report.tier}
         )
-        if tbs.TOOLBOX_MODE == "safe":
+        if tbs.normalized_mode() == tbs.MODE_SAFE:
             raise PolicyError("SAFE mode cannot execute")
         self._validate_runtime_guards(ticket)
 

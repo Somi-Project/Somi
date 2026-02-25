@@ -1,12 +1,12 @@
 """Orchestrator simulation audit for streaming/interruptible speech logic."""
 
+from __future__ import annotations
+
 import asyncio
 
-try:
-    import numpy as np
-except Exception:
-    print("orchestrator_sim_skipped: numpy unavailable")
-    raise SystemExit(0)
+import pytest
+
+np = pytest.importorskip("numpy", reason="numpy unavailable in environment")
 
 import speech.somistate as somistate_mod
 from speech.orchestrator import Orchestrator
@@ -93,8 +93,7 @@ async def _run_test():
     assert stt.calls == 1, f"expected exactly 1 STT final call, got {stt.calls}"
     assert agent_calls == 1, f"expected exactly 1 agent call, got {agent_calls}"
     assert audio_out.stop_calls >= 1, "expected barge-in cancel stop() during speaking"
-    print("orchestrator_sim_ok")
 
 
-if __name__ == "__main__":
+def test_orchestrator_sim():
     asyncio.run(_run_test())
