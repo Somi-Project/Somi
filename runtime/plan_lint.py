@@ -3,23 +3,18 @@ from __future__ import annotations
 
 def lint_plan(plan: dict, mode: str, autonomy: bool = False) -> list[str]:
     errs: list[str] = []
-    text = (
-        "\n".join(plan.get("steps", []))
-        if isinstance(plan.get("steps"), list)
-        else str(plan)
-    )
+    steps = plan.get("steps", []) if isinstance(plan, dict) else []
+    text = "\n".join(steps) if isinstance(steps, list) else str(plan)
     low = text.lower()
-    if mode == "safe" or autonomy:
-        if any(
-            x in low for x in ["execute", "run tests", "pip install", "npm install"]
-        ):
-            errs.append("execution is not allowed in safe/autonomy modes")
-    if "bulk" in low and "targetset" not in low:
-        errs.append("bulk plans must include TargetSet")
-    if any(x in low for x in ["delete", "rm "]) and "typed confirm" not in low:
-        errs.append("delete actions require typed confirmation")
-    if "network" in low and "justification:" not in low:
-        errs.append("network enablement requires justification line")
-    if any(x in low for x in ["high", "critical"]) and "rollback" not in low:
-        errs.append("high/critical plans must include rollback")
+    mode_up = str(mode).upper()
+
+    if mode_up == "SAFE" or autonomy:
+        if any(x in low for x in ["execute", "run", "install", "apply now"]):
+            errs.append("attempts execution in SAFE/autonomy mode")
+    if any(x in low for x in ["high risk", "critical", "delete", "system-wide"]) and "rollback" not in low:
+        errs.append("high-risk plans must include rollback")
+    if "bulk" in low and not all(x in low for x in ["criteria", "sample", "dry run", "checkpoint"]):
+        errs.append("bulk actions require safeguards (criteria/sample/dry-run/checkpoint)")
+    if "network" in low and "justification" not in low:
+        errs.append("network enablement requires justification")
     return errs
