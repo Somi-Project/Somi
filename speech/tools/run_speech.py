@@ -4,45 +4,38 @@ import os
 
 import numpy as np
 
-from handlers.audio.playback import AudioPlayer
-from handlers.audio.vad import SimpleVAD
-from handlers.tts import get_tts_engine
-from speech.brain.agent_bridge import init_agent_bridge, ask_agent
-from speech.config import (
-    AGENT_NAME_DEFAULT,
-    AUDIO_GAIN,
-    EXPECTED_STT_SR,
-    FRAME_MS,
-    SAMPLE_RATE,
-    USER_ID_DEFAULT,
-    USE_STUDIES_DEFAULT,
-    VAD_MIN_UTTERANCE_MS,
-    VAD_RMS_THRESHOLD,
-    VAD_SPEECH_HANGOVER_MS,
-)
+from speech.brain.agent_bridge import init_agent_bridge
+from speech.config import AGENT_NAME_DEFAULT, AUDIO_GAIN, ECHO_POLICY, EXPECTED_STT_SR, FRAME_MS, SAMPLE_RATE, TTS_BACKEND, USER_ID_DEFAULT, USE_STUDIES_DEFAULT
 from speech.io.audio_in import AudioIn
 from speech.metrics.log import logger
 from speech.stt.stt_whisper import WhisperSTT
+from speech.tts.factory import build_tts
+
+
+def _ack(audio_out: AudioOut):
+    sr = SAMPLE_RATE
+    t = np.linspace(0, 0.12, int(sr * 0.12), False)
+    tone = 0.08 * np.sin(2 * np.pi * 880 * t)
+    audio_out.play(tone.astype(np.float32), sr)
 
 
 async def _main(args):
+    if args.tts_backend:
+        os.environ["SOMI_TTS_BACKEND"] = args.tts_backend
     init_agent_bridge(agent_name=args.agent_name, use_studies=args.use_studies, user_id=args.user_id)
-    audio_in = AudioIn(
-        sample_rate=SAMPLE_RATE,
-        frame_ms=FRAME_MS,
-        gain=AUDIO_GAIN,
-        device=args.input_device,
-        os_profile=args.os_profile,
-    )
-    stt = WhisperSTT(expected_sr=EXPECTED_STT_SR)
-    tts = get_tts_engine()
-    player = AudioPlayer(device=args.output_device, os_profile=args.os_profile)
-    vad = SimpleVAD(
-        sample_rate=SAMPLE_RATE,
-        frame_ms=FRAME_MS,
-        rms_threshold=VAD_RMS_THRESHOLD,
-        speech_hangover_ms=VAD_SPEECH_HANGOVER_MS,
-        min_utterance_ms=VAD_MIN_UTTERANCE_MS,
+    audio_out = AudioOut(device=args.output_device, os_profile=args.os_profile)
+    state = SomiState(audio_out=audio_out, tts_engine=build_tts(), backchannel_cb=lambda: _ack(audio_out))
+    orchestrator = Orchestrator(
+        audio_in=AudioIn(
+            sample_rate=SAMPLE_RATE,
+            frame_ms=FRAME_MS,
+            gain=AUDIO_GAIN,
+            device=args.input_device,
+            os_profile=args.os_profile,
+        ),
+        stt_engine=WhisperSTT(expected_sr=EXPECTED_STT_SR),
+        somistate=state,
+        echo_policy=args.echo_policy,
     )
 
     barge_frames = 0
@@ -109,12 +102,11 @@ def parse_args():
     p.add_argument("--input-device", default=os.getenv("SOMI_SPEECH_INPUT_DEVICE"))
     p.add_argument("--output-device", default=os.getenv("SOMI_SPEECH_OUTPUT_DEVICE"))
     p.add_argument("--os-profile", choices=["auto", "windows", "mac", "linux"], default=os.getenv("SOMI_SPEECH_OS_PROFILE", "auto"))
-    p.add_argument("--barge-rms-threshold", type=float, default=float(os.getenv("SOMI_BARGE_IN_RMS", "0.03")))
-    p.add_argument("--barge-frames", type=int, default=int(os.getenv("SOMI_BARGE_IN_FRAMES", "3")))
+    p.add_argument("--tts-backend", choices=["pocket", "pocket_server"], default=os.getenv("SOMI_TTS_BACKEND", TTS_BACKEND))
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
-    logger.info("Starting speech user_id=%s os_profile=%s", args.user_id, args.os_profile)
+    logger.info("Starting speech with agent=%s user_id=%s os_profile=%s tts_backend=%s", args.agent_name, args.user_id, args.os_profile, args.tts_backend)
     asyncio.run(_main(args))
