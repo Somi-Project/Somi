@@ -70,6 +70,8 @@ Optional:
 git clone https://github.com/Somi-Project/Somi.git
 cd Somi
 pip install -r requirements.txt
+pip install torch torchvision #for pure cpu loading
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 #for gpu loading (faster) - please change cu121 to match your cude compatible version
 ```
 
 Pull models:
