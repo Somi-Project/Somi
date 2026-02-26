@@ -1,4 +1,4 @@
-# S.O.M.I.
+# S.O.M.I. 🕊
 ### Local-First AI Agent Framework
 
 ⚡ Runs on consumer hardware  
