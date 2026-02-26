@@ -387,9 +387,9 @@ class AgentpediaKB:
             if len(claim) > 200:
                 skipped["too_long"] = skipped.get("too_long", 0) + 1
                 continue
-            source_url = "https://example.org/agentpedia-seed"
-            source_title = "Agentpedia Seed Knowledge"
-            confidence = 0.70
+            source_url = "local://agentpedia-seed"
+            source_title = "Agentpedia Seed Knowledge (local)"
+            confidence = 0.30
             facts.append(
                 {
                     "claim": claim,
@@ -401,7 +401,7 @@ class AgentpediaKB:
                     "source_date": datetime.now().date().isoformat(),
                     "retrieved_at": now_iso,
                     "confidence": confidence,
-                    "status": "committed",
+                    "status": "seed",
                     "evidence_snippet": claim[:240],
                     "citation_key": f"[{idx}]",
                     "dedupe_key": _hash(f"{_norm_claim(claim)}|{_domain(source_url)}"),
