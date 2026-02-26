@@ -782,8 +782,7 @@ class Agent:
         if control.handled:
             return control.response_text
 
-        skill_env = {**dict(os.environ), "SOMI_USER_ID": active_user_id}
-        skill_cmd = handle_skill_command(prompt, env=skill_env)
+        skill_cmd = handle_skill_command(prompt)
         if skill_cmd.handled:
             if skill_cmd.forced_skill_keys:
                 self._forced_skill_keys_by_user[active_user_id] = list(skill_cmd.forced_skill_keys)

@@ -34,8 +34,6 @@ def normalize_ticket(ticket: ExecutionTicket) -> dict:
     payload["paths_ro"] = sorted(payload.get("paths_ro", []))
     payload["allowed_capabilities"] = sorted(payload.get("allowed_capabilities", []))
     payload["env_overrides"] = {k: payload["env_overrides"][k] for k in sorted(payload.get("env_overrides", {}))}
-    # keep hash deterministic for semantically identical tickets across turns
-    payload.pop("created_timestamp", None)
     return payload
 
 

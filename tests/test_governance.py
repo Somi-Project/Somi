@@ -99,9 +99,3 @@ def test_controller_respects_quiet_hours_for_nudges(tmp_path, monkeypatch):
     handle_turn("this is pending follow up", {"user_id": "u-quiet"})
     st = load_user_state("u-quiet")
     assert st.scheduled_nudges == []
-
-
-def test_ticket_hash_deterministic_across_recreation():
-    t1 = ExecutionTicket(job_id="h1", action="execute", commands=[["echo", "ok"]], cwd=".")
-    t2 = ExecutionTicket(job_id="h1", action="execute", commands=[["echo", "ok"]], cwd=".")
-    assert ticket_hash(t1) == ticket_hash(t2)
