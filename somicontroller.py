@@ -70,6 +70,27 @@ class FetchWorker(QThread):
             self.result.emit(self.kind, {"error": str(exc)})
 
 
+class AgentWarmupWorker(QThread):
+    warmed = pyqtSignal(bool, str)
+
+    def __init__(self, agent_name: str, user_id: str, use_studies: bool):
+        super().__init__()
+        self.agent_name = agent_name
+        self.user_id = user_id
+        self.use_studies = use_studies
+        self.agent = None
+
+    def run(self):
+        try:
+            from agents import Agent
+
+            self.agent = Agent(name=self.agent_name, user_id=self.user_id, use_studies=self.use_studies)
+            self.warmed.emit(True, self.agent.name)
+        except Exception as exc:
+            logger.exception("Agent warmup failed")
+            self.warmed.emit(False, str(exc))
+
+
 class WaveformWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -205,6 +226,9 @@ class SomiAIGUI(QMainWindow):
         self.twitter_autoresponse_process = None
         self.alex_process = None
         self.ai_model_process = None
+        self.preloaded_agent = None
+        self.agent_warmup_worker = None
+        self.chat_worker = None
         self.ai_model_start_button = QPushButton("AI Model Start/Stop")
         self.ai_model_start_button.setVisible(False)
 
@@ -247,6 +271,7 @@ class SomiAIGUI(QMainWindow):
         self.load_gui_theme_preference()
         self.apply_theme()
         self.wire_signals_and_timers()
+        self.preload_default_agent_and_chat_worker()
         self.heartbeat_service.start()
 
         self.push_activity("system", "Prime Console booted")
@@ -894,6 +919,40 @@ class SomiAIGUI(QMainWindow):
     def refresh_agent_names(self):
         self.agent_keys, self.agent_names = self.load_agent_names()
 
+    def _default_agent_key(self):
+        if self.agent_keys:
+            return self.agent_keys[0]
+        return "Name: Somi"
+
+    def preload_default_agent_and_chat_worker(self):
+        self.refresh_agent_names()
+        agent_key = self._default_agent_key()
+        self.push_activity("core", f"Preloading agent {agent_key.replace('Name: ', '')}")
+
+        self.agent_warmup_worker = AgentWarmupWorker(agent_name=agent_key, user_id="default_user", use_studies=True)
+        self.agent_warmup_worker.warmed.connect(self._on_agent_warmed)
+        self.agent_warmup_worker.start()
+
+        try:
+            from gui.aicoregui import ChatWorker
+
+            self.chat_worker = ChatWorker(self, agent_key, True)
+            self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
+            self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
+            self.chat_worker.start()
+            self.push_activity("core", "Chat worker pre-initialized")
+        except Exception as exc:
+            logger.exception("Failed to pre-initialize chat worker")
+            self.push_activity("core", f"Chat worker preload failed: {exc}")
+
+    def _on_agent_warmed(self, ok: bool, detail: str):
+        if ok:
+            if self.agent_warmup_worker:
+                self.preloaded_agent = self.agent_warmup_worker.agent
+            self.push_activity("core", f"Agent warmup ready: {detail}")
+        else:
+            self.push_activity("core", f"Agent warmup failed: {detail}")
+
     def toggle_ai_model(self):
         aicoregui.ai_model_start_stop(self)
         self.push_activity("core", "AI model toggled")
@@ -1079,6 +1138,12 @@ class SomiAIGUI(QMainWindow):
 
     def closeEvent(self, event):
         self.heartbeat_service.stop()
+        if self.chat_worker and self.chat_worker.isRunning():
+            self.chat_worker.stop()
+            self.chat_worker.wait(1500)
+        if self.agent_warmup_worker and self.agent_warmup_worker.isRunning():
+            self.agent_warmup_worker.quit()
+            self.agent_warmup_worker.wait(1000)
         for process in [self.telegram_process, self.twitter_autotweet_process, self.twitter_autoresponse_process, self.alex_process, self.ai_model_process]:
             if process and process.poll() is None:
                 try:

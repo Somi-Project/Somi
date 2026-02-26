@@ -104,6 +104,15 @@ class SomiState:
             self._close_turn_metrics(turn_id)
             self.pending_chunks_by_turn.pop(turn_id, None)
 
+    async def _emit_fallback_chunk(self, turn_id: int, text: str) -> None:
+        if turn_id != self.turn_id:
+            return
+        chunk = (text or "").strip()
+        if not chunk:
+            return
+        self.pending_chunks_by_turn[turn_id] = self.pending_chunks_by_turn.get(turn_id, 0) + 1
+        await self.event_bus.publish(SpeechEvent(type=SPEAK_CHUNK, turn_id=turn_id, payload={"chunk": chunk}))
+
     async def cognition_loop(self, user_id: str):
         queue = self.cognition_queue
         while True:
@@ -148,6 +157,7 @@ class SomiState:
         self.backchannel_task = asyncio.create_task(_backchannel_waiter())
         chunker = StreamingChunker()
         started_at = time.monotonic()
+        logger.info("Agent task start: turn_id=%s prompt_chars=%s", turn_id, len(prompt or ""))
 
         try:
             async for fragment in ask_agent_stream(prompt, user_id=user_id):
@@ -168,6 +178,12 @@ class SomiState:
                         SpeechEvent(type=SPEAK_CHUNK, turn_id=turn_id, payload={"chunk": chunk})
                     )
                     first_chunk_sent = True
+                    if self.pending_chunks_by_turn.get(turn_id, 0) == 1:
+                        logger.info(
+                            "Agent first chunk ready: turn_id=%s latency_ms=%.2f",
+                            turn_id,
+                            (time.monotonic() - started_at) * 1000,
+                        )
                     tm = self.turn_metrics.get(turn_id)
                     if tm and "agent_done" not in tm.marks:
                         tm.mark("agent_done")
@@ -180,24 +196,26 @@ class SomiState:
                 first_chunk_sent = True
 
             if not first_chunk_sent and turn_id == self.turn_id:
-                self.state = self.LISTENING
-                self._close_turn_metrics(turn_id, extra={"empty_response": True})
+                logger.warning("Agent produced no chunks: turn_id=%s", turn_id)
+                await self._emit_fallback_chunk(turn_id, "I heard you, but I don't have a response yet. Please try again.")
+                self._close_turn_metrics(turn_id, extra={"empty_response": True, "fallback_spoken": True})
         except asyncio.TimeoutError:
             if turn_id == self.turn_id:
-                self.state = self.LISTENING
-                self._close_turn_metrics(turn_id, extra={"timeout": True})
                 logger.warning("Agent timed out for turn_id=%s", turn_id)
+                await self._emit_fallback_chunk(turn_id, "I'm taking too long right now. Please ask again.")
+                self._close_turn_metrics(turn_id, extra={"timeout": True, "fallback_spoken": True})
         except asyncio.CancelledError:
             return
         except Exception as exc:
             if turn_id == self.turn_id:
-                self.state = self.LISTENING
-                self._close_turn_metrics(turn_id, extra={"agent_error": str(exc)})
                 logger.exception("Agent task failed for turn_id=%s: %s", turn_id, exc)
+                await self._emit_fallback_chunk(turn_id, "I hit an internal error. Please try that again.")
+                self._close_turn_metrics(turn_id, extra={"agent_error": str(exc), "fallback_spoken": True})
         finally:
             if turn_id == self.turn_id:
                 self.agent_finished_turns.add(turn_id)
                 self._maybe_finish_turn(turn_id)
+                logger.info("Agent task done: turn_id=%s", turn_id)
             if self.backchannel_task and not self.backchannel_task.done():
                 self.backchannel_task.cancel()
 

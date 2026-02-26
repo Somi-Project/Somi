@@ -338,11 +338,43 @@ def ai_chat(app):
     layout.addWidget(image_buttons)
 
     chat_worker = None
+    using_app_chat_worker = False
     spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
     spinner_index = 0
     spinner_state = "Idle"
     spinner_timer = QTimer()
     spinner_timer.setInterval(90)
+
+    def _attach_worker_signals(worker):
+        try:
+            worker.response_signal.disconnect(on_response)
+        except Exception:
+            pass
+        try:
+            worker.status_signal.disconnect(set_status)
+        except Exception:
+            pass
+        try:
+            worker.error_signal.disconnect(on_worker_error)
+        except Exception:
+            pass
+        worker.response_signal.connect(on_response)
+        worker.status_signal.connect(set_status)
+        worker.error_signal.connect(on_worker_error)
+
+    def _detach_worker_signals(worker):
+        try:
+            worker.response_signal.disconnect(on_response)
+        except Exception:
+            pass
+        try:
+            worker.status_signal.disconnect(set_status)
+        except Exception:
+            pass
+        try:
+            worker.error_signal.disconnect(on_worker_error)
+        except Exception:
+            pass
 
     def on_response(user_input, ai_response):
         selected_name = name_combo.currentText()
@@ -381,7 +413,7 @@ def ai_chat(app):
         QMessageBox.critical(chat_window, "Error", msg)
 
     def start_chat():
-        nonlocal chat_worker
+        nonlocal chat_worker, using_app_chat_worker
         selected_name = name_combo.currentText()
         if not app.agent_names:
             QMessageBox.critical(chat_window, "Error", "No agents loaded. Check personalC.json.")
@@ -402,18 +434,25 @@ def ai_chat(app):
             stop_button.setEnabled(False)
             return
 
-        if chat_worker and chat_worker.isRunning():
+        if chat_worker and chat_worker.isRunning() and not using_app_chat_worker:
             chat_worker.stop()
             chat_worker.wait()
         if ocr_worker and ocr_worker.isRunning():
             ocr_worker.requestInterruption()
             ocr_worker.wait(100)
 
-        chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-        chat_worker.response_signal.connect(on_response)
-        chat_worker.status_signal.connect(set_status)
-        chat_worker.error_signal.connect(on_worker_error)
-        chat_worker.start()
+        existing_worker = getattr(app, "chat_worker", None)
+        if existing_worker and existing_worker.isRunning():
+            chat_worker = existing_worker
+            using_app_chat_worker = True
+            _attach_worker_signals(chat_worker)
+            chat_worker.update_agent(agent_key, use_studies_check.isChecked())
+        else:
+            chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
+            using_app_chat_worker = False
+            _attach_worker_signals(chat_worker)
+            chat_worker.start()
+            app.chat_worker = chat_worker
         chat_area.append(f"Connected to {selected_name}. You can start chatting now.\n")
         set_status("Idle")
         send_button.setEnabled(True)
@@ -422,7 +461,7 @@ def ai_chat(app):
         stop_button.setEnabled(False)
 
     def apply_agent():
-        nonlocal chat_worker
+        nonlocal chat_worker, using_app_chat_worker
         selected_name = name_combo.currentText()
         if not app.agent_names:
             return
@@ -442,13 +481,14 @@ def ai_chat(app):
             chat_area.append(f"Switched to {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
         else:
             if chat_worker:
-                chat_worker.stop()
-                chat_worker.wait()
+                if not using_app_chat_worker:
+                    chat_worker.stop()
+                    chat_worker.wait()
             chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-            chat_worker.response_signal.connect(on_response)
-            chat_worker.status_signal.connect(set_status)
-            chat_worker.error_signal.connect(on_worker_error)
+            using_app_chat_worker = False
+            _attach_worker_signals(chat_worker)
             chat_worker.start()
+            app.chat_worker = chat_worker
             chat_area.clear()
             chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
 
@@ -546,10 +586,12 @@ def ai_chat(app):
         stop_button.setEnabled(False)
 
     def quit_chat():
-        nonlocal chat_worker, ocr_worker
-        if chat_worker and chat_worker.isRunning():
+        nonlocal chat_worker, ocr_worker, using_app_chat_worker
+        if chat_worker and chat_worker.isRunning() and not using_app_chat_worker:
             chat_worker.stop()
             chat_worker.wait()
+        if chat_worker and using_app_chat_worker:
+            _detach_worker_signals(chat_worker)
         if ocr_worker and ocr_worker.isRunning():
             ocr_worker.requestInterruption()
             ocr_worker.wait(100)

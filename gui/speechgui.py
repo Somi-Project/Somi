@@ -158,7 +158,8 @@ def alex_ai_toggle(app):
                 app.alex_process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    stdin=subprocess.DEVNULL,
                     text=True,
                     universal_newlines=True,
                     bufsize=1,
@@ -198,9 +199,9 @@ def alex_ai_toggle(app):
         dialog.exec()
 
 def read_stderr(process, q):
-    """Read stderr lines and put them into the queue."""
+    """Read process output lines and put them into the queue."""
     while True:
-        line = process.stderr.readline()
+        line = process.stdout.readline()
         if line:
             q.put(line.strip())
         else:
