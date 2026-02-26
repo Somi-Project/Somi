@@ -1,14 +1,15 @@
-"""Toolbox safety settings.
+"""Toolbox safety settings and mode guardrails."""
 
-# DONOTTOUCH: system_agent mode can cause data loss if enabled incorrectly.
-"""
+MODE_SAFE = "SAFE"
+MODE_GUIDED = "GUIDED"
+MODE_SYSTEM_AGENT = "SYSTEM_AGENT"
 
-TOOLBOX_MODE = "safe"  # safe | guided | system_agent
+TOOLBOX_MODE = MODE_SAFE
 
 # High-friction system agent opt-in.
 ENABLE_SYSTEM_AGENT_MODE = False
 SYSTEM_AGENT_I_ACCEPT_RISK = ""
-SYSTEM_AGENT_REQUIRED_PHRASE = "I ACCEPT DATA LOSS RISK"
+SYSTEM_AGENT_REQUIRED_PHRASE = "I ACKNOWLEDGE SYSTEM_AGENT RISK"
 
 ALLOW_EXTERNAL_APPS = False
 ALLOW_SYSTEM_WIDE_ACTIONS = False
@@ -50,12 +51,17 @@ NEVER_DO_PATTERNS = [
 ]
 
 
+def normalized_mode() -> str:
+    return str(TOOLBOX_MODE or MODE_SAFE).strip().upper()
+
+
 def assert_mode_safety() -> None:
     """Runtime guardrails; comments are not safety controls."""
-    if TOOLBOX_MODE == "system_agent":
+    mode = normalized_mode()
+    if mode == MODE_SYSTEM_AGENT:
         if not ENABLE_SYSTEM_AGENT_MODE:
             raise RuntimeError(
-                "system_agent mode requires ENABLE_SYSTEM_AGENT_MODE=True"
+                "SYSTEM_AGENT mode requires ENABLE_SYSTEM_AGENT_MODE=True"
             )
         if SYSTEM_AGENT_I_ACCEPT_RISK != SYSTEM_AGENT_REQUIRED_PHRASE:
-            raise RuntimeError("system_agent mode requires exact typed risk phrase")
+            raise RuntimeError("SYSTEM_AGENT mode requires exact typed risk phrase")

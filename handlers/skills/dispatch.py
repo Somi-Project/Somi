@@ -12,6 +12,11 @@ from pathlib import Path
 from typing import Any
 
 from handlers.toolbox_handler import dispatch_or_run
+from config import toolboxsettings as tbs
+from config import assistantsettings as aset
+from runtime.risk import assess
+from runtime.ticketing import ExecutionTicket, ticket_hash
+from runtime.user_state import load_user_state, save_user_state
 
 from .registry import build_registry_snapshot, settings_dict
 from .types import SkillDoc
@@ -209,6 +214,56 @@ def _run_cli_skill(skill: SkillDoc, raw_args: str, cfg: dict, env: dict) -> dict
     )
 
 
+def _build_skill_ticket(skill: SkillDoc, raw_args: str, user_id: str) -> ExecutionTicket:
+    argv = shlex.split(raw_args or "", posix=(os.name != "nt"))
+    cmds = [["skill.run", skill.skill_key, *argv]]
+    low = " ".join(argv).lower()
+    return ExecutionTicket(
+        job_id=f"skill-{user_id}-{skill.skill_key}",
+        action="skill_run",
+        commands=cmds,
+        cwd=".",
+        allow_network=("http://" in low or "https://" in low or "curl" in low or "wget" in low),
+        allow_delete=("delete" in low or "remove" in low or "--delete" in low),
+        allow_system_wide=("system" in low and "wide" in low),
+    )
+
+
+
+
+def _bounded_pending_approvals(items: list[str]) -> list[str]:
+    cap = max(1, int(getattr(aset, "MAX_UNRESOLVED_LOOPS", 20)))
+    # keep newest approvals by insertion order
+    return items[-cap:]
+
+def _govern_skill_run(skill: SkillDoc, raw_args: str, confirm: bool, user_id: str) -> tuple[bool, str, str]:
+    ticket = _build_skill_ticket(skill, raw_args, user_id)
+    th = ticket_hash(ticket)
+    state = load_user_state(user_id)
+    report = assess(ticket)
+
+    if not confirm:
+        if th not in state.pending_approvals:
+            state.pending_approvals.append(th)
+            state.pending_approvals = _bounded_pending_approvals(state.pending_approvals)
+            save_user_state(state)
+        return False, th, (
+            f"Proposed skill run '{skill.skill_key}' (risk={report.tier}, ticket={th[:10]}...). "
+            "Review and re-run with --confirm to execute."
+        )
+
+    if th not in state.pending_approvals:
+        return False, th, "No pending approval found for this exact skill run. Re-run without --confirm first."
+
+    if tbs.normalized_mode() == tbs.MODE_SAFE:
+        return False, th, "SAFE mode blocks skill execution; request remains proposal-only."
+
+    state.pending_approvals = [x for x in state.pending_approvals if x != th]
+    state.pending_approvals = _bounded_pending_approvals(state.pending_approvals)
+    save_user_state(state)
+    return True, th, "approved"
+
+
 def _run_skill(skill: SkillDoc, raw_args: str, cfg: dict, env: dict) -> SkillDispatchResult:
     if skill.command_dispatch == "tool" and skill.command_tool:
         override = ((cfg.get("SKILLS_ENTRIES") or {}).get(skill.skill_key, {}) or {}).get("commandToolOverride")
@@ -341,6 +396,7 @@ def handle_skill_command(message: str, env: dict | None = None) -> SkillDispatch
         return SkillDispatchResult(handled=False)
 
     env = env or dict(os.environ)
+    user_id = str(env.get("SOMI_USER_ID", "default_user"))
     reg = build_registry_snapshot(cfg=cfg, env=env, force_refresh=True)
     eligible = reg["eligible"]
     ineligible = reg["ineligible"]
@@ -402,13 +458,15 @@ def handle_skill_command(message: str, env: dict | None = None) -> SkillDispatch
                 if entry.get("allowActive") is False:
                     _record_recent_run(skill, raw_args, status="blocked", summary="Blocked by allowActive=false", confirmed=confirm)
                     return SkillDispatchResult(handled=True, response="This skill cannot perform active/state-changing actions (policy override).")
-                if not confirm:
-                    _record_recent_run(skill, raw_args, status="dry_run", summary="Awaiting --confirm", confirmed=False)
-                    return SkillDispatchResult(handled=True, response=_dry_run_warning(skill, raw_args))
+
+            allowed, th, msg = _govern_skill_run(skill, raw_args, confirm=confirm, user_id=user_id)
+            if not allowed:
+                _record_recent_run(skill, raw_args, status="dry_run" if not confirm else "blocked", summary=msg, confirmed=confirm)
+                return SkillDispatchResult(handled=True, response=msg)
 
             try:
                 result = _run_skill(skill=skill, raw_args=raw_args, cfg=cfg, env=env)
-                _record_recent_run(skill, raw_args, status="ran", summary="completed", confirmed=confirm)
+                _record_recent_run(skill, raw_args, status="ran", summary=f"ticket={th[:10]} completed", confirmed=confirm)
                 return result
             except Exception as exc:
                 _record_recent_run(skill, raw_args, status="error", summary=f"{type(exc).__name__}: {exc}", confirmed=confirm)

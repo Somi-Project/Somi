@@ -40,9 +40,11 @@ from handlers.websearch_tools.conversion import parse_conversion_request  # pars
 from handlers.routing import decide_route
 from handlers.time_handler import TimeHandler
 from handlers.wordgame import WordGameHandler
-from handlers.toolbox_handler import create_tool_job, dispatch_or_run
 from handlers.skills.dispatch import handle_skill_command
 from handlers.skills.registry import build_registry_snapshot
+from runtime.approval import ApprovalReceipt
+from runtime.controller import handle_turn
+from toolbox.loader import ToolLoader
 
 from handlers.memory import Memory3Manager
 from promptforge import PromptForge
@@ -89,6 +91,7 @@ class Agent:
         self._last_due_injected_at: Dict[str, float] = {}
         self._due_inject_cooldown_seconds = 300.0
         self._forced_skill_keys_by_user: Dict[str, List[str]] = {}
+        self._pending_tickets_by_user: Dict[str, Any] = {}
 
         # Load personality config
         try:
@@ -743,25 +746,48 @@ class Agent:
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
 
-        skill_cmd = handle_skill_command(prompt)
-        if skill_cmd.handled:
-            if skill_cmd.forced_skill_keys:
-                self._forced_skill_keys_by_user[active_user_id] = list(skill_cmd.forced_skill_keys)
-            return skill_cmd.response
-
-        toolbox_create = re.match(r"^create tool\s+([a-zA-Z0-9_\-]+)(?:\s*:\s*(.+))?$", prompt.strip(), flags=re.IGNORECASE)
-        if toolbox_create:
-            tool_name = toolbox_create.group(1)
-            description = toolbox_create.group(2) or "Tool created from chat intent"
-            result = create_tool_job(tool_name, description, active=False)
-            return f"Tool job queued/completed: {json.dumps(result)}"
+        controller_context = {"user_id": active_user_id}
+        pending_ticket = self._pending_tickets_by_user.get(active_user_id)
+        if pending_ticket is not None:
+            controller_context["pending_ticket"] = pending_ticket
 
         toolbox_run = re.match(r"^run tool\s+([a-zA-Z0-9_\-]+)(?:\s+(.*))?$", prompt.strip(), flags=re.IGNORECASE)
         if toolbox_run:
             tool_name = toolbox_run.group(1)
             tool_args = {"name": (toolbox_run.group(2) or "friend").strip()}
-            result = dispatch_or_run(tool_name, tool_args)
-            return f"Tool output: {json.dumps(result)}"
+            try:
+                proposed_ticket = ToolLoader().propose_exec(tool_name, tool_args, job_id=f"chat-{active_user_id}")
+                controller_context["proposed_ticket"] = proposed_ticket
+            except Exception as e:
+                return f"Unable to prepare tool proposal safely: {e}"
+
+        control = handle_turn(prompt, controller_context)
+        if control.action_package and control.action_package.get("ticket_hash") and controller_context.get("proposed_ticket") is not None:
+            self._pending_tickets_by_user[active_user_id] = controller_context["proposed_ticket"]
+
+        if control.action_package and control.action_package.get("execute") and pending_ticket is not None:
+            try:
+                receipt = ApprovalReceipt(
+                    ticket_hash=control.action_package.get("ticket_hash", ""),
+                    confirmation_method="typed_phrase",
+                    timestamp=self.time_handler.get_system_date_time(),
+                    typed_phrase=prompt,
+                )
+                result = ToolLoader().execute_with_approval(pending_ticket, receipt)
+                self._pending_tickets_by_user.pop(active_user_id, None)
+                return f"{control.response_text}\nExecution result: {json.dumps(result)}"
+            except Exception as e:
+                return f"{control.response_text} Execution blocked: {type(e).__name__}: {e}"
+
+        if control.handled:
+            return control.response_text
+
+        skill_env = {**dict(os.environ), "SOMI_USER_ID": active_user_id}
+        skill_cmd = handle_skill_command(prompt, env=skill_env)
+        if skill_cmd.handled:
+            if skill_cmd.forced_skill_keys:
+                self._forced_skill_keys_by_user[active_user_id] = list(skill_cmd.forced_skill_keys)
+            return skill_cmd.response
 
         self._ensure_async_clients_for_current_loop()
 

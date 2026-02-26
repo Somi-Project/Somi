@@ -36,7 +36,7 @@ class ShellRunner:
         self, ticket: ExecutionTicket, receipt: ApprovalReceipt | None, ctx
     ) -> tuple[int, str]:
         require_cap(ctx, CAP_SHELL_EXEC)
-        if tbs.TOOLBOX_MODE == "safe":
+        if tbs.normalized_mode() == tbs.MODE_SAFE:
             raise PolicyError("SAFE mode denies command execution")
         if not ticket.commands or not ticket.commands[0]:
             raise ShellError("Empty command")
