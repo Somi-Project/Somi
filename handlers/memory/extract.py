@@ -13,6 +13,30 @@ def to_snake(s: str) -> str:
     return s[:48] or "fact"
 
 
+def _looks_like_food_preference(text: str) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    # quick guardrails against obvious technical/professional phrases
+    technical_markers = (
+        "python", "javascript", "typescript", "rust", "golang", "java", "c++", "sql",
+        "coding", "code", "repo", "framework", "api", "model", "research", "paper",
+    )
+    if any(m in t for m in technical_markers):
+        return False
+
+    # explicit food/drink context words
+    food_context = (
+        "food", "foods", "snack", "snacks", "drink", "drinks", "tea", "coffee", "fruit",
+        "meal", "dessert", "breakfast", "lunch", "dinner", "juice",
+    )
+    if any(m in t for m in food_context):
+        return True
+
+    # single-item preference strings (e.g., "blueberries") are treated as likely food preferences
+    return len(t.split()) <= 3
+
+
 def heuristics(user_text: str, assistant_text: str = "") -> Dict[str, List[Dict[str, Any]]]:
     t = (user_text or "").strip()
     tl = t.lower()
@@ -47,6 +71,12 @@ def heuristics(user_text: str, assistant_text: str = "") -> Dict[str, List[Dict[
     if m:
         facts.append({"entity": "user", "key": "favorite_drink", "value": m.group(1).strip()[:48], "kind": "preference", "confidence": 0.97})
 
+    m = re.search(r"\bi\s+(?:love|like|prefer|am\s+into)\s+([a-zA-Z0-9 _'-]{2,48})", t, flags=re.IGNORECASE)
+    if m:
+        pref_text = m.group(1).strip()[:48]
+        pref_key = "favorite_food" if _looks_like_food_preference(pref_text) else "user_preference"
+        facts.append({"entity": "user", "key": pref_key, "value": pref_text, "kind": "preference", "confidence": 0.84})
+
     if re.search(r"\bwhen\s+i\s+ask\s+for\s+code", tl) and "python" in tl:
         facts.append({"entity": "user", "key": "coding_style", "value": "Python 3.11+ and type hints", "kind": "preference", "confidence": 0.9})
 
@@ -63,8 +93,45 @@ def heuristics(user_text: str, assistant_text: str = "") -> Dict[str, List[Dict[
 
 def should_call_llm(user_text: str, assistant_text: str = "") -> bool:
     tl = (user_text or "").lower()
-    triggers = ("my ", "i am", "i prefer", "call me", "timezone", "for this session", "from now on", "always", "don't")
+    triggers = (
+        "my ", "i am", "i prefer", "i like", "i love", "i hate", "i'm into", "im into",
+        "call me", "timezone", "for this session", "from now on", "always", "don't", "dont",
+        "as a ", "i work as", "i teach", "i research", "i code in", "please remember",
+    )
     return any(t in tl for t in triggers) or ("worked" in tl or "fixed" in tl or "solved" in tl)
+
+
+def _coerce_llm_payload(data: Dict[str, Any]) -> Dict[str, List[Dict[str, Any]]]:
+    """Normalize alternate JSON shapes into canonical {'facts': [...], 'skills': [...]} payload."""
+    if not isinstance(data, dict):
+        return {"facts": [], "skills": []}
+
+    facts = data.get("facts", [])
+    skills = data.get("skills", [])
+
+    if not isinstance(facts, list):
+        facts = []
+    if not isinstance(skills, list):
+        skills = []
+
+    # Support generic single-object memory outputs, e.g.
+    # {"memory_text":"I love blueberries","category":"food","emotion":"positive"}
+    if not facts:
+        memory_text = str(data.get("memory_text", "")).strip()
+        category = to_snake(str(data.get("category", "")).strip())
+        if memory_text and category:
+            mapped_key = "favorite_food" if category in {"food", "drink", "snack"} else "user_preference"
+            facts.append(
+                {
+                    "entity": "user",
+                    "key": mapped_key,
+                    "value": memory_text[:120],
+                    "kind": "preference",
+                    "confidence": 0.82,
+                }
+            )
+
+    return {"facts": facts[:8], "skills": skills[:1]}
 
 
 async def llm_extract(client, user_text: str, assistant_text: str = "", tool_summaries: List[str] | None = None) -> Dict[str, List[Dict[str, Any]]]:
@@ -95,21 +162,38 @@ async def llm_extract(client, user_text: str, assistant_text: str = "", tool_sum
         except Exception:
             return {"facts": [], "skills": []}
 
-    facts = data.get("facts", []) if isinstance(data, dict) else []
-    skills = data.get("skills", []) if isinstance(data, dict) else []
-    if not isinstance(facts, list):
-        facts = []
-    if not isinstance(skills, list):
-        skills = []
-    return {"facts": facts[:8], "skills": skills[:1]}
+    return _coerce_llm_payload(data)
+
+
+def _normalize_key_value(key: str, value: str) -> tuple[str, str]:
+    k = to_snake(key)
+    v = (value or "").strip()[:120]
+
+    if k in {"fav_color", "colour", "favorite_colour"}:
+        k = "favorite_color"
+    elif k in {"fav_drink", "favorite_beverage"}:
+        k = "favorite_drink"
+    elif k in {"fav_food", "favorite_snack", "liked_food", "food_preference"}:
+        k = "favorite_food"
+    elif k in {"job", "occupation", "profession"}:
+        k = "work_role"
+    elif k in {"risk", "risk_tolerance", "risk_appetite"}:
+        k = "risk_profile"
+    elif k in {"style", "communication_preference"}:
+        k = "communication_style"
+
+    return k, v
 
 
 def sanitize(data: Dict[str, List[Dict[str, Any]]]) -> Dict[str, List[Dict[str, Any]]]:
     out_facts, out_skills = [], []
-    allow = {"timezone", "preferred_name", "output_format", "favorite_color", "favorite_drink", "dog_name", "default_location", "name", "coding_style", "run_memory_test_command"}
+    allow = {
+        "timezone", "preferred_name", "output_format", "favorite_color", "favorite_drink", "favorite_food",
+        "dog_name", "default_location", "name", "coding_style", "run_memory_test_command",
+        "work_role", "communication_style", "risk_profile", "primary_goal", "user_preference",
+    }
     for f in data.get("facts", []) or []:
-        key = to_snake(str(f.get("key", "")))
-        value = str(f.get("value", "")).strip()[:120]
+        key, value = _normalize_key_value(str(f.get("key", "")), str(f.get("value", "")))
         if not key or not value:
             continue
         conf = max(0.0, min(1.0, float(f.get("confidence", 0.6) or 0.6)))

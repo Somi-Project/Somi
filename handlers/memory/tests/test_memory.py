@@ -13,6 +13,7 @@ if _REPO_ROOT not in sys.path:
 
 from config.memorysettings import MEMORY_DB_PATH, MEMORY_PINNED_MD_PATH, MEMORY_MAX_TOTAL_CHARS, MEMORY_MODEL
 from handlers.memory.manager import Memory3Manager
+from handlers.memory.extract import sanitize, should_call_llm
 
 
 def _reset():
@@ -143,6 +144,25 @@ async def main() -> int:
     ctx_s2 = await m_shared.build_injected_context("favorite color", user_id="u_session_2")
     assert "cyanx" in ctx_s1.lower() and "magentax" not in ctx_s1.lower(), "session_id user isolation failed for u_session_1"
     assert "magentax" in ctx_s2.lower() and "cyanx" not in ctx_s2.lower(), "session_id user isolation failed for u_session_2"
+
+
+
+    # NLP variability: trigger + synonym/canonicalization + generic JSON mapper support
+    assert should_call_llm("I love blueberries"), "expanded natural-language trigger did not fire"
+    mapped = sanitize({
+        "facts": [{"key": "favorite_snack", "value": "blueberries", "kind": "preference", "confidence": 0.9}],
+        "skills": [],
+    })
+    assert any(f.get("key") == "favorite_food" for f in mapped.get("facts", [])), "synonym key mapping failed"
+
+    class GenericShapeClient:
+        async def chat(self, **kwargs):
+            return {"message": {"content": '{"memory_text":"I love blueberries","category":"food","emotion":"positive"}'}}
+
+    m_generic = Memory3Manager(user_id="u_generic", ollama_client=GenericShapeClient())
+    await m_generic.ingest_turn("I love blueberries", "")
+    generic_ctx = await m_generic.build_injected_context("blueberries", user_id="u_generic")
+    assert "blueberries" in generic_ctx.lower(), "generic JSON-shaped memory payload was not ingested"
 
     # reminders
     rid = await m2.add_reminder("u1", "take pills", "in 1 seconds")
