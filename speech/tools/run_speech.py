@@ -12,7 +12,7 @@ from speech.metrics.log import logger
 from speech.orchestrator import Orchestrator
 from speech.somistate import SomiState
 from speech.stt.stt_whisper import WhisperSTT
-from speech.tts.tts_pocket import PocketTTS
+from speech.tts.factory import build_tts
 
 
 def _ack(audio_out: AudioOut):
@@ -25,7 +25,7 @@ def _ack(audio_out: AudioOut):
 async def _main(args):
     init_agent_bridge(agent_name=args.agent_name, use_studies=args.use_studies, user_id=args.user_id)
     audio_out = AudioOut(device=args.output_device, os_profile=args.os_profile)
-    state = SomiState(audio_out=audio_out, tts_engine=PocketTTS(), backchannel_cb=lambda: _ack(audio_out))
+    state = SomiState(audio_out=audio_out, tts_engine=build_tts(), backchannel_cb=lambda: _ack(audio_out))
     orchestrator = Orchestrator(
         audio_in=AudioIn(
             sample_rate=SAMPLE_RATE,
