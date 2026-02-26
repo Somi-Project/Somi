@@ -44,7 +44,8 @@ def test_devices_compat_resolution() -> None:
         assert devices.resolve_device("Speakers", kind="output", os_profile="windows") == 1
         assert devices.resolve_device("Headset", kind="output", os_profile="linux") == 2
         assert devices.resolve_device("2", kind="output", os_profile="auto") == 2
-        assert devices.resolve_device(None, kind="input", os_profile="auto") is None
+        assert devices.resolve_device(None, kind="input", os_profile="auto") == 0
+        assert devices.default_device_for_kind("output", os_profile="windows") == 1
     finally:
         devices.list_devices = orig_list_devices
         devices.list_hostapis = orig_list_hostapis

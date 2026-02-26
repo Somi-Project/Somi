@@ -35,6 +35,34 @@ def _hostapi_priority(os_profile: str | None) -> tuple[str, ...]:
     return ("wasapi", "core audio", "pipewire", "pulse", "alsa", "jack", "mme", "directsound")
 
 
+def _candidate_devices(kind: str, os_profile: str | None = "auto") -> list[tuple[int, str, str]]:
+    devices = list_devices()
+    hostapis = list_hostapis()
+    key = "max_input_channels" if kind == "input" else "max_output_channels"
+
+    candidates: list[tuple[int, str, str]] = []
+    for i, dev in enumerate(devices):
+        if int(dev.get(key, 0) or 0) <= 0:
+            continue
+        hostapi_idx = int(dev.get("hostapi", -1) or -1)
+        hostapi_name = ""
+        if 0 <= hostapi_idx < len(hostapis):
+            hostapi_name = str(hostapis[hostapi_idx].get("name", "")).lower()
+        candidates.append((i, hostapi_name, str(dev.get("name", ""))))
+
+    priorities = _hostapi_priority(os_profile)
+    candidates.sort(key=lambda item: next((j for j, pref in enumerate(priorities) if pref in item[1]), len(priorities)))
+    return candidates
+
+
+def default_device_for_kind(kind: str, *, os_profile: str | None = "auto") -> int | None:
+    """Pick a best-guess default device by host API preference for the OS profile."""
+    candidates = _candidate_devices(kind=kind, os_profile=os_profile)
+    if not candidates:
+        return None
+    return candidates[0][0]
+
+
 def resolve_device(
     device: int | str | None,
     *,
@@ -46,7 +74,7 @@ def resolve_device(
     kind: 'input' or 'output'.
     """
     if device is None or (isinstance(device, str) and not device.strip()):
-        return None
+        return default_device_for_kind(kind=kind, os_profile=os_profile)
 
     if isinstance(device, int):
         return device
@@ -56,30 +84,10 @@ def resolve_device(
     if idx is not None:
         return idx
 
-    devices = list_devices()
-    hostapis = list_hostapis()
     raw_lower = raw.lower()
-    key = "max_input_channels" if kind == "input" else "max_output_channels"
-
-    candidates = []
-    for i, dev in enumerate(devices):
-        if int(dev.get(key, 0) or 0) <= 0:
-            continue
-        name = str(dev.get("name", ""))
-        if raw_lower in name.lower():
-            hostapi_idx = int(dev.get("hostapi", -1) or -1)
-            hostapi_name = ""
-            if 0 <= hostapi_idx < len(hostapis):
-                hostapi_name = str(hostapis[hostapi_idx].get("name", "")).lower()
-            candidates.append((i, hostapi_name, name))
+    candidates = [c for c in _candidate_devices(kind=kind, os_profile=os_profile) if raw_lower in c[2].lower()]
 
     if not candidates:
-        return None
-
-    priorities = _hostapi_priority(os_profile)
-    for pref in priorities:
-        for i, host_name, _dev_name in candidates:
-            if pref in host_name:
-                return i
+        return default_device_for_kind(kind=kind, os_profile=os_profile)
 
     return candidates[0][0]
