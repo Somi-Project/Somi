@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List
 
-from config.settings import MEMORY_MAX_TOTAL_CHARS
+from config.memorysettings import MEMORY_MAX_TOTAL_CHARS
 
 
 def _trim_lines(lines: List[str], limit: int) -> List[str]:

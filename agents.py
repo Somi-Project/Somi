@@ -15,7 +15,8 @@ from typing import Any, Dict, List, Optional, Tuple
 from ollama import AsyncClient
 
 from config.settings import (
-    DEFAULT_MODEL,
+    GENERAL_MODEL,
+    CODING_MODEL,
     MEMORY_MODEL,
     DEFAULT_TEMP,
     VISION_MODEL,
@@ -133,7 +134,8 @@ class Agent:
         self.hobbies = character.get("hobbies", [])
         self.behaviors = character.get("behaviors", [])
 
-        self.model = DEFAULT_MODEL
+        self.model = GENERAL_MODEL
+        self.coding_model = CODING_MODEL
         self.memory_model = MEMORY_MODEL
         self.vision_model = VISION_MODEL
 
@@ -220,6 +222,45 @@ class Agent:
                 self.memory.embedder.client = self.ollama_client
         except Exception:
             pass
+
+
+    def _is_explicit_coding_intent(self, prompt: str) -> bool:
+        p = (prompt or "").strip().lower()
+        if not p:
+            return False
+        strong_prefixes = (
+            "code ", "write code", "implement ", "refactor ", "debug ",
+            "fix bug", "add test", "create skill", "update skill",
+            "patch ", "generate code", "review this code",
+        )
+        if p.startswith(strong_prefixes):
+            return True
+
+        explicit_action_markers = (
+            "fix", "debug", "refactor", "implement", "write", "generate", "create", "update",
+            "optimize", "add", "remove", "patch", "review",
+        )
+        technical_targets = (
+            "code", "function", "class", "method", "stack trace", "traceback", "exception",
+            "unit test", "skill.md", "pull request", "compile", "lint", "pytest", "api endpoint",
+            "sql query", "script", "module", "file", "repository", "repo",
+        )
+
+        has_action = any(m in p for m in explicit_action_markers)
+        has_target = any(m in p for m in technical_targets)
+
+        # explicit code syntax cues
+        has_code_cue = bool(
+            re.search(r"```|\bdef\s+\w+\s*\(|\bclass\s+\w+\s*[:(]|\bimport\s+\w+", p)
+            or re.search(r"\bselect\b.+\bfrom\b", p)
+        )
+
+        return (has_action and has_target) or has_code_cue
+
+    def _select_response_model(self, prompt: str) -> str:
+        if self._is_explicit_coding_intent(prompt):
+            return self.coding_model
+        return self.model
 
     def _clean_think_tags(self, text: str) -> str:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
@@ -1053,8 +1094,9 @@ class Agent:
         content = ""
         try:
             async with asyncio.timeout(120):
+                selected_model = self._select_response_model(prompt)
                 resp = await self.ollama_client.chat(
-                    model=self.model,
+                    model=selected_model,
                     messages=messages,
                     options={
                         "temperature": 0.0 if should_search else float(self.temperature),

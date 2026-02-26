@@ -10,16 +10,18 @@ from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
 
-from config.settings import (
+from config.memorysettings import (
     EMBEDDING_DIM,
     EMBEDDING_MODEL,
     MEMORY_DEBUG,
     MEMORY_MAX_FACT_LINES,
     MEMORY_PINNED_MD_PATH,
     MEMORY_VOLATILE_TTL_HOURS,
-    SYSTEM_TIMEZONE,
     MEMORY_SUMMARY_EVERY_N_TURNS,
     USE_VECTOR_INDEX,
+)
+from config.settings import (
+    SYSTEM_TIMEZONE,
     SUMMARY_ENABLED,
     SUMMARY_USE_LLM,
     SUMMARY_MODEL,

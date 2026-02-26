@@ -8,7 +8,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set, Tuple
 
-from config.settings import (
+from config.memorysettings import (
     EMBEDDING_DIM,
     MEMORY_DB_PATH,
     MEMORY_DEBUG,

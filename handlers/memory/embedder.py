@@ -9,7 +9,7 @@ try:
 except Exception:  # pragma: no cover
     AsyncClient = None  # type: ignore
 
-from config.settings import EMBEDDING_MODEL
+from config.memorysettings import EMBEDDING_MODEL
 
 
 class EmbeddingUnavailable(RuntimeError):
