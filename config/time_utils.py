@@ -10,12 +10,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Configuration from settings
-from .settings import SYSTEM_TIMEZONE
+from .settings import SYSTEM_TIMEZONE, INSTRUCT_MODEL
 
 class TimeQueryHandler:
     """Handles detection and processing of date/time queries."""
     
-    def __init__(self, ollama_client=None, model: str = "default_model"):
+    def __init__(self, ollama_client=None, model: str = INSTRUCT_MODEL):
         self.ollama_client = ollama_client  # Optional LLM client for fallback
         self.model = model
         # Load spaCy model

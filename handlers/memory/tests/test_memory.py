@@ -11,7 +11,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(_THIS_DIR, "..", "..", ".."))
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from config.settings import MEMORY_DB_PATH, MEMORY_PINNED_MD_PATH, MEMORY_MAX_TOTAL_CHARS, MEMORY_MODEL
+from config.memorysettings import MEMORY_DB_PATH, MEMORY_PINNED_MD_PATH, MEMORY_MAX_TOTAL_CHARS, MEMORY_MODEL
 from handlers.memory.manager import Memory3Manager
 
 

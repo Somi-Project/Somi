@@ -30,7 +30,7 @@ class HeartbeatService:
     def __init__(self, settings_module=None):
         if settings_module is None:
             try:
-                from config import settings as runtime_settings
+                from config import heartbeatsettings as runtime_settings
 
                 settings_module = runtime_settings
             except Exception:

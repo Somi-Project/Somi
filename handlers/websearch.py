@@ -14,7 +14,7 @@ import httpx
 import ollama
 from duckduckgo_search import DDGS
 
-from config.settings import INSTRUCT_MODEL, SYSTEM_TIMEZONE, ROUTING_DEBUG
+from config.settings import WEBSEARCH_MODEL, SYSTEM_TIMEZONE, ROUTING_DEBUG
 from config.searchsettings import WEBSEARCH_DEBUG_RESULTS, WEBSEARCH_MAX_FORMAT_CHARS
 
 from handlers.websearch_tools.finance import FinanceHandler
@@ -632,7 +632,7 @@ Query: {query}
             try:
                 response = await asyncio.to_thread(
                     ollama.chat,
-                    model=INSTRUCT_MODEL,
+                    model=WEBSEARCH_MODEL,
                     messages=[{"role": "user", "content": prompt}],
                     options={"temperature": 0.0, "think": False},
                 )

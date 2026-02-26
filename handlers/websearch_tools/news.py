@@ -19,7 +19,7 @@ import httpx
 import ollama
 from duckduckgo_search import DDGS
 
-from config.settings import DEFAULT_MODEL, SYSTEM_TIMEZONE
+from config.settings import WEBSEARCH_MODEL, SYSTEM_TIMEZONE
 import pytz
 from datetime import datetime
 
@@ -380,7 +380,7 @@ Query: {raw_q}
         refined = fallback_refined
         try:
             resp = ollama.chat(
-                model=DEFAULT_MODEL,
+                model=WEBSEARCH_MODEL,
                 messages=[{"role": "user", "content": prompt}],
                 options={"temperature": 0.2, "think": False},
             )
