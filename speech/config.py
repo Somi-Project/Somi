@@ -13,6 +13,13 @@ from config.settings import (
     VAD_SPEECH_HANGOVER_MS,
 )
 
+# Backward-compatibility aliases retained for older speech modules.
+# Keep these names exported even when newer settings use BARGE_IN_* naming.
+BARGEIN_RMS_THRESHOLD = BARGE_IN_RMS_THRESHOLD
+BARGEIN_CONSEC_FRAMES = BARGE_IN_FRAMES
+ECHO_POLICY = "tier0"
+TTS_MAX_CHARS_PER_CHUNK = 220
+
 SAMPLE_RATE = 16000
 EXPECTED_STT_SR = 16000
 FRAME_MS = 20
@@ -22,9 +29,6 @@ PREROLL_MS = 120
 AUDIO_GAIN = 1.0
 
 VAD_RMS_THRESHOLD = 0.008  # Tunable based on room noise
-BARGEIN_RMS_THRESHOLD = 0.03  # Tunable for speaker leakage and mic sensitivity
-BARGEIN_CONSEC_FRAMES = 6  # Tunable for barge-in strictness
-ECHO_POLICY = "tier0"
 
 BACKCHANNEL_AFTER_MS = 800
 BACKCHANNEL_WAV = "speech/assets/ack.wav"
@@ -35,7 +39,6 @@ WHISPER_MODEL_NAME = "base"
 TTS_BACKEND = "pocket_server"
 TTS_SAMPLE_RATE = 24000
 TTS_ALLOW_FALLBACK_TONE = True
-TTS_MAX_CHARS_PER_CHUNK = 220
 POCKET_TTS_SERVER_URL = "http://127.0.0.1:8001/v1/audio/speech"
 POCKET_TTS_VOICE = "nova"
 POCKET_TTS_RESPONSE_FORMAT = "wav"
