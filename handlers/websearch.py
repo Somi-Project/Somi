@@ -14,7 +14,8 @@ import httpx
 import ollama
 from duckduckgo_search import DDGS
 
-from config.settings import INSTRUCT_MODEL, SYSTEM_TIMEZONE
+from config.settings import INSTRUCT_MODEL, SYSTEM_TIMEZONE, ROUTING_DEBUG
+from config.searchsettings import WEBSEARCH_DEBUG_RESULTS, WEBSEARCH_MAX_FORMAT_CHARS
 
 from handlers.websearch_tools.finance import FinanceHandler
 from handlers.websearch_tools.news import NewsHandler
@@ -793,6 +794,30 @@ Query: {query}
         qq = qq.strip(" \t\r\n.,;:!?")
         return qq
 
+    def _needs_fullpage_fetch(self, query_lower: str) -> bool:
+        ql = (query_lower or "").strip().lower()
+        if not ql:
+            return False
+
+        if "http://" in ql or "https://" in ql:
+            return True
+
+        fetch_markers = (
+            "summarize this",
+            "summarise this",
+            "read this page",
+            "extract",
+            "what does this article say",
+            "analyze this link",
+        )
+        if any(m in ql for m in fetch_markers):
+            return True
+
+        if "compare these sources" in ql and ("http://" in ql or "https://" in ql):
+            return True
+
+        return False
+
     # --- Research stack helper ---
     async def _research_stack(self, query: str) -> List[Dict[str, Any]]:
         q = (query or "").strip()
@@ -1085,8 +1110,11 @@ Query: {query}
         if not q:
             return []
 
+        query_lower = q.lower()
+        fetch_fullpage = self._needs_fullpage_fetch(query_lower)
+
         q_key = self._normalize_cache_key(q)
-        cache_key = f"general::{q_key}"
+        cache_key = f"general::{int(fetch_fullpage)}::{q_key}"
         cached = self.search_cache.get(cache_key)
         if isinstance(cached, list) and cached:
             return cached
@@ -1096,13 +1124,20 @@ Query: {query}
                 raw = await self._ddg_text(q, max_results=18)
                 base = self._normalize_ddg_results(raw)
                 base = self._dedupe_results(base)
+                enriched: List[Dict[str, Any]]
+                if fetch_fullpage:
+                    enriched = await self._fetch_and_attach_content(
+                        base,
+                        category="general",
+                        top_n=3,
+                        max_n=6,
+                    )
+                else:
+                    enriched = [dict(r) for r in base]
 
-                enriched = await self._fetch_and_attach_content(
-                    base,
-                    category="general",
-                    top_n=3,
-                    max_n=6,
-                )
+                for r in enriched:
+                    if isinstance(r, dict):
+                        r["fullpage_fetch"] = fetch_fullpage
 
                 # SearXNG fallback if DDG is weak
                 if len(enriched) < 3:
@@ -1118,6 +1153,8 @@ Query: {query}
                         )
                         existing_urls = {r.get("url", "") for r in enriched if isinstance(r, dict)}
                         extra_deduped = [r for r in extra if isinstance(r, dict) and r.get("url", "") not in existing_urls]
+                        for r in extra_deduped:
+                            r["fullpage_fetch"] = fetch_fullpage
                         enriched.extend(extra_deduped)
                         logger.info(f"SearXNG fallback added {len(extra_deduped)} new results")
 
@@ -1135,6 +1172,8 @@ Query: {query}
         if not results:
             return "No search results found."
 
+        debug_mode = bool(ROUTING_DEBUG or WEBSEARCH_DEBUG_RESULTS)
+
         lines = []
         for r in results[:10]:
             if not isinstance(r, dict):
@@ -1151,21 +1190,26 @@ Query: {query}
             deroute = bool(r.get("deroute", False))
             deroute_reason = (r.get("reason") or "").strip()
             deroute_handler = (r.get("handler") or "").strip()
+            fullpage_fetch = bool(r.get("fullpage_fetch", False))
 
             block = (
                 f"- Title: {title}\n"
                 f"  URL: {url}\n"
                 f"  Snippet: {_safe_trim(desc, 280)}\n"
-                f"  Meta: category={category}, volatile={volatile}, deroute={deroute}"
+                f"  Meta: category={category}, volatile={volatile}"
             )
-            if deroute:
+            if debug_mode:
+                block += f", deroute={deroute}"
+
+            if debug_mode and deroute:
                 if deroute_handler:
                     block += f"\n  DerouteHandler: {_safe_trim(deroute_handler, 80)}"
                 if deroute_reason:
                     block += f"\n  DerouteReason: {_safe_trim(deroute_reason, 220)}"
-            if content:
+            if content and (debug_mode or fullpage_fetch):
                 block += f"\n  Extracted: {_safe_trim(content, 700)}"
 
             lines.append(block)
 
-        return "## Web/Search Context (results)\n" + "\n".join(lines)
+        formatted = "## Web/Search Context (results)\n" + "\n".join(lines)
+        return formatted[: max(500, int(WEBSEARCH_MAX_FORMAT_CHARS))]
