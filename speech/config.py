@@ -8,7 +8,7 @@ MAX_UTTERANCE_S = 12
 PREROLL_MS = 200
 AUDIO_GAIN = 1.0
 
-VAD_RMS_THRESHOLD = 0.015  # Tunable based on room noise
+VAD_RMS_THRESHOLD = 0.008  # Tunable based on room noise
 BARGEIN_RMS_THRESHOLD = 0.03  # Tunable for speaker leakage and mic sensitivity
 BARGEIN_CONSEC_FRAMES = 6  # Tunable for barge-in strictness
 ECHO_POLICY = "tier0"
