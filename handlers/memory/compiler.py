@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Iterable, List
 
-from config.settings import (
+from config.memorysettings import (
     MEMORY_LINE_MAX_CHARS,
     MEMORY_MAX_FACT_LINES,
     MEMORY_MAX_PINNED_LINES,

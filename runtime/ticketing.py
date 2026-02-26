@@ -29,6 +29,10 @@ class ExecutionTicket:
 
 def normalize_ticket(ticket: ExecutionTicket) -> dict:
     payload = asdict(ticket)
+    # created_timestamp is intentionally excluded from integrity hashing so
+    # semantically identical user replays (proposal -> confirm) resolve to the
+    # same ticket hash across turns.
+    payload.pop("created_timestamp", None)
     payload["commands"] = [list(cmd) for cmd in payload.get("commands", [])]
     payload["paths_rw"] = sorted(payload.get("paths_rw", []))
     payload["paths_ro"] = sorted(payload.get("paths_ro", []))

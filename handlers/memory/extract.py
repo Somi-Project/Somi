@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any, Dict, List
 
-from config.settings import MEMORY_CONF_MIN, MEMORY_EXTRACTION_ENABLED, MEMORY_MODEL
+from config.memorysettings import MEMORY_CONF_MIN, MEMORY_EXTRACTION_ENABLED, MEMORY_MODEL
 
 
 def to_snake(s: str) -> str:
