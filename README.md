@@ -75,9 +75,10 @@ pip install -r requirements.txt
 Pull models:
 
 ```bash
-ollama pull phi4-mini-reasoning:3.8b
-ollama pull codegemma:2b
-ollama pull qwen2.5vl:3b  # optional vision model
+ollama pull dolphin3:latest #General 
+ollama pull stable-code:3b #Instructor
+ollama pull glm-ocr:latest #Vision 
+ollama pull qwen2.5-coder:3b #Coding
 ```
 
 Launch GUI:
