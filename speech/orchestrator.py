@@ -35,6 +35,7 @@ class Orchestrator:
             max_utterance_s=MAX_UTTERANCE_S,
             rms_threshold=VAD_RMS_THRESHOLD,
             preroll_ms=PREROLL_MS,
+            adaptive_threshold=True,
         )
         self.bargein = BargeInDetector(BARGEIN_RMS_THRESHOLD, BARGEIN_CONSEC_FRAMES)
 
@@ -84,7 +85,7 @@ class Orchestrator:
 
     async def run(self, user_id: str):
         self.audio_in.start()
-        logger.info("Speech orchestrator running")
+        logger.info("Speech orchestrator running (vad_threshold=%.4f adaptive=%s)", self.vad.rms_threshold, self.vad.adaptive_threshold)
         try:
             await asyncio.gather(
                 self.perception_loop(user_id=user_id),
