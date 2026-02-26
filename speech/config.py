@@ -1,11 +1,24 @@
 """Configuration defaults for the modular speech subsystem."""
 
+from config.settings import (
+    AUDIO_OUTPUT_BLOCKSIZE,
+    BARGE_IN_FRAMES,
+    BARGE_IN_RMS_THRESHOLD,
+    PIPER_CONFIG_PATH,
+    PIPER_MODEL_PATH,
+    TTS_ENGINE,
+    TTS_STREAM_CHUNK_MS,
+    VAD_MIN_UTTERANCE_MS,
+    VAD_RMS_THRESHOLD,
+    VAD_SPEECH_HANGOVER_MS,
+)
+
 SAMPLE_RATE = 16000
 EXPECTED_STT_SR = 16000
 FRAME_MS = 20
-SILENCE_MS = 500
+SILENCE_MS = VAD_SPEECH_HANGOVER_MS
 MAX_UTTERANCE_S = 12
-PREROLL_MS = 200
+PREROLL_MS = 120
 AUDIO_GAIN = 1.0
 
 VAD_RMS_THRESHOLD = 0.008  # Tunable based on room noise
@@ -34,7 +47,7 @@ USER_ID_DEFAULT = "default_user"
 USE_STUDIES_DEFAULT = False
 AGENT_TIMEOUT_S = 45
 
-PLAYBACK_SLEEP_SLICE_MS = 40
+PLAYBACK_SLEEP_SLICE_MS = 20
 
 LOG_PATH = "sessions/logs/speech.log"
 METRICS_DIR = "sessions/speech_runs"

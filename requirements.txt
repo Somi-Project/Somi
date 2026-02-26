@@ -9,7 +9,7 @@ timezonefinder==8.2.1
 numpy==1.26.4
 scipy==1.17.1
 pandas>=2.2.2,<3.0
-scikit-learn==1.8.0
+scikit-learn==1.5.2
 sentence-transformers==5.2.3
 transformers==5.2.0
 faiss-cpu==1.13.2
@@ -34,4 +34,4 @@ onnxruntime==1.24.2
 pyannote.audio==4.0.4
 playwright==1.58.0
 Pillow==12.1.1
-scikit-learn==1.5.2
+piper-tts==1.4.1
