@@ -12,6 +12,8 @@ This is an A.I. Framework that lets you deploy and control your own A.I. With ad
 
 🧠 Memory storage 
 
+📷 Image analysis 
+
 🛠️ Digital tools/skills/contracts
 
 💬 Mainframe panel interface 
@@ -27,6 +29,8 @@ This is an A.I. Framework that lets you deploy and control your own A.I. With ad
 🧑‍💻 Coding
 
 🧸 Daily helper
+
+🖼️ Digitalize data to excel
 
 
 ---
