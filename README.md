@@ -49,17 +49,6 @@ No SaaS.
 No hidden API calls.  
 No data leaving your system.  
 
-It combines:
-
-- Local LLM execution  
-- Persistent memory  
-- Retrieval-Augmented Generation (RAG)  
-- Tool + handler routing  
-- Telegram automation  
-- Desktop GUI  
-- Experimental speech interface
-& more 
-
 All modular. All hardware-aware. All under your control.
 
 ---
