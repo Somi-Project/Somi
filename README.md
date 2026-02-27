@@ -3,18 +3,31 @@
 This is an A.I. Framework that lets you deploy and control your own A.I. With added capabilities 
 
 ⚡ Runs on your own hardware  
+
 🔒 No cloud/sign-up required
+
 🪪 Privacy first 
-💃 Personality construct 
-🧠 Memory storage  
+
+💃 Personality construct
+
+🧠 Memory storage 
+
 🛠️ Digital tools/skills/contracts
+
 💬 Mainframe panel interface 
+
 🧑‍✈️ Telegram interface 
+
 🔉 Speech capable
+
 🌎 Web searching
+
 ✍️ Research
+
 🧑‍💻 Coding
+
 🧸 Daily helper
+
 
 ---
 
