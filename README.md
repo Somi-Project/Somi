@@ -192,7 +192,11 @@ Define:
 # CLI Commands
 
 Basic usage:
-
+Launch the GUI for ease of use
+```bash
+python somicontroller.py 
+```
+or direct commands in cmd
 ```bash
 python somi.py <command> --name <agent_name>
 ```
