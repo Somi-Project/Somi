@@ -33,6 +33,11 @@ from config.settings import (
     BUDGET_OUTPUT_RESERVE_TOKENS,
     PROMPT_ENTERPRISE_ENABLED,
     PROMPT_FORCE_LEGACY,
+    ENABLE_NL_ARTIFACTS,
+    ARTIFACT_INTENT_THRESHOLD,
+    MIN_SOURCES_FOR_RESEARCH_BRIEF,
+    DOC_FACTS_REQUIRE_PAGE_REFS,
+    ONE_ARTIFACT_PER_TURN,
 )
 
 from rag import RAGHandler
@@ -48,6 +53,10 @@ from runtime.controller import handle_turn
 from toolbox.loader import ToolLoader
 
 from handlers.memory import Memory3Manager
+from handlers.contracts.intent import ArtifactIntentDetector
+from handlers.contracts.store import ArtifactStore
+from handlers.contracts.orchestrator import build_artifact_for_intent, validate_and_render
+from handlers.contracts.fact_distiller import FactDistiller
 from promptforge import PromptForge
 
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
@@ -151,6 +160,10 @@ class Agent:
         self.wordgame = WordGameHandler(game_file=self.game_file)
 
         self.promptforge = PromptForge(workspace=".")
+
+        self.artifact_store = ArtifactStore()
+        self.artifact_detector = ArtifactIntentDetector(threshold=float(ARTIFACT_INTENT_THRESHOLD))
+        self.fact_distiller = FactDistiller()
 
         self.use_memory3 = bool(USE_MEMORY3)
         self.memory = Memory3Manager(
@@ -875,6 +888,25 @@ class Agent:
         if ROUTING_DEBUG:
             logger.info(f"Routing decision: route={decision.route} veto={decision.tool_veto} reason={decision.reason} signals={decision.signals}")
 
+        artifact_intent = None
+        artifact_confidence = 0.0
+        if ENABLE_NL_ARTIFACTS:
+            try:
+                has_doc = bool(self.rag and getattr(self.rag, "texts", None))
+                intent_decision = self.artifact_detector.detect(
+                    prompt,
+                    decision.route,
+                    has_doc=has_doc,
+                )
+                artifact_intent = intent_decision.artifact_intent
+                artifact_confidence = float(intent_decision.confidence)
+                if ROUTING_DEBUG:
+                    logger.info(
+                        f"Artifact intent: intent={artifact_intent} conf={artifact_confidence:.2f} reason={intent_decision.reason}"
+                    )
+            except Exception as e:
+                logger.debug(f"Artifact intent detection failed (non-fatal): {e}")
+
         if decision.route == "command":
             cmd = prompt_lower.strip()
             if cmd == "memory doctor":
@@ -1144,6 +1176,30 @@ class Agent:
                 content = content.rstrip() + "\n\nMemory update: " + " ".join(notices[:1])
         except Exception:
             pass
+
+        if ENABLE_NL_ARTIFACTS and artifact_intent:
+            try:
+                artifact = build_artifact_for_intent(
+                    artifact_intent=artifact_intent,
+                    query=prompt,
+                    route=decision.route,
+                    answer_text=content,
+                    raw_search_results=results,
+                    rag_block=rag_block,
+                    min_sources=int(MIN_SOURCES_FOR_RESEARCH_BRIEF),
+                )
+                markdown = validate_and_render(artifact)
+                self.artifact_store.append(active_user_id, artifact)
+                self.fact_distiller.distill_and_write(
+                    artifact,
+                    require_doc_page_refs=bool(DOC_FACTS_REQUIRE_PAGE_REFS),
+                )
+                if len(markdown) > 6000:
+                    markdown = markdown[:6000].rstrip() + "\n\n[Artifact truncated for safety]"
+                if bool(ONE_ARTIFACT_PER_TURN) and markdown.strip():
+                    content = markdown
+            except Exception as e:
+                logger.warning(f"Artifact orchestration failed; returning original response: {type(e).__name__}: {e}")
 
         self._push_history_for(active_user_id, prompt, content)
         logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")
