@@ -9,7 +9,7 @@ from handlers.websearch_tools.conversion import parse_conversion_request
 
 @dataclass
 class RouteDecision:
-    route: str  # command|local_memory_intent|conversion_tool|websearch|llm_only
+    route: str  # command|local_memory_intent|image_tool|conversion_tool|websearch|llm_only
     tool_veto: bool = False
     reason: str = ""
     signals: Dict[str, Any] = field(default_factory=dict)
@@ -29,6 +29,23 @@ def _is_personal_memory_intent(prompt_l: str) -> bool:
         "from now on", "my favorite", "favorite drink", "my reminders", "my goals",
     )
     return any(s in prompt_l for s in strong)
+
+
+
+
+def _detect_image_intent(prompt_l: str) -> Optional[str]:
+    chart_markers = ("chart", "graph", "plot", "bar chart", "bar graph", "line chart")
+    comfy_markers = (
+        "generate me a picture", "make a pic", "do a pic", "a pic would be nice",
+        "generate an image", "create an image", "draw me", "make me an image",
+    )
+    if any(m in prompt_l for m in chart_markers):
+        return "chart"
+    if any(m in prompt_l for m in comfy_markers):
+        return "comfyui"
+    if re.search(r"\b(generate|create|make|draw)\s+(me\s+)?(an?\s+)?(image|picture|pic|photo|artwork|illustration)\b", prompt_l):
+        return "comfyui"
+    return None
 
 
 def _is_explicit_websearch(prompt_l: str) -> bool:
@@ -171,6 +188,10 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
 
     if _is_personal_memory_intent(pl):
         return RouteDecision(route="local_memory_intent", tool_veto=True, reason="personal_memory_intent")
+
+    image_intent = _detect_image_intent(pl)
+    if image_intent:
+        return RouteDecision(route="image_tool", tool_veto=True, reason="image_intent", signals={"image_intent": image_intent})
 
     if parse_conversion_request(p) is not None:
         return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion")

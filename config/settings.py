@@ -53,6 +53,10 @@ SESSION_DIR = "sessions/"
 SESSION_AUTO_SAVE_EVERY_N_TURNS = 1
 MAX_CONTEXT_TOKENS = 8192
 
+
+SESSION_MEDIA_DIR = "sessions/media"
+COMFYUI_PORT = 8188
+
 # Chat Flow / Routing architecture defaults
 CONTEXT_PROFILE = "8k"
 HISTORY_MAX_MESSAGES = 10
