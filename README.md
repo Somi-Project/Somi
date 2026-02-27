@@ -16,7 +16,7 @@ This is an A.I. Framework that lets you deploy and control your own A.I. With ad
 
 💬 Mainframe panel interface 
 
-🧑‍✈️ Telegram interface 
+📲  Telegram interface 
 
 🔉 Speech capable
 
