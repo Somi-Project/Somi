@@ -663,8 +663,8 @@ class TelegramHandler:
 
             try:
                 async with self.global_text_sem:
-                    resp = await asyncio.wait_for(
-                        agent.generate_response(
+                    resp, attachments = await asyncio.wait_for(
+                        agent.generate_response_with_attachments(
                             text,
                             user_id=uid,
                             dementia_friendly=dementia_friendly,
@@ -673,6 +673,13 @@ class TelegramHandler:
                         timeout=150,
                     )
                 await safe_edit_or_send(ack, update, resp)
+                for att in attachments or []:
+                    if str(att.get("type", "")).lower() == "image" and os.path.exists(str(att.get("path", ""))):
+                        try:
+                            with open(att["path"], "rb") as ph:
+                                await update.message.reply_photo(photo=ph, caption=(att.get("title") or ""))
+                        except Exception as e:
+                            logger.debug(f"[{uid}] Failed sending image attachment: {e}")
 
             except asyncio.CancelledError:
                 await safe_edit_or_send(ack, update, "Cancelled.")
