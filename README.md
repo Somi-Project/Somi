@@ -1,15 +1,26 @@
 # S.O.M.I. 🕊
-### Local-First AI Agent Framework
+### Run your own AI
+This is an A.I. Framework that lets you deploy and control your own A.I. With added capabilities 
 
-⚡ Runs on consumer hardware  
-🔒 No cloud required  
-🧠 Persistent memory included  
-🛠️ Modular tools + automation  
-💬 GUI + CLI + Telegram  
+⚡ Runs on your own hardware  
+🔒 No cloud/sign-up required
+🪪 Privacy first 
+💃 Personality construct 
+🧠 Memory storage  
+🛠️ Digital tools/skills/contracts
+💬 Mainframe panel interface 
+🧑‍✈️ Telegram interface 
+🔉 Speech capable
+🌎 Web searching
+✍️ Research
+🧑‍💻 Coding
+🧸 Daily helper
 
 ---
 
 ⭐ If Somi saves you time or inspires you, consider starring the repo.
+
+Below gets really technical (for my non-developer audience) so if you're not used to it you can skip to install and learn alot by just setting it up. 
 
 ---
 
@@ -29,7 +40,8 @@ It combines:
 - Tool + handler routing  
 - Telegram automation  
 - Desktop GUI  
-- Experimental speech interface  
+- Experimental speech interface
+& more 
 
 All modular. All hardware-aware. All under your control.
 
