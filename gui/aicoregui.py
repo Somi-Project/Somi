@@ -2,8 +2,8 @@ from PyQt6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTextEdit, QLineEdit,
     QComboBox, QCheckBox, QMessageBox, QWidget, QFileDialog, QInputDialog
 )
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.QtGui import QFont
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QUrl
+from PyQt6.QtGui import QFont, QPixmap, QTextDocument
 import asyncio
 import json
 import subprocess
@@ -167,7 +167,7 @@ class RagWorker(QThread):
         self.wait()
 
 class ChatWorker(QThread):
-    response_signal = pyqtSignal(str, str)
+    response_signal = pyqtSignal(str, str, object)
     error_signal = pyqtSignal(str)
     status_signal = pyqtSignal(str)
 
@@ -224,14 +224,15 @@ class ChatWorker(QThread):
             self.status_signal.emit("Routing request…")
 
             async def _gen():
-                return await self.agent.generate_response(prompt, user_id="default_user")
+                return await self.agent.generate_response_with_attachments(prompt, user_id="default_user")
 
             self.pending_future = asyncio.run_coroutine_threadsafe(_gen(), self.loop)
 
             def _done(fut):
                 try:
-                    response = fut.result()
-                    self.response_signal.emit(prompt, (response or "No response received.") + "\n")
+                    response, attachments = fut.result()
+                    attachments = attachments or []
+                    self.response_signal.emit(prompt, (response or "No response received.") + "\n", attachments)
                     self.status_signal.emit("Done")
                 except CancelledError:
                     self.status_signal.emit("Stopped")
@@ -380,10 +381,21 @@ def ai_chat(app):
         except Exception:
             pass
 
-    def on_response(user_input, ai_response):
+    def on_response(user_input, ai_response, attachments):
         selected_name = name_combo.currentText()
         chat_area.append(f"You: {user_input}\n")
         chat_area.append(f"{selected_name}: {ai_response.strip()}\n")
+        for att in attachments or []:
+            if str(att.get("type", "")).lower() == "image":
+                img_path = str(att.get("path", ""))
+                if os.path.exists(img_path):
+                    chat_area.append(f"[{att.get('title') or 'Image'}] {img_path}\n")
+                    pix = QPixmap(img_path)
+                    if not pix.isNull():
+                        img_url = QUrl.fromLocalFile(img_path)
+                        chat_area.document().addResource(QTextDocument.ResourceType.ImageResource, img_url, pix)
+                        chat_area.textCursor().insertImage(img_url.toString())
+                        chat_area.append("\n")
         chat_area.ensureCursorVisible()
         prompt_entry.setEnabled(True)
         send_button.setEnabled(True)

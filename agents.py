@@ -33,6 +33,7 @@ from config.settings import (
     BUDGET_OUTPUT_RESERVE_TOKENS,
     PROMPT_ENTERPRISE_ENABLED,
     PROMPT_FORCE_LEGACY,
+    SESSION_MEDIA_DIR,
 )
 
 from rag import RAGHandler
@@ -93,6 +94,7 @@ class Agent:
         self._due_inject_cooldown_seconds = 300.0
         self._forced_skill_keys_by_user: Dict[str, List[str]] = {}
         self._pending_tickets_by_user: Dict[str, Any] = {}
+        self.last_attachments_by_user: Dict[str, List[Dict[str, Any]]] = {}
 
         # Load personality config
         try:
@@ -743,6 +745,17 @@ class Agent:
                 volatile = True
         return volatile, cat
 
+    def _safe_build_image_spec(self, prompt: str, image_spec: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        try:
+            from handlers.image_tools.image_generate import spec_from_text
+            return spec_from_text(prompt, provided_spec=image_spec)
+        except Exception as e:
+            logger.debug(f"Image spec build failed: {e}")
+            return None
+
+    def _is_chart_keyword_prompt(self, prompt_lower: str) -> bool:
+        return any(k in prompt_lower for k in ("chart", "graph", "plot", "bar chart", "bar graph", "line chart"))
+
     def _numeric_guard(self, content: str, search_context: str) -> str:
         """
         Replace numeric tokens not present in search_context with [see source].
@@ -775,6 +788,7 @@ class Agent:
         dementia_friendly: bool = False,
         long_form: bool = False,
         forced_skill_keys: Optional[List[str]] = None,
+        image_spec: Optional[Dict[str, Any]] = None,
     ) -> str:
         start_total = time.time()
         self.turn_counter += 1
@@ -786,6 +800,7 @@ class Agent:
         # Call-level user_id override (Telegram/WhatsApp multi-chat)
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
+        self._set_last_attachments(active_user_id, [])
 
         controller_context = {"user_id": active_user_id}
         pending_ticket = self._pending_tickets_by_user.get(active_user_id)
@@ -896,6 +911,18 @@ class Agent:
             except Exception as e:
                 logger.debug(f"Local intent routing failed (non-fatal): {e}")
 
+        force_image_from_spec = image_spec is not None
+        should_try_image = force_image_from_spec or decision.route == "image_tool" or (decision.route == "conversion_tool" and self._is_chart_keyword_prompt(prompt_lower))
+        if should_try_image:
+            spec = self._safe_build_image_spec(prompt, image_spec=image_spec)
+            if spec is not None:
+                try:
+                    from handlers.image_tools.image_generate import generate_image
+                    attachments = await asyncio.to_thread(generate_image, spec)
+                    self._set_last_attachments(active_user_id, attachments)
+                except Exception as e:
+                    logger.debug(f"Image generation route failed (non-fatal): {e}")
+
         if decision.route == "conversion_tool":
             try:
                 async with asyncio.timeout(20.0):
@@ -977,6 +1004,21 @@ class Agent:
             "- Only say a skill/tool was executed if dispatch returned a concrete result.\n"
             "- If blocked, ineligible, or dry-run, state that clearly and provide next safe step.\n"
             "- Prefer /skill commands for user-requested automations over ad-hoc claims."
+        )
+
+        extra_blocks.append(
+            "## Image Tool Contract\n"
+            "When user asks for chart/graph/plot, emit strict JSON only (no prose in JSON):\n"
+            "{\n"
+            "  \"tool\": \"image.generate\",\n"
+            "  \"spec\": {\n"
+            "    \"kind\": \"bar\",\n"
+            "    \"title\": \"Seizures per month\",\n"
+            "    \"labels\": [\"Jan\", \"Feb\", \"Mar\"],\n"
+            "    \"values\": [12, 9, 15],\n"
+            "    \"y_label\": \"Count\"\n"
+            "  }\n"
+            "}"
         )
         try:
             skills_snapshot = build_registry_snapshot()
@@ -1112,6 +1154,11 @@ class Agent:
         content = self._clean_think_tags(content)
         content = self._strip_unwanted_json(content)
 
+        if self.get_last_attachments(active_user_id):
+            content = (content or "").strip()
+            addon = f"\n\nSaved chart/image to {SESSION_MEDIA_DIR} and attached it above."
+            content = (content + addon).strip() if content else f"Saved chart/image to {SESSION_MEDIA_DIR} and attached it above."
+
         if should_search and volatile_search:
             content = self._numeric_guard(content, search_context)
             if "http" not in content.lower():
@@ -1148,6 +1195,33 @@ class Agent:
         self._push_history_for(active_user_id, prompt, content)
         logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")
         return content
+
+    def _set_last_attachments(self, user_id: str, attachments: Optional[List[Dict[str, Any]]] = None) -> None:
+        self.last_attachments_by_user[str(user_id or self.user_id)] = list(attachments or [])
+
+    def get_last_attachments(self, user_id: str = "default_user") -> List[Dict[str, Any]]:
+        return list(self.last_attachments_by_user.get(str(user_id or self.user_id), []))
+
+    async def generate_response_with_attachments(
+        self,
+        prompt: str,
+        user_id: str = "default_user",
+        dementia_friendly: bool = False,
+        long_form: bool = False,
+        forced_skill_keys: Optional[List[str]] = None,
+        image_spec: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[str, List[Dict[str, Any]]]:
+        active_user_id = str(user_id or self.user_id)
+        self._set_last_attachments(active_user_id, [])
+        content = await self.generate_response(
+            prompt=prompt,
+            user_id=active_user_id,
+            dementia_friendly=dementia_friendly,
+            long_form=long_form,
+            forced_skill_keys=forced_skill_keys,
+            image_spec=image_spec,
+        )
+        return content, self.get_last_attachments(active_user_id)
 
     async def analyze_image(self, image_path: str, caption: str = "", user_id: str = "default_user") -> str:
         active_user_id = str(user_id or self.user_id)
