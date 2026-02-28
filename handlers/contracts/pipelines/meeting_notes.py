@@ -76,7 +76,7 @@ def _extra_sections_from_query(query: str, text: str) -> List[Dict[str, str]]:
     return out
 
 
-def build_meeting_summary(*, query: str, route: str, envelope: LLMEnvelope, doc_envelope: DocEnvelope | None = None) -> Dict[str, Any]:
+def build_meeting_summary(*, query: str, route: str, envelope: LLMEnvelope, doc_envelope: DocEnvelope | None = None, trigger_reason: Dict[str, Any] | None = None) -> Dict[str, Any]:
     source_text = "\n".join([
         (doc_envelope.answer_text if doc_envelope else "") or "",
         "\n".join((doc_envelope.chunks if doc_envelope else []) or []),
@@ -113,4 +113,5 @@ def build_meeting_summary(*, query: str, route: str, envelope: LLMEnvelope, doc_
         citations=[],
         confidence=0.8,
         metadata={"derived_from": "meeting_notes"},
+        trigger_reason=trigger_reason,
     )

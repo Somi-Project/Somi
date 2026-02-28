@@ -134,7 +134,7 @@ def _extra_sections(query: str) -> List[Dict[str, str]]:
     return out
 
 
-def build_decision_matrix(*, query: str, route: str, envelope: LLMEnvelope) -> Dict[str, Any]:
+def build_decision_matrix(*, query: str, route: str, envelope: LLMEnvelope, trigger_reason: Dict[str, Any] | None = None) -> Dict[str, Any]:
     text = "\n".join([query or "", envelope.answer_text or ""]).strip()
     options = _extract_options(text)
     criteria = _normalize_weights(_extract_criteria(text))
@@ -160,4 +160,5 @@ def build_decision_matrix(*, query: str, route: str, envelope: LLMEnvelope) -> D
         citations=[],
         confidence=0.78,
         metadata={"derived_from": "decision_framework"},
+        trigger_reason=trigger_reason,
     )

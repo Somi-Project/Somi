@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any, Dict
 
 
@@ -17,40 +18,40 @@ def _ensure_extra_sections(content: Dict[str, Any]) -> None:
         return
     clean = []
     for s in sections:
-        if not isinstance(s, dict):
-            continue
-        title = str(s.get("title") or "").strip()
-        body = str(s.get("content") or "").strip()
-        if title and body:
-            clean.append({"title": title, "content": body})
-    content["extra_sections"] = clean
+        if isinstance(s, dict):
+            title = str(s.get("title") or "").strip()[:120]
+            body = str(s.get("content") or "").strip()[:2000]
+            if title and body:
+                clean.append({"title": title, "content": body})
+    content["extra_sections"] = clean[:12]
 
 
 def _render_extra_sections(content: Dict[str, Any]) -> str:
-    out = []
-    for sec in content.get("extra_sections", []):
-        out.append(f"## {sec['title']}\n{sec['content']}")
-    return "\n\n".join(out)
+    return "\n\n".join(f"## {s['title']}\n{s['content']}" for s in content.get("extra_sections", []))
 
 
-def _ensure_list_of_str(content: Dict[str, Any], key: str, *, max_len: int | None = None) -> None:
+def _ensure_list_of_str(content: Dict[str, Any], key: str, *, max_len: int, item_max: int = 240) -> None:
     items = content.get(key)
     if not isinstance(items, list):
         content[key] = []
         return
-    clean = [str(x).strip() for x in items if str(x).strip()]
-    if max_len is not None:
-        clean = clean[:max_len]
-    content[key] = clean
+    content[key] = [str(x).strip()[:item_max] for x in items if str(x).strip()][:max_len]
+
+
+def _require_known_fields(content: Dict[str, Any], allowed: set[str]) -> None:
+    unknown = [k for k in content.keys() if k not in allowed]
+    if unknown:
+        raise ValueError(f"unknown fields: {', '.join(sorted(unknown))}")
 
 
 def validate_research_brief_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(payload or {})
     c = _content(p)
+    _require_known_fields(c, {"summary", "key_findings", "consensus", "open_questions", "extra_sections"})
     c.setdefault("summary", "")
-    c.setdefault("key_findings", [])
+    _ensure_list_of_str(c, "key_findings", max_len=12)
     c.setdefault("consensus", "")
-    c.setdefault("open_questions", [])
+    _ensure_list_of_str(c, "open_questions", max_len=12)
     _ensure_extra_sections(c)
     p["citations"] = list(p.get("citations") or [])
     return p
@@ -59,38 +60,33 @@ def validate_research_brief_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
 def validate_research_brief_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = validate_research_brief_lenient(payload)
     c = p["content"]
-    if not c.get("summary"):
-        raise ValueError("research_brief.summary required")
-    if not isinstance(c.get("key_findings"), list) or not c["key_findings"]:
-        raise ValueError("research_brief.key_findings required")
+    if not c.get("summary") or not c.get("key_findings"):
+        raise ValueError("research_brief.summary and key_findings required")
     return p
 
 
 def research_brief_to_markdown(payload: Dict[str, Any]) -> str:
-    p = validate_research_brief_lenient(payload)
-    c = p["content"]
+    c = validate_research_brief_lenient(payload)["content"]
     lines = ["# Research Brief", "", "## Summary", c.get("summary", ""), "", "## Key Findings"]
-    for item in c.get("key_findings", []):
-        lines.append(f"- {item}")
+    lines += [f"- {item}" for item in c.get("key_findings", [])]
     if c.get("consensus"):
-        lines.extend(["", "## Consensus", c["consensus"]])
+        lines += ["", "## Consensus", c["consensus"]]
     if c.get("open_questions"):
-        lines.extend(["", "## Open Questions"])
-        for q in c["open_questions"]:
-            lines.append(f"- {q}")
+        lines += ["", "## Open Questions"] + [f"- {q}" for q in c["open_questions"]]
     extra = _render_extra_sections(c)
     if extra:
-        lines.extend(["", extra])
+        lines += ["", extra]
     return "\n".join(lines).strip()
 
 
 def validate_doc_extract_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(payload or {})
     c = _content(p)
+    _require_known_fields(c, {"document_summary", "extracted_points", "table_extract", "page_refs", "extra_sections"})
     c.setdefault("document_summary", "")
-    c.setdefault("extracted_points", [])
-    c.setdefault("table_extract", [])
-    c.setdefault("page_refs", [])
+    _ensure_list_of_str(c, "extracted_points", max_len=20)
+    _ensure_list_of_str(c, "table_extract", max_len=20)
+    _ensure_list_of_str(c, "page_refs", max_len=20)
     _ensure_extra_sections(c)
     p["citations"] = list(p.get("citations") or [])
     return p
@@ -99,288 +95,210 @@ def validate_doc_extract_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
 def validate_doc_extract_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = validate_doc_extract_lenient(payload)
     c = p["content"]
-    if not c.get("document_summary"):
-        raise ValueError("doc_extract.document_summary required")
-    if not isinstance(c.get("extracted_points"), list) or not c["extracted_points"]:
-        raise ValueError("doc_extract.extracted_points required")
+    if not c.get("document_summary") or not c.get("extracted_points"):
+        raise ValueError("doc_extract.document_summary and extracted_points required")
     return p
 
 
 def doc_extract_to_markdown(payload: Dict[str, Any]) -> str:
-    p = validate_doc_extract_lenient(payload)
-    c = p["content"]
+    c = validate_doc_extract_lenient(payload)["content"]
     lines = ["# Document Extract", "", "## Summary", c.get("document_summary", ""), "", "## Extracted Points"]
-    for pt in c.get("extracted_points", []):
-        lines.append(f"- {pt}")
-    if c.get("table_extract"):
-        lines.extend(["", "## Table Extract"])
-        for row in c["table_extract"]:
-            lines.append(f"- {row}")
+    lines += [f"- {pt}" for pt in c.get("extracted_points", [])]
     if c.get("page_refs"):
-        lines.extend(["", "## Page References"])
-        for ref in c["page_refs"]:
-            lines.append(f"- {ref}")
-    extra = _render_extra_sections(c)
-    if extra:
-        lines.extend(["", extra])
+        lines += ["", "## Page References"] + [f"- {ref}" for ref in c["page_refs"]]
     return "\n".join(lines).strip()
 
 
 def validate_plan_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(payload or {})
     c = _content(p)
-    c.setdefault("objective", "")
-    c.setdefault("steps", [])
-    c.setdefault("constraints", [])
-    c.setdefault("risks", [])
+    _require_known_fields(c, {"objective", "steps", "constraints", "risks", "extra_sections"})
+    c["objective"] = str(c.get("objective") or "")[:500]
+    _ensure_list_of_str(c, "steps", max_len=12)
+    _ensure_list_of_str(c, "constraints", max_len=12)
+    _ensure_list_of_str(c, "risks", max_len=10)
     _ensure_extra_sections(c)
-    p["citations"] = list(p.get("citations") or [])
     return p
 
 
 def validate_plan_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = validate_plan_lenient(payload)
     c = p["content"]
-    if not c.get("objective"):
-        raise ValueError("plan.objective required")
-    if not isinstance(c.get("steps"), list) or not c["steps"]:
-        raise ValueError("plan.steps required")
+    if not c.get("objective") or not c.get("steps"):
+        raise ValueError("plan objective and steps required")
     return p
 
 
 def plan_to_markdown(payload: Dict[str, Any]) -> str:
-    p = validate_plan_lenient(payload)
-    c = p["content"]
+    c = validate_plan_lenient(payload)["content"]
     lines = ["# Plan", "", "## Objective", c.get("objective", ""), "", "## Steps"]
-    for idx, step in enumerate(c.get("steps", []), start=1):
-        lines.append(f"{idx}. {step}")
-    if c.get("constraints"):
-        lines.extend(["", "## Constraints"])
-        for item in c["constraints"]:
-            lines.append(f"- {item}")
-    if c.get("risks"):
-        lines.extend(["", "## Risks"])
-        for item in c["risks"]:
-            lines.append(f"- {item}")
-    extra = _render_extra_sections(c)
-    if extra:
-        lines.extend(["", extra])
+    lines += [f"{idx}. {step}" for idx, step in enumerate(c.get("steps", []), 1)]
     return "\n".join(lines).strip()
 
 
 def validate_meeting_summary_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(payload or {})
     c = _content(p)
-    c.setdefault("title", "Meeting Summary")
-    c.setdefault("date", None)
-    _ensure_list_of_str(c, "attendees")
+    _require_known_fields(c, {"title", "date", "attendees", "summary", "decisions", "action_items", "risks_blockers", "extra_sections"})
+    c["title"] = str(c.get("title") or "Meeting Summary")[:200]
+    c["date"] = c.get("date")
+    _ensure_list_of_str(c, "attendees", max_len=30)
     _ensure_list_of_str(c, "summary", max_len=12)
     _ensure_list_of_str(c, "decisions", max_len=10)
     _ensure_list_of_str(c, "risks_blockers", max_len=8)
-
-    action_items = c.get("action_items")
-    if not isinstance(action_items, list):
-        action_items = []
-    clean_actions = []
-    for item in action_items:
-        if isinstance(item, dict):
-            owner = str(item.get("owner") or "Unassigned").strip() or "Unassigned"
-            task = str(item.get("task") or "").strip()
-            due_raw = item.get("due")
-            due = str(due_raw).strip() if due_raw is not None and str(due_raw).strip() else None
+    clean = []
+    for row in list(c.get("action_items") or [])[:25]:
+        if isinstance(row, dict):
+            task = str(row.get("task") or "").strip()[:240]
             if task:
-                clean_actions.append({"owner": owner, "task": task, "due": due})
-        else:
-            task = str(item).strip()
-            if task:
-                clean_actions.append({"owner": "Unassigned", "task": task, "due": None})
-    c["action_items"] = clean_actions[:16]
+                clean.append({"owner": str(row.get("owner") or "Unassigned")[:80], "task": task, "due": row.get("due")})
+    c["action_items"] = clean
     _ensure_extra_sections(c)
-    p["citations"] = list(p.get("citations") or [])
     return p
 
 
 def validate_meeting_summary_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = validate_meeting_summary_lenient(payload)
     c = p["content"]
-    if not str(c.get("title") or "").strip():
-        raise ValueError("meeting_summary.title required")
-    if not isinstance(c.get("summary"), list):
+    if not c.get("summary"):
         raise ValueError("meeting_summary.summary required")
-    if not isinstance(c.get("decisions"), list):
-        raise ValueError("meeting_summary.decisions required")
-    if not isinstance(c.get("action_items"), list):
-        raise ValueError("meeting_summary.action_items required")
-    if not isinstance(c.get("risks_blockers"), list):
-        raise ValueError("meeting_summary.risks_blockers required")
-    if len(c.get("summary") or []) > 12:
-        raise ValueError("meeting_summary.summary max 12")
-    if len(c.get("decisions") or []) > 10:
-        raise ValueError("meeting_summary.decisions max 10")
-    if len(c.get("risks_blockers") or []) > 8:
-        raise ValueError("meeting_summary.risks_blockers max 8")
     return p
 
 
 def meeting_summary_to_markdown(payload: Dict[str, Any]) -> str:
-    p = validate_meeting_summary_lenient(payload)
-    c = p["content"]
-    lines = ["# Meeting Summary", "", f"## Title\n{c.get('title', 'Meeting Summary')}"]
-    if c.get("date"):
-        lines.extend(["", f"**Date:** {c['date']}"])
-    if c.get("attendees"):
-        lines.extend(["", "## Attendees"])
-        for x in c["attendees"]:
-            lines.append(f"- {x}")
-    lines.extend(["", "## Summary"])
-    for x in c.get("summary", []):
-        lines.append(f"- {x}")
-    lines.extend(["", "## Decisions"])
-    for x in c.get("decisions", []):
-        lines.append(f"- {x}")
-
-    lines.extend(["", "## Action Items", "", "| Owner | Task | Due |", "|---|---|---|"])
-    for row in c.get("action_items", []):
-        lines.append(f"| {row.get('owner', 'Unassigned')} | {row.get('task', '')} | {row.get('due') or ''} |")
-
-    if c.get("risks_blockers"):
-        lines.extend(["", "## Risks / Blockers"])
-        for x in c["risks_blockers"]:
-            lines.append(f"- {x}")
-
-    extra = _render_extra_sections(c)
-    if extra:
-        lines.extend(["", extra])
+    c = validate_meeting_summary_lenient(payload)["content"]
+    lines = ["# Meeting Summary", "", f"## Title\n{c.get('title', 'Meeting Summary')}", "", "## Summary"]
+    lines += [f"- {x}" for x in c.get("summary", [])]
+    lines += ["", "## Action Items", "", "| Owner | Task | Due |", "|---|---|---|"]
+    lines += [f"| {r.get('owner','Unassigned')} | {r.get('task','')} | {r.get('due') or ''} |" for r in c.get("action_items", [])]
     return "\n".join(lines).strip()
 
 
 def validate_decision_matrix_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = dict(payload or {})
     c = _content(p)
-    c.setdefault("question", "")
+    _require_known_fields(c, {"question", "options", "criteria", "scores", "totals", "recommendation", "sensitivity_notes", "extra_sections"})
+    c["question"] = str(c.get("question") or "")[:300]
     _ensure_list_of_str(c, "options", max_len=8)
-
-    criteria = c.get("criteria")
-    if not isinstance(criteria, list):
-        criteria = []
-    cleaned_criteria = []
-    for cr in criteria:
-        if not isinstance(cr, dict):
-            continue
-        name = str(cr.get("name") or "").strip()
-        if not name:
-            continue
-        try:
-            weight = float(cr.get("weight") or 0.0)
-        except Exception:
-            weight = 0.0
-        cleaned_criteria.append({"name": name, "weight": max(0.0, weight), "rationale": str(cr.get("rationale") or "").strip()})
-    c["criteria"] = cleaned_criteria[:7]
-
-    scores = c.get("scores")
-    if not isinstance(scores, list):
-        scores = []
-    clean_scores = []
-    for row in scores:
-        if not isinstance(row, dict):
-            continue
-        option = str(row.get("option") or "").strip()
-        criterion = str(row.get("criterion") or "").strip()
-        try:
-            score = int(row.get("score"))
-        except Exception:
-            continue
-        justification = str(row.get("justification") or "").strip()
-        if option and criterion:
-            clean_scores.append({"option": option, "criterion": criterion, "score": score, "justification": justification})
-    c["scores"] = clean_scores
-
-    totals = c.get("totals")
-    if not isinstance(totals, list):
-        totals = []
-    clean_totals = []
-    for t in totals:
-        if not isinstance(t, dict):
-            continue
-        option = str(t.get("option") or "").strip()
-        try:
-            wt = float(t.get("weighted_total"))
-        except Exception:
-            continue
-        if option:
-            clean_totals.append({"option": option, "weighted_total": wt})
-    c["totals"] = clean_totals
-
-    c.setdefault("recommendation", "")
+    criteria = []
+    for cr in list(c.get("criteria") or [])[:8]:
+        if isinstance(cr, dict) and str(cr.get("name") or "").strip():
+            criteria.append({"name": str(cr.get("name")).strip()[:120], "weight": max(0.0, float(cr.get("weight") or 0.0)), "rationale": str(cr.get("rationale") or "")[:240]})
+    c["criteria"] = criteria
+    scores = []
+    for row in list(c.get("scores") or []):
+        if isinstance(row, dict):
+            try:
+                scores.append({"option": str(row.get("option") or "").strip(), "criterion": str(row.get("criterion") or "").strip(), "score": int(row.get("score")), "justification": str(row.get("justification") or "")[:240]})
+            except Exception:
+                continue
+    c["scores"] = scores
+    c["totals"] = [t for t in list(c.get("totals") or []) if isinstance(t, dict)][:8]
+    c["recommendation"] = str(c.get("recommendation") or "")[:500]
     _ensure_list_of_str(c, "sensitivity_notes", max_len=10)
     _ensure_extra_sections(c)
-    p["citations"] = list(p.get("citations") or [])
     return p
 
 
 def validate_decision_matrix_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     p = validate_decision_matrix_lenient(payload)
     c = p["content"]
-    if not str(c.get("question") or "").strip():
-        raise ValueError("decision_matrix.question required")
     options = list(c.get("options") or [])
     criteria = list(c.get("criteria") or [])
     scores = list(c.get("scores") or [])
-    totals = list(c.get("totals") or [])
-
     if len(options) < 2 or len(options) > 8:
         raise ValueError("decision_matrix.options 2-8 required")
     if len(criteria) < 2:
         raise ValueError("decision_matrix.criteria min 2 required")
-
     weight_sum = sum(float(x.get("weight") or 0.0) for x in criteria)
     if not (0.999 <= weight_sum <= 1.001):
         raise ValueError("decision_matrix.criteria weights must normalize to 1.0")
-
+    expected = {(o, c2.get("name")) for o in options for c2 in criteria}
     covered = {(s.get("option"), s.get("criterion")) for s in scores}
-    expected = {(o, c.get("name")) for o in options for c in criteria}
     if covered != expected:
         raise ValueError("decision_matrix.scores must cover full option×criterion matrix")
-    for s in scores:
-        if not (1 <= int(s.get("score")) <= 5):
-            raise ValueError("decision_matrix.score must be 1-5")
-
-    if len(totals) != len(options):
+    if any(not (1 <= int(s.get("score")) <= 5) for s in scores):
+        raise ValueError("decision_matrix.score must be 1-5")
+    if len(list(c.get("totals") or [])) != len(options):
         raise ValueError("decision_matrix.totals required for each option")
-    if not str(c.get("recommendation") or "").strip():
+    if not c.get("recommendation"):
         raise ValueError("decision_matrix.recommendation required")
     return p
 
 
 def decision_matrix_to_markdown(payload: Dict[str, Any]) -> str:
-    p = validate_decision_matrix_lenient(payload)
-    c = p["content"]
-    lines = ["# Decision Matrix", "", "## Question", c.get("question", ""), "", "## Options"]
-    for o in c.get("options", []):
-        lines.append(f"- {o}")
+    c = validate_decision_matrix_lenient(payload)["content"]
+    lines = ["# Decision Matrix", "", "## Question", c.get("question", ""), "", "## Options"] + [f"- {o}" for o in c.get("options", [])]
+    return "\n".join(lines).strip()
 
-    lines.extend(["", "## Criteria Weights", "", "| Criterion | Weight |", "|---|---:|"])
-    for cr in c.get("criteria", []):
-        lines.append(f"| {cr.get('name','')} | {float(cr.get('weight') or 0.0):.3f} |")
 
-    lines.extend(["", "## Scores", "", "| Option | Criterion | Score | Justification |", "|---|---|---:|---|"])
-    for row in c.get("scores", []):
-        lines.append(
-            f"| {row.get('option','')} | {row.get('criterion','')} | {int(row.get('score') or 0)} | {row.get('justification','')} |"
-        )
+def validate_action_items_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"title", "items", "extra_sections"})
+    c["title"] = str(c.get("title") or "Action Items")[:200]
+    items = []
+    for item in list(c.get("items") or [])[:25]:
+        if not isinstance(item, dict):
+            continue
+        task = str(item.get("task") or "").strip()[:240]
+        if not task:
+            continue
+        pr = item.get("priority")
+        if pr not in {None, "low", "med", "high"}:
+            pr = None
+        items.append({"owner": str(item.get("owner") or "Unassigned")[:80], "task": task, "due": item.get("due"), "priority": pr})
+    c["items"] = items
+    _ensure_extra_sections(c)
+    return p
 
-    lines.extend(["", "## Totals", "", "| Option | Weighted Total |", "|---|---:|"])
-    for row in c.get("totals", []):
-        lines.append(f"| {row.get('option','')} | {float(row.get('weighted_total') or 0.0):.3f} |")
 
-    lines.extend(["", "## Recommendation", c.get("recommendation", "")])
-    if c.get("sensitivity_notes"):
-        lines.extend(["", "## Sensitivity Notes"])
-        for x in c["sensitivity_notes"]:
-            lines.append(f"- {x}")
-    extra = _render_extra_sections(c)
-    if extra:
-        lines.extend(["", extra])
+def validate_action_items_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = validate_action_items_lenient(payload)
+    for item in p["content"]["items"]:
+        if not item.get("task"):
+            raise ValueError("action_items.item.task required")
+    return p
+
+
+def action_items_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_action_items_lenient(payload)["content"]
+    grouped = defaultdict(list)
+    for row in c.get("items", []):
+        grouped[row.get("owner") or "Unassigned"].append(row)
+    lines = ["# Action Items"]
+    for owner in sorted(grouped):
+        lines += ["", f"## {owner}"]
+        lines += [f"- {r['task']}" + (f" (due: {r['due']})" if r.get("due") else "") for r in grouped[owner]]
+    return "\n".join(lines).strip()
+
+
+def validate_status_update_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"period", "done", "doing", "blocked", "asks", "next", "risks", "extra_sections"})
+    c["period"] = c.get("period")
+    _ensure_list_of_str(c, "done", max_len=12)
+    _ensure_list_of_str(c, "doing", max_len=12)
+    _ensure_list_of_str(c, "blocked", max_len=12)
+    _ensure_list_of_str(c, "next", max_len=12)
+    _ensure_list_of_str(c, "asks", max_len=8)
+    _ensure_list_of_str(c, "risks", max_len=8)
+    _ensure_extra_sections(c)
+    return p
+
+
+def validate_status_update_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    return validate_status_update_lenient(payload)
+
+
+def status_update_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_status_update_lenient(payload)["content"]
+    lines = ["# Status Update"]
+    for sec in ["done", "doing", "blocked", "asks", "next", "risks"]:
+        vals = c.get(sec) or []
+        if vals:
+            lines += ["", f"## {sec.title()}"] + [f"- {v}" for v in vals]
     return "\n".join(lines).strip()
 
 
@@ -390,6 +308,8 @@ STRICT_VALIDATORS = {
     "plan": validate_plan_strict,
     "meeting_summary": validate_meeting_summary_strict,
     "decision_matrix": validate_decision_matrix_strict,
+    "action_items": validate_action_items_strict,
+    "status_update": validate_status_update_strict,
 }
 
 MARKDOWN_RENDERERS = {
@@ -398,4 +318,13 @@ MARKDOWN_RENDERERS = {
     "plan": plan_to_markdown,
     "meeting_summary": meeting_summary_to_markdown,
     "decision_matrix": decision_matrix_to_markdown,
+    "action_items": action_items_to_markdown,
+    "status_update": status_update_to_markdown,
 }
+
+
+def validate_artifact(contract_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    validator = STRICT_VALIDATORS.get(str(contract_name or ""))
+    if not validator:
+        raise ValueError(f"No validator for contract={contract_name}")
+    return validator(payload)
