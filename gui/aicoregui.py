@@ -300,7 +300,11 @@ def ai_chat(app):
     name_combo = QComboBox()
     name_combo.addItems(app.agent_names)
     if app.agent_names:
-        name_combo.setCurrentText(app.agent_names[0])
+        preferred = str(getattr(app, "selected_agent_key", "") or "").replace("Name: ", "")
+        if preferred in app.agent_names:
+            name_combo.setCurrentText(preferred)
+        else:
+            name_combo.setCurrentText(app.agent_names[0])
     layout.addWidget(name_combo)
 
     use_studies_check = QCheckBox("Use Studies (RAG)")
@@ -479,6 +483,11 @@ def ai_chat(app):
             return
         try:
             agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+            app.selected_agent_key = agent_key
+            if getattr(app, "persona_combo", None):
+                app.persona_combo.setCurrentText(selected_name)
+            if hasattr(app, "_persist_selected_agent_key"):
+                app._persist_selected_agent_key(agent_key)
         except ValueError:
             QMessageBox.critical(chat_window, "Error", f"Agent '{selected_name}' not found.")
             set_status("Idle")
@@ -523,6 +532,11 @@ def ai_chat(app):
             return
         try:
             agent_key = app.agent_keys[app.agent_names.index(selected_name)]
+            app.selected_agent_key = agent_key
+            if getattr(app, "persona_combo", None):
+                app.persona_combo.setCurrentText(selected_name)
+            if hasattr(app, "_persist_selected_agent_key"):
+                app._persist_selected_agent_key(agent_key)
         except ValueError:
             return
 

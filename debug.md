@@ -1,174 +1,110 @@
-# Phase 5 / Istari Debug Log
+# Debug + Audit Report (GUI Personality Selector pass)
 
-Requested workflow followed:
-1) simulate
-2) audit what is wrong
-3) plan patch
-4) execute patches
-5) document grey-zone risks
-
-Focus rubric used:
-1. User experience
-2. Security
-3. Latency
-4. No unnecessary complexity
-5. Actually works
+## Goal
+Implement a personality dropdown in the main GUI (`somicontroller.py`) so switching personality updates:
+1. chat personality selection, and
+2. `config/assistant_profile.json` `active_persona_key`.
 
 ---
 
-## A) Simulation Pass
-
-### Simulated scenarios
-- **Read-only query path** (`weather/news/finance/llm_only`) should bypass execution control path.
-- **Proposal scope tampering** where `scope.paths` is safe but `steps[].parameters.path` points somewhere else.
-- **Command tampering** where `scope.commands` is benign but `steps[].parameters.command` differs.
-- **Unsafe command cwd** where command executes outside allowed roots.
-- **Token revocation edge case** with append-only token events in JSONL store.
-
-### Why these were selected
-They directly impact UX latency, security boundary integrity, and deterministic policy behavior.
-
----
-
-## B) Audit Findings (before patch)
-
-### 1) Scope/step mismatch gap (security)
-`PolicyEnforcer` validated declared `scope`, but execution consumed `steps[].parameters` without enforcing equality/containment. This permits intent drift between what user approved and what runs.
-
-### 2) Shell cwd boundary not enforced at step-level (security)
-`cwd` in execution step was not validated against allowed roots.
-
-### 3) Token revoke event inflation (integrity/noise)
-`revoke()` iterated all token rows (including non-issuance events), which could create unnecessary/duplicate revoke events.
-
-### 4) Schema invariant looseness (contract clarity)
-`proposal_action.requires_approval` / `proposal_action.no_autonomy` accepted `false` after coercion, which weakens the explicit contract.
-
-### 5) Minor hygiene
-Unused imports in `executive/istari.py`.
-
----
-
-## C) Patch Plan
-
-1. Harden deterministic enforcer to validate step payloads against approved scope.
-2. Enforce shell step cwd root constraints.
-3. Tighten token revoke targeting to issuance rows only + dedupe digests.
-4. Tighten proposal schema invariants for `requires_approval` and `no_autonomy`.
-5. Add regression tests for each discovered gap.
-6. Keep latency neutral for read-only routes (no added overhead to read-only fast path).
-
----
-
-## D) Executed Patches
-
-### Code patches
-- `executive/istari.py`
-  - Added command normalization helper in `PolicyEnforcer`.
-  - Enforced **step-path must match scoped paths** for `file.write_scoped`.
-  - Enforced **step-command must match scoped commands** for `shell.exec_scoped`.
-  - Enforced **step cwd inside allowed roots/protected-path rules**.
-  - Improved `TokenStore.revoke()` to only target `approval_token` rows and deduplicate revokes.
-  - Removed unused imports.
-  - Kept execution synchronous and deterministic.
-
-- `handlers/contracts/schemas.py`
-  - `proposal_action.requires_approval` is now enforced as true.
-  - `proposal_action.no_autonomy` is now enforced as true.
-
-- `tests/test_istari_guardrails.py`
-  - Added tests for:
-    - scope vs step path mismatch rejection
-    - scope vs step command mismatch rejection
-    - cwd outside allowed roots rejection
-    - revoke targeting only issuance tokens
-
----
-
-## E) Validation / Results
-
-Executed:
-- `pytest -q tests/test_istari_guardrails.py tests/test_governance.py tests/test_skill_command_governance.py tests/test_executive_engine.py`
-- `pytest -q tests/test_artifacts_phase4.py`
-
-Result: all passed.
-
----
-
-## F) Grey-zone issues (for your decision)
-
-These are not broken now, but are strategic choices:
-
-1. **Istari module exists but is still mostly library-level, not fully orchestrated into one end-to-end runtime command protocol.**
-   - Current code has strong primitives; if you want strict Phase-5 UX (proposal turn -> explicit approve/deny/revoke turn -> executed artifact turn), we should wire a dedicated turn router path that emits exactly one artifact each turn.
-
-2. **Audit log redaction path parity**
-   - `ArtifactStore` has redaction, while Istari `AuditLog` currently writes directly. If you want hard consistency, we should route Istari event writes through the same redaction helper pipeline.
-
-3. **Command allowlist policy breadth**
-   - Current allowlist defaults are conservative. If real workflows need broader command coverage, we should expand incrementally with explicit tests and per-command policy notes.
-
-4. **Latency instrumentation**
-   - Fast-path bypass logic exists, but we do not yet publish explicit p50/p95 metrics for “read-only turn with pending approvals present” vs baseline. If you want confidence at scale, add lightweight timers and a perf regression check.
-
----
-
-## Recommendation
-
-Given your priorities (UX + security + low latency + no drama), the next safest route is:
-- keep current hardening,
-- add end-to-end Istari orchestration behind a feature flag,
-- instrument latency before enabling by default.
-
-That gives you reversible rollout while preserving current user experience.
-
-
-## G) Follow-up fixes now implemented
-
-Based on your approval to apply all suggestions, these additional changes were completed:
-
-1. **Istari runtime command protocol wired**
-   - Added `executive/istari_runtime.py` with a deterministic turn protocol for:
-     - proposal creation (from `run tool ...`)
-     - `approve <proposal_id>`
-     - `deny|reject`
-     - `revoke <token|proposal|all>`
-     - `execute <proposal_id> <token>`
-   - Enforces one-artifact-per-turn by persisting only the relevant artifact type per protocol command.
-
-2. **Audit redaction parity**
-   - `AuditLog` in `executive/istari.py` now routes events through the same redaction helper used by `ArtifactStore` before writing `audit/events.jsonl`.
-
-3. **Allowlist policy practicality**
-   - Preserved conservative defaults in config, while hardening step-level normalization/validation in enforcement path to support controlled incremental broadening later without policy drift.
-
-4. **Latency instrumentation + fast-path hardening**
-   - `Agent` now records lightweight turn performance samples (`controller_ms`, `istari_ms`, route, read-only fast-path flag).
-   - Controller invocation no longer triggers solely because a pending ticket exists, preventing unnecessary latency on read-only turns.
-   - Added periodic read-only fast-path perf logging (average controller ms).
-
-5. **Additional regression tests**
-   - Added protocol + redaction tests (`tests/test_istari_protocol.py`).
-   - Added async agent test proving read-only turns bypass controller even with pending ticket (`tests/test_artifacts_phase4_agent_async.py`).
-
-
-## H) Extra audit loop (post-protocol integration)
+## Simulation → Debug → Plan → Patch (Cycle 1)
 
 ### Simulate
-- Approve with no pending proposal.
-- Execute with invalid token format/value.
-- Revoke flow producing audit rows with missing identifiers.
+- Audited GUI flow:
+  - main window quick actions (`build_quick_action_bar`),
+  - chat launcher (`open_chat`),
+  - chat subwindow selector (`gui/aicoregui.py`).
+- Found no main-window personality selector bound to assistant profile state.
 
-### Audit
-- Some negative-path artifacts used empty placeholder fields (`proposal_id`, `token_digest`) that can weaken strict contract compatibility downstream.
-- Minor test hygiene issue (dead local variable) in protocol test.
-- Missing Executive folder README for onboarding/interoperability context.
+### Debug
+- Existing behavior only used chat dialog agent combo and defaulted to first persona.
+- `assistant_profile.json` could drift from GUI-selected persona unless changed by heartbeat runtime fallback.
+
+### Plan
+- Add a dedicated personality dropdown in main quick-action bar.
+- Load initial selection from `assistant_profile.json`.
+- Persist changes back to `assistant_profile.json` immediately on selection.
+- Keep chat window default in sync with selected personality.
 
 ### Patch
-- Strengthened negative-path payloads in `IstariProtocol` to always include stable non-empty placeholders where needed.
-- Ensured invalid-token execution failure emits deterministic digest-based `token_digest` value.
-- Added `executive/README.md` documenting architecture, interoperability, safety model, and extension guidance.
-- Added tests for approve-without-pending and execute-invalid-token paths.
+- `somicontroller.py`:
+  - imported `QComboBox`, `load_assistant_profile`, `save_assistant_profile`.
+  - added assistant profile path constant.
+  - added helpers:
+    - `_selected_agent_name()`
+    - `_load_selected_agent_key()`
+    - `_persist_selected_agent_key()`
+    - `on_persona_changed()`
+  - added **Personality dropdown** to `build_quick_action_bar()`.
+  - updated `open_chat()` and preload path to honor selected persona.
+- `gui/aicoregui.py`:
+  - chat selector now defaults to `app.selected_agent_key`.
+  - start/apply paths persist selected persona via app hooks.
+
+---
+
+## Repeat Simulation → Patch if needed (Cycle 2)
+
+### Simulate
+- Reviewed interaction between main dropdown and active chat worker.
+- Noticed potential UX regression: switching persona in main GUI forced `use_studies=True` in worker update.
+
+### Debug
+- This could unexpectedly change the user’s current RAG preference when only persona should change.
+
+### Plan
+- Preserve existing worker `use_studies` state during personality switch.
+
+### Patch
+- `somicontroller.py` `on_persona_changed()` now reads current worker `use_studies` and reuses it when calling `update_agent(...)`.
+
+---
+
+## Validation
+- `python -m py_compile somicontroller.py gui/aicoregui.py agents.py handlers/heartbeat.py tests/test_phase6_heartbeat.py tests/test_artifacts_phase4_agent_async.py`
+- `pytest -q tests/test_phase6_heartbeat.py tests/test_artifacts_phase4.py tests/test_artifacts_phase4_agent_async.py`
+- Result: all targeted tests pass.
+
+---
+
+## Answer to design question
+- `personalC.json` should remain the **persona catalog** (definitions/content).
+- `assistant_profile.json` should remain the **runtime overlay** (active pointer + knobs + timestamps).
+- They are intentionally different responsibilities; the dropdown writes only the pointer (`active_persona_key`) to profile, not duplicate persona content.
+
+---
+
+## Simulation → Audit → Plan → Patch (Merge-readiness pass)
+
+### Simulate
+- Re-ran targeted tests and re-audited GUI persona wiring paths (`refresh_agent_names`, preload warmup path, chat open/apply sync).
+
+### Audit findings
+1. Warmup path still instantiated chat worker with `_default_agent_key()` instead of currently selected persona.
+2. Persona dropdown options were not refreshed when persona catalog list changed at runtime (possible stale UI list).
+
+### Plan
+- Route warmup worker creation through `selected_agent_key` with fallback safety.
+- Make `refresh_agent_names()` keep the dropdown model synchronized and preserve selection where possible.
+
+### Patch
+- Updated `_on_agent_warmed(...)` to use selected persona key (with validity fallback).
+- Updated `refresh_agent_names()` to repopulate `persona_combo` safely while preserving a valid selected item and avoiding recursive signal emissions.
+
+### Merge-readiness
+- No failing targeted tests.
+- No schema/runtime regressions detected in heartbeat-related suites.
+- GUI personality selection now consistently drives preload + chat defaults + persisted profile pointer.
+
+---
+
+## Final audit mini-patch
+
+### Audit finding
+- If persona catalog changes removed/renamed the currently selected key, `refresh_agent_names()` corrected in-memory selection but did not persist the corrected key to `assistant_profile.json`.
+
+### Patch
+- `refresh_agent_names()` now persists corrected fallback key via `_persist_selected_agent_key(...)` when drift is detected.
 
 ### Result
-- No known failing cases in targeted governance/protocol/async regression suite after patch.
+- GUI selection, runtime selection, and persisted profile pointer remain convergent after catalog churn.

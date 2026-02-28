@@ -73,6 +73,13 @@ from handlers.continuity import (
 )
 from handlers.contracts.fact_distiller import FactDistiller
 from handlers.contracts.policy import apply_research_degrade_notice, should_force_research_websearch
+from handlers.heartbeat import (
+    HeartbeatEngine,
+    get_active_persona,
+    load_assistant_profile,
+    load_persona_catalog,
+    save_assistant_profile,
+)
 from promptforge import PromptForge
 
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
@@ -152,8 +159,16 @@ class Agent:
             for a in aliases:
                 self.alias_to_key[str(a).lower()] = key
 
+        self.assistant_profile = load_assistant_profile()
+        catalog = load_persona_catalog()
+        active_key, active_persona = get_active_persona(str(self.assistant_profile.get("active_persona_key") or self.default_agent_key), catalog or self.characters)
+        self.assistant_profile["active_persona_key"] = active_key
+        self.heartbeat_engine = HeartbeatEngine()
+
         self.agent_key = self._resolve_agent_key(name)
-        character = self.characters.get(self.agent_key, self.characters.get(self.default_agent_key, {}))
+        character = dict(self.characters.get(self.agent_key, self.characters.get(self.default_agent_key, {})))
+        if active_persona:
+            character.update(active_persona)
 
         self.name = self.agent_key.replace("Name: ", "")
         self.role = character.get("role", "assistant")
@@ -201,6 +216,34 @@ class Agent:
         self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
         self.context_profile_cfg = dict((CHAT_CONTEXT_PROFILES or {}).get(self.context_profile, {}))
         self._load_mode_files()
+
+    def _refresh_profile_and_persona(self) -> tuple[dict, str, dict]:
+        self.assistant_profile = load_assistant_profile()
+        catalog = load_persona_catalog() or self.characters
+        requested_key = str(self.assistant_profile.get("active_persona_key") or self.default_agent_key)
+        active_key, persona = get_active_persona(requested_key, catalog)
+        self.assistant_profile["active_persona_key"] = active_key
+        if active_key != requested_key:
+            try:
+                save_assistant_profile(self.assistant_profile)
+            except Exception:
+                pass
+        return self.assistant_profile, active_key, persona
+
+    def _heartbeat_first_interaction_of_day(self, active_user_id: str, profile: dict) -> bool:
+        today = datetime.now(timezone.utc).date().isoformat()
+        return str(profile.get("last_brief_date") or "") != today
+
+    def _safe_temperature_value(self, value: Any, fallback: float) -> float:
+        try:
+            out = float(value)
+        except Exception:
+            out = float(fallback)
+        if out < 0.0:
+            return 0.0
+        if out > 1.5:
+            return 1.5
+        return out
 
     def _resolve_agent_key(self, name: str) -> str:
         if not name:
@@ -1272,6 +1315,32 @@ class Agent:
             except Exception as e:
                 logger.debug(f"Continuity engine failed (non-fatal): {e}")
 
+        active_persona_for_turn = {"temperature": self.temperature}
+        try:
+            profile, active_persona_key, active_persona = self._refresh_profile_and_persona()
+            active_persona_for_turn = dict(active_persona or {})
+            hb_art = self.heartbeat_engine.choose_artifact(
+                user_text=routing_prompt,
+                route=decision.route,
+                idx_snapshot=idx_snapshot or self.artifact_store.get_index_snapshot(),
+                profile=profile,
+                active_persona_key=active_persona_key,
+                persona=active_persona,
+                first_interaction_of_day=self._heartbeat_first_interaction_of_day(active_user_id, profile),
+            )
+            if hb_art is not None:
+                self.artifact_store.append(active_user_id, hb_art)
+                hb_type = str(hb_art.get("artifact_type") or hb_art.get("contract_name") or "")
+                if hb_type == "daily_brief":
+                    self.assistant_profile["last_brief_date"] = datetime.now(timezone.utc).date().isoformat()
+                self.assistant_profile["last_heartbeat_at"] = datetime.now(timezone.utc).isoformat()
+                save_assistant_profile(self.assistant_profile)
+                markdown = validate_and_render(hb_art)
+                self._push_history_for(active_user_id, prompt, markdown)
+                return markdown
+        except Exception as e:
+            logger.debug(f"Heartbeat engine failed (non-fatal): {e}")
+
         if decision.route == "command":
             cmd = prompt_lower.strip()
             if cmd == "memory doctor":
@@ -1523,7 +1592,7 @@ class Agent:
                     model=selected_model,
                     messages=messages,
                     options={
-                        "temperature": 0.0 if should_search else float(self.temperature),
+                        "temperature": 0.0 if should_search else self._safe_temperature_value(active_persona_for_turn.get("temperature", self.temperature), float(self.temperature)),
                         "max_tokens": int(max_tokens),
                         "keep_alive": 300,
                     },
