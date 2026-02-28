@@ -6,7 +6,7 @@ from handlers.contracts.base import build_base
 from handlers.contracts.envelopes import DocEnvelope
 
 
-def build_doc_extract(*, query: str, route: str, envelope: DocEnvelope) -> Dict[str, Any]:
+def build_doc_extract(*, query: str, route: str, envelope: DocEnvelope, trigger_reason: Dict[str, Any] | None = None) -> Dict[str, Any]:
     extracted = [c for c in (envelope.chunks or []) if c][:8]
     content = {
         "document_summary": envelope.answer_text[:1200] if envelope.answer_text else "Document extraction summary.",
@@ -23,4 +23,5 @@ def build_doc_extract(*, query: str, route: str, envelope: DocEnvelope) -> Dict[
         citations=citations,
         confidence=0.78 if extracted else 0.55,
         metadata={"chunk_count": len(extracted)},
+        trigger_reason=trigger_reason,
     )

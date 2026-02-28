@@ -338,7 +338,7 @@ class Agent:
         conf = self._plan_revision_confidence(prompt)
         if conf < 0.75:
             return None
-        candidate = self.artifact_store.get_last_by_type(user_id, "plan")
+        candidate = self.artifact_store.get_last(user_id, "plan")
         max_age = int(ARTIFACT_PLAN_REVISION_MAX_AGE_MINUTES or 180)
         if not self._is_recent_artifact(candidate, max_age_minutes=max_age):
             return None
@@ -989,6 +989,7 @@ class Agent:
         artifact_intent = None
         artifact_confidence = 0.0
         force_websearch_for_research = False
+        artifact_trigger_reason = {}
         if ENABLE_NL_ARTIFACTS:
             try:
                 has_doc = bool(self.rag and getattr(self.rag, "texts", None))
@@ -999,6 +1000,7 @@ class Agent:
                 )
                 artifact_intent = intent_decision.artifact_intent
                 artifact_confidence = float(intent_decision.confidence)
+                artifact_trigger_reason = dict(getattr(intent_decision, "trigger_reason", {}) or {})
                 if ROUTING_DEBUG:
                     logger.info(
                         f"Artifact intent: intent={artifact_intent} conf={artifact_confidence:.2f} reason={intent_decision.reason}"
@@ -1332,6 +1334,7 @@ class Agent:
                     min_sources=int(MIN_SOURCES_FOR_RESEARCH_BRIEF),
                     previous_plan=previous_plan,
                     new_constraints=new_constraints,
+                    trigger_reason=artifact_trigger_reason,
                 )
                 markdown = validate_and_render(artifact)
                 self.artifact_store.append(active_user_id, artifact)

@@ -6,7 +6,7 @@ from handlers.contracts.base import build_base
 from handlers.contracts.envelopes import SearchEnvelope
 
 
-def build_research_brief(*, query: str, route: str, envelope: SearchEnvelope, min_sources: int = 3) -> Dict[str, Any]:
+def build_research_brief(*, query: str, route: str, envelope: SearchEnvelope, min_sources: int = 3, trigger_reason: Dict[str, Any] | None = None) -> Dict[str, Any]:
     sources = envelope.sources or []
     findings = []
     citations = []
@@ -20,10 +20,6 @@ def build_research_brief(*, query: str, route: str, envelope: SearchEnvelope, mi
             findings.append(title)
         if url:
             citations.append({"type": "web", "url": url, "title": title})
-
-    if len(sources) < int(min_sources):
-        findings.append("Limited source coverage; confidence reduced.")
-
     content = {
         "summary": envelope.answer_text[:1200] if envelope.answer_text else "Research summary generated from available sources.",
         "key_findings": findings[:6] or ["No robust findings available."],
@@ -38,4 +34,5 @@ def build_research_brief(*, query: str, route: str, envelope: SearchEnvelope, mi
         citations=citations,
         confidence=0.86 if len(sources) >= int(min_sources) else 0.62,
         metadata={"source_count": len(sources)},
+        trigger_reason=trigger_reason,
     )

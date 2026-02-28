@@ -1,8 +1,18 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
+
+PRECEDENCE = [
+    "meeting_summary",
+    "action_items",
+    "decision_matrix",
+    "status_update",
+    "research_brief",
+    "doc_extract",
+    "plan",
+]
 
 
 @dataclass
@@ -10,6 +20,7 @@ class ArtifactIntentDecision:
     artifact_intent: Optional[str]
     confidence: float
     reason: str
+    trigger_reason: Dict[str, Any] = field(default_factory=dict)
 
 
 class ArtifactIntentDetector:
@@ -21,159 +32,113 @@ class ArtifactIntentDetector:
         text = text_raw.lower()
         route = (route or "").strip().lower()
 
-        # Never trigger artifacts on deterministic command/tool routing paths.
         if route in {"command", "local_memory_intent", "conversion_tool"}:
             return ArtifactIntentDecision(None, 0.0, f"route_blocked:{route}")
-
         if len(text) < 12:
             return ArtifactIntentDecision(None, 0.0, "too_short")
-
         if re.search(r"^(hi|hello|hey|yo|sup|how are you|good morning|good night)[!. ]*$", text):
             return ArtifactIntentDecision(None, 0.0, "smalltalk")
 
-        research_score = self._score_research(text, route)
-        doc_score = self._score_doc(text, route, has_doc)
-        plan_score = self._score_plan(text, route)
-        meeting_score = self._score_meeting_summary(text, text_raw)
-        decision_score = self._score_decision_matrix(text, text_raw)
+        candidates: Dict[str, Dict[str, Any]] = {
+            "meeting_summary": self._meeting_evidence(text, text_raw),
+            "action_items": self._action_items_evidence(text, text_raw),
+            "decision_matrix": self._decision_evidence(text, text_raw),
+            "status_update": self._status_evidence(text),
+            "research_brief": self._research_evidence(text, route),
+            "doc_extract": self._doc_evidence(text, has_doc),
+            "plan": self._plan_evidence(text),
+        }
 
-        scored = [
-            ("research_brief", research_score),
-            ("doc_extract", doc_score),
-            ("plan", plan_score),
-            ("meeting_summary", meeting_score),
-            ("decision_matrix", decision_score),
-        ]
-        scored.sort(key=lambda x: x[1], reverse=True)
-        best_type, best_score = scored[0]
+        explicit = [k for k, v in candidates.items() if v["explicit_request"] and v["eligible"]]
+        ordered = [k for k in PRECEDENCE if k in explicit] if explicit else [k for k in PRECEDENCE if candidates[k]["eligible"]]
+        if not ordered:
+            return ArtifactIntentDecision(None, 0.0, "below_threshold:none")
 
-        if best_score < self.threshold:
-            return ArtifactIntentDecision(None, float(best_score), f"below_threshold:{best_type}")
+        selected = ordered[0]
+        tie_break = None
+        if len(ordered) > 1:
+            tie_break = f"precedence:{' > '.join(ordered)}"
+        ev = candidates[selected]
+        conf = float(ev["score"])
+        if conf < self.threshold:
+            return ArtifactIntentDecision(None, conf, f"below_threshold:{selected}")
 
-        # hard gate: doc_extract requires document context
-        if best_type == "doc_extract" and not has_doc:
-            return ArtifactIntentDecision(None, float(best_score), "doc_extract_blocked_no_doc_context")
+        trigger_reason = {
+            "explicit_request": bool(ev["explicit_request"]),
+            "matched_phrases": ev["matched_phrases"],
+            "structural_signals": ev["structural_signals"],
+            "tie_break": tie_break,
+        }
+        return ArtifactIntentDecision(selected, conf, f"best:{selected}", trigger_reason=trigger_reason)
 
-        # hard gate: meeting summary requires stronger evidence + enough length
-        if best_type == "meeting_summary":
-            if len(text_raw) < 80:
-                return ArtifactIntentDecision(None, float(best_score), "meeting_summary_blocked_too_short")
-            if not self._meeting_trigger_eligible(text, text_raw):
-                return ArtifactIntentDecision(None, float(best_score), "meeting_summary_blocked_missing_signals")
+    def _meeting_evidence(self, text: str, text_raw: str) -> Dict[str, Any]:
+        phrases = []
+        explicit = bool(re.search(r"\b(meeting summary|meeting minutes|summarize (this )?transcript|summarize meeting notes)\b", text))
+        if explicit:
+            phrases.append("meeting_summary_request")
+        structure = []
+        if re.search(r"\b\d{1,2}:\d{2}\b", text_raw):
+            structure.append("timestamps")
+        if re.search(r"(^|\n)\s*[A-Z][A-Za-z0-9 _-]{1,24}:\s+", text_raw):
+            structure.append("speaker_labels")
+        for marker, signal in [("attendees:", "attendees_heading"), ("asistentes:", "attendees_heading_es"), ("agenda:", "agenda_heading"), ("decisions:", "decisions_heading"), ("decisiones:", "decisions_heading_es")]:
+            if marker in text:
+                structure.append(signal)
+        line_count = len([ln for ln in text_raw.splitlines() if ln.strip()])
+        eligible = explicit or len(structure) >= 2 or ("timestamps" in structure and line_count >= 3)
+        return {"eligible": eligible, "score": 0.93 if explicit else (0.82 if eligible else 0.0), "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": structure}
 
-        # hard gate: decision matrix requires at least 2 options
-        if best_type == "decision_matrix":
-            if self._detect_option_count(text_raw) < 2:
-                return ArtifactIntentDecision(None, float(best_score), "decision_matrix_blocked_insufficient_options")
+    def _action_items_evidence(self, text: str, text_raw: str) -> Dict[str, Any]:
+        phrases = []
+        explicit = bool(re.search(r"\b(extract action items|action items only|extract todos|extract to[- ]?dos|next steps list)\b", text))
+        if explicit:
+            phrases.append("action_items_request")
+        structure = []
+        for marker, signal in [("action items:", "action_items_heading"), ("todo:", "todo_heading"), ("next steps:", "next_steps_heading"), ("assigned to:", "assigned_to_heading"), ("tareas:", "action_items_heading_es"), ("próximos pasos:", "next_steps_heading_es"), ("proximos pasos:", "next_steps_heading_es")]:
+            if marker in text:
+                structure.append(signal)
+        eligible = explicit or len(structure) >= 1
+        return {"eligible": eligible, "score": 0.9 if explicit else (0.8 if eligible else 0.0), "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": structure}
 
-        return ArtifactIntentDecision(best_type, float(best_score), f"best:{best_type}")
+    def _decision_evidence(self, text: str, text_raw: str) -> Dict[str, Any]:
+        framework = bool(re.search(r"\b(help me decide|decision matrix|which should i choose|compare .* (and|vs|versus) .*)\b", text))
+        phrases = ["decision_request"] if framework else []
+        options = 2 if re.search(r"between\s+.+\s+(and|vs\.?|versus)\s+.+", text_raw, flags=re.IGNORECASE) else 0
+        options += len([1 for ln in text_raw.splitlines() if re.match(r"^\s*(?:[-*]|\d+[.)]|option\s+[a-z0-9])\s+", ln, flags=re.IGNORECASE)])
+        structure = ["options_detected"] if options >= 2 else []
+        eligible = framework and options >= 2
+        return {"eligible": eligible, "score": 0.88 if eligible else 0.0, "explicit_request": framework, "matched_phrases": phrases, "structural_signals": structure}
 
-    def _score_research(self, text: str, route: str) -> float:
+    def _status_evidence(self, text: str) -> Dict[str, Any]:
+        explicit = bool(re.search(r"\b(status update|standup update|weekly update|write a standup|actualizacion de estado|actualización de estado)\b", text))
+        phrases = ["status_update_request"] if explicit else []
+        structure = []
+        for marker, signal in [("done:", "done_heading"), ("doing:", "doing_heading"), ("blocked:", "blocked_heading"), ("hecho:", "done_heading_es"), ("haciendo:", "doing_heading_es"), ("bloqueado:", "blocked_heading_es")]:
+            if marker in text:
+                structure.append(signal)
+        eligible = explicit or len(structure) >= 3
+        return {"eligible": eligible, "score": 0.86 if explicit else (0.8 if eligible else 0.0), "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": structure}
+
+    def _research_evidence(self, text: str, route: str) -> Dict[str, Any]:
+        explicit = bool(re.search(r"\b(research brief|research .* with citations|with citations|source-backed)\b", text))
+        phrases = ["research_request"] if explicit else []
         score = 0.0
+        if explicit:
+            score += 0.82
         if route == "websearch":
-            score += 0.45
-        if re.search(r"\b(citations?|sources?|evidence|consensus|pros and cons|compare|synthesize|synthesis)\b", text):
-            score += 0.35
-        if re.search(r"\b(research brief|briefing|literature|state of the art|what do studies say)\b", text):
-            score += 0.25
-        if re.search(r"\b(news|latest|today)\b", text):
-            score += 0.05
-        return min(score, 0.99)
-
-    def _score_doc(self, text: str, route: str, has_doc: bool) -> float:
-        score = 0.0
-        if has_doc:
-            score += 0.45
-        if re.search(r"\b(document|pdf|file|page|section|extract|summarize this doc|from the doc)\b", text):
-            score += 0.35
-        if re.search(r"\b(table|fields|values|page ref|quote)\b", text):
-            score += 0.15
-        if route == "llm_only" and has_doc:
-            score += 0.05
-        return min(score, 0.99)
-
-    def _score_plan(self, text: str, route: str) -> float:
-        score = 0.0
-        personal = bool(re.search(r"\b(i need|help me|for me|my|i want|i'm|im|my goal|my plan)\b", text))
-        memory_profile_only = bool(re.search(r"\b(my name is|remember this|what do you remember|my favorite)\b", text))
-        action = bool(re.search(r"\b(plan|roadmap|steps|schedule|organize|next steps|action plan|todo)\b", text))
-
-        if personal:
-            score += 0.35
-        if action:
-            score += 0.35
-        if route == "llm_only":
             score += 0.1
-        if re.search(r"\b(today|this week|this month|deadline|priority)\b", text):
-            score += 0.1
+        return {"eligible": explicit or score >= 0.8, "score": min(score, 0.95), "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": []}
 
-        # hard personalization requirement for plan
-        if not personal or memory_profile_only:
-            return 0.0
-        return min(score, 0.99)
+    def _doc_evidence(self, text: str, has_doc: bool) -> Dict[str, Any]:
+        explicit = bool(re.search(r"\b(doc extract|extract from (the )?(document|pdf)|summarize this doc)\b", text))
+        phrases = ["doc_extract_request"] if explicit else []
+        eligible = explicit and has_doc
+        return {"eligible": eligible, "score": 0.85 if eligible else 0.0, "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": ["document_context"] if has_doc else []}
 
-    def _meeting_trigger_eligible(self, text: str, text_raw: str) -> bool:
-        explicit = bool(
-            re.search(
-                r"\b(summarize (these )?meeting notes|summarize (this )?transcript|meeting notes|meeting minutes|minutes of meeting|\bmom\b|transcript)\b",
-                text,
-            )
-        )
-        transcript_like = bool(
-            re.search(r"\b\d{1,2}:\d{2}\b", text_raw)
-            or re.search(r"(^|\n)\s*[A-Z][A-Za-z0-9 _-]{1,24}:\s+", text_raw)
-        ) and len(text_raw.splitlines()) >= 3
-        section_hits = sum(
-            1
-            for marker in ["agenda:", "attendees:", "action items:", "decisions:", "next steps:"]
-            if marker in text
-        )
-        return explicit or transcript_like or section_hits >= 2
-
-    def _score_meeting_summary(self, text: str, text_raw: str) -> float:
-        if len(text_raw) < 80:
-            return 0.0
-        score = 0.0
-        if self._meeting_trigger_eligible(text, text_raw):
-            score += 0.66
-        if re.search(r"\b(meeting|minutes|transcript|attendees|agenda|action items|decisions)\b", text):
-            score += 0.2
-        if len(text_raw.splitlines()) >= 4:
-            score += 0.1
-        return min(score, 0.99)
-
-    def _detect_option_count(self, text_raw: str) -> int:
-        lines = [ln.strip() for ln in text_raw.splitlines() if ln.strip()]
-        explicit_opts = []
-        for ln in lines:
-            if re.match(r"^(?:[-*]|\d+[.)]|option\s+[a-z0-9])\s+", ln, flags=re.IGNORECASE):
-                explicit_opts.append(ln)
-        if len(explicit_opts) >= 2:
-            return len(explicit_opts)
-
-        vs_match = re.search(r"between\s+(.+?)\s+(?:and|vs\.?|versus)\s+(.+?)(?:[?.!,]|$)", text_raw, flags=re.IGNORECASE)
-        if vs_match:
-            return 2
-        return 0
-
-    def _score_decision_matrix(self, text: str, text_raw: str) -> float:
-        score = 0.0
-        option_count = self._detect_option_count(text_raw)
-        framework_ask = bool(
-            re.search(
-                r"\b(help me decide|decision matrix|weighted criteria|which should i choose|compare .* vs .*|compare .* versus .*|compare .* and .* for me)\b",
-                text,
-            )
-        )
-        criteria_signals = bool(re.search(r"\b(criteria|weights?|score|trade[- ]?off|matrix|rank)\b", text))
-
-        if framework_ask:
-            score += 0.55
-        if option_count >= 2:
-            score += 0.32
-        if criteria_signals:
-            score += 0.12
-
-        if option_count < 2:
-            return 0.0
-        return max(0.0, min(score, 0.99))
+    def _plan_evidence(self, text: str) -> Dict[str, Any]:
+        explicit = bool(re.search(r"\b(plan|checklist|roadmap|next steps)\b", text))
+        phrases = ["plan_request"] if explicit else []
+        educational = bool(re.search(r"\b(steps of|what is|explain)\b", text))
+        personal = bool(re.search(r"\b(i need|help me|for me|my goal|my)\b", text))
+        eligible = explicit and personal and not educational
+        return {"eligible": eligible, "score": 0.82 if eligible else 0.0, "explicit_request": explicit, "matched_phrases": phrases, "structural_signals": ["task_intent"] if personal else []}
