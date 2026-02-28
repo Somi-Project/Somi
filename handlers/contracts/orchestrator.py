@@ -1,9 +1,16 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from handlers.contracts.envelopes import to_doc_envelope, to_llm_envelope, to_search_envelope
-from handlers.contracts.pipelines import build_doc_extract, build_plan, build_plan_revision, build_research_brief
+from handlers.contracts.pipelines import (
+    build_decision_matrix,
+    build_doc_extract,
+    build_meeting_summary,
+    build_plan,
+    build_plan_revision,
+    build_research_brief,
+)
 from handlers.contracts.schemas import MARKDOWN_RENDERERS, STRICT_VALIDATORS
 
 
@@ -43,6 +50,16 @@ def build_artifact_for_intent(
             )
         env = to_llm_envelope(answer_text)
         return build_plan(query=query, route=route, envelope=env)
+    if artifact_intent == "meeting_summary":
+        doc_env = to_doc_envelope(answer_text, rag_block)
+        env = to_llm_envelope(answer_text)
+        return build_meeting_summary(query=query, route=route, envelope=env, doc_envelope=doc_env)
+    if artifact_intent == "decision_matrix":
+        env = to_llm_envelope(answer_text)
+        art = build_decision_matrix(query=query, route=route, envelope=env)
+        if len(list(art.get("content", {}).get("options") or [])) < 2:
+            raise ArtifactBuildError("insufficient_options")
+        return art
     raise ValueError(f"Unsupported artifact intent: {artifact_intent}")
 
 

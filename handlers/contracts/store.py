@@ -32,6 +32,19 @@ class ArtifactStore:
         if not payload.get("timestamp"):
             payload["timestamp"] = created_at or datetime.now(timezone.utc).isoformat()
         payload.setdefault("artifact_id", f"adhoc_{int(datetime.now(timezone.utc).timestamp() * 1000)}")
+
+        # Backward-compatible contract envelope aliases.
+        contract_name = str(payload.get("contract_name") or payload.get("artifact_type") or "")
+        payload.setdefault("contract_name", contract_name)
+        try:
+            payload.setdefault("contract_version", int(payload.get("schema_version") or 1))
+        except Exception:
+            payload.setdefault("contract_version", 1)
+        if "data" not in payload:
+            payload["data"] = dict(payload.get("content") or {})
+        if "content" not in payload:
+            payload["content"] = dict(payload.get("data") or {})
+
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
             with open(path, "a", encoding="utf-8") as f:
@@ -53,7 +66,8 @@ class ArtifactStore:
                         item = json.loads(line)
                     except Exception:
                         continue
-                    if str(item.get("artifact_type")) == str(artifact_type):
+                    item_type = str(item.get("artifact_type") or item.get("contract_name") or "")
+                    if item_type == str(artifact_type):
                         last = item
         return last
 
