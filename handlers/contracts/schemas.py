@@ -302,6 +302,127 @@ def status_update_to_markdown(payload: Dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def validate_artifact_continuity_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"thread_id", "top_related_artifacts", "current_state_summary", "suggested_next_steps", "assumptions", "questions", "safety"})
+    c["thread_id"] = str(c.get("thread_id") or "")[:120]
+    rel = []
+    for row in list(c.get("top_related_artifacts") or [])[:10]:
+        if not isinstance(row, dict):
+            continue
+        aid = str(row.get("artifact_id") or "").strip()
+        if not aid:
+            continue
+        status = str(row.get("status") or "unknown").strip()
+        rel.append({
+            "artifact_id": aid,
+            "type": str(row.get("type") or "")[:80],
+            "title": str(row.get("title") or "")[:200],
+            "status": status,
+            "updated_at": row.get("updated_at"),
+        })
+    c["top_related_artifacts"] = rel
+    c["current_state_summary"] = str(c.get("current_state_summary") or "")[:500]
+    _ensure_list_of_str(c, "suggested_next_steps", max_len=7)
+    _ensure_list_of_str(c, "assumptions", max_len=10)
+    _ensure_list_of_str(c, "questions", max_len=5)
+    safety = c.get("safety") if isinstance(c.get("safety"), dict) else {}
+    c["safety"] = {"no_autonomy": True, "no_execution": True}
+    return p
+
+
+def validate_artifact_continuity_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = validate_artifact_continuity_lenient(payload)
+    c = p["content"]
+    if not c.get("thread_id"):
+        raise ValueError("artifact_continuity.thread_id required")
+    if not c.get("current_state_summary"):
+        raise ValueError("artifact_continuity.current_state_summary required")
+    if not c.get("suggested_next_steps"):
+        raise ValueError("artifact_continuity.suggested_next_steps required")
+    return p
+
+
+def artifact_continuity_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_artifact_continuity_lenient(payload)["content"]
+    lines = ["# Continuity", "", "## Current State", c.get("current_state_summary", ""), "", "## Suggested Next Steps"]
+    lines += [f"- {x}" for x in c.get("suggested_next_steps", [])]
+    if c.get("assumptions"):
+        lines += ["", "## Assumptions"] + [f"- {x}" for x in c["assumptions"]]
+    if c.get("questions"):
+        lines += ["", "## Questions"] + [f"- {x}" for x in c["questions"]]
+    return "\n".join(lines).strip()
+
+
+def validate_task_state_lenient(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"thread_id", "tasks", "rollups", "suggested_updates"})
+    c["thread_id"] = str(c.get("thread_id") or "")[:120]
+    tasks = []
+    for row in list(c.get("tasks") or [])[:200]:
+        if not isinstance(row, dict):
+            continue
+        status = str(row.get("status") or "unknown").strip()
+        if status not in {"open", "in_progress", "done", "blocked", "unknown"}:
+            status = "unknown"
+        title = str(row.get("title") or "").strip()[:240]
+        task_id = str(row.get("task_id") or "").strip()[:64]
+        src = str(row.get("source_artifact_id") or "").strip()
+        if not (title and task_id and src):
+            continue
+        item = {
+            "task_id": task_id,
+            "title": title,
+            "status": status,
+            "owner": str(row.get("owner") or "Unassigned")[:80],
+            "source_artifact_id": src,
+        }
+        if row.get("due_date"):
+            item["due_date"] = str(row.get("due_date"))[:80]
+        if row.get("notes"):
+            item["notes"] = str(row.get("notes"))[:240]
+        tasks.append(item)
+    c["tasks"] = tasks
+    roll = c.get("rollups") if isinstance(c.get("rollups"), dict) else {}
+    c["rollups"] = {
+        "open_count": int(roll.get("open_count") or 0),
+        "in_progress_count": int(roll.get("in_progress_count") or 0),
+        "done_count": int(roll.get("done_count") or 0),
+        "blocked_count": int(roll.get("blocked_count") or 0),
+    }
+    su = []
+    for row in list(c.get("suggested_updates") or [])[:100]:
+        if not isinstance(row, dict):
+            continue
+        tid = str(row.get("task_id") or "").strip()
+        st = str(row.get("suggested_status") or "unknown").strip()
+        if not tid or st not in {"open", "in_progress", "done", "blocked", "unknown"}:
+            continue
+        su.append({"task_id": tid, "suggested_status": st, "reason": str(row.get("reason") or "")[:240]})
+    c["suggested_updates"] = su
+    return p
+
+
+def validate_task_state_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = validate_task_state_lenient(payload)
+    c = p["content"]
+    if not c.get("thread_id"):
+        raise ValueError("task_state.thread_id required")
+    if not isinstance(c.get("tasks"), list):
+        raise ValueError("task_state.tasks required")
+    return p
+
+
+def task_state_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_task_state_lenient(payload)["content"]
+    lines = ["# Task State", "", "## Tasks"]
+    for t in c.get("tasks", []):
+        lines.append(f"- [{t.get('status')}] {t.get('title')} ({t.get('owner')})")
+    return "\n".join(lines).strip()
+
+
 STRICT_VALIDATORS = {
     "research_brief": validate_research_brief_strict,
     "doc_extract": validate_doc_extract_strict,
@@ -310,6 +431,8 @@ STRICT_VALIDATORS = {
     "decision_matrix": validate_decision_matrix_strict,
     "action_items": validate_action_items_strict,
     "status_update": validate_status_update_strict,
+    "artifact_continuity": validate_artifact_continuity_strict,
+    "task_state": validate_task_state_strict,
 }
 
 MARKDOWN_RENDERERS = {
@@ -320,6 +443,8 @@ MARKDOWN_RENDERERS = {
     "decision_matrix": decision_matrix_to_markdown,
     "action_items": action_items_to_markdown,
     "status_update": status_update_to_markdown,
+    "artifact_continuity": artifact_continuity_to_markdown,
+    "task_state": task_state_to_markdown,
 }
 
 

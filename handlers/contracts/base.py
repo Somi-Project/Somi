@@ -3,10 +3,12 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict
 import hashlib
+import re
 import uuid
 
 
 ARTIFACT_SCHEMA_VERSION = 3
+ALLOWED_STATUS = {"open", "in_progress", "done", "blocked", "unknown"}
 
 
 def utc_now_iso() -> str:
@@ -64,6 +66,42 @@ def normalize_envelope(artifact: Dict[str, Any], *, session_id: str | None = Non
     except Exception:
         confidence = 0.0
 
+    tags_raw = list(payload.get("tags") or [])
+    tags: list[str] = []
+    for tag in tags_raw:
+        t = " ".join(str(tag or "").strip().lower().split())
+        t = re.sub(r"[^a-z0-9 _-]", "", t).replace(" ", "-")
+        if t and len(t) <= 32 and t not in tags:
+            tags.append(t)
+    tags = tags[:20]
+
+    status = str(payload.get("status") or "unknown").strip().lower() or "unknown"
+    if status not in ALLOWED_STATUS:
+        status = "unknown"
+
+    related_artifact_ids = [str(x).strip() for x in list(payload.get("related_artifact_ids") or []) if str(x).strip()][:20]
+    parent_artifact_id = payload.get("parent_artifact_id")
+    parent_artifact_id = str(parent_artifact_id).strip() if parent_artifact_id else None
+    thread_id = payload.get("thread_id")
+    thread_id = str(thread_id).strip() if thread_id else None
+
+    continuity = payload.get("continuity")
+    if isinstance(continuity, dict):
+        try:
+            resume_conf = float(continuity.get("resume_confidence") or 0.0)
+        except Exception:
+            resume_conf = 0.0
+        continuity = {
+            "resume_reasons": [str(x).strip()[:160] for x in list(continuity.get("resume_reasons") or []) if str(x).strip()][:10],
+            "resume_confidence": max(0.0, min(1.0, resume_conf)),
+            "suggested_next_steps": [str(x).strip()[:240] for x in list(continuity.get("suggested_next_steps") or []) if str(x).strip()][:7],
+            "stale_flags": [str(x).strip()[:60] for x in list(continuity.get("stale_flags") or []) if str(x).strip()][:8],
+            "candidate_artifact_ids": [str(x).strip() for x in list(continuity.get("candidate_artifact_ids") or []) if str(x).strip()][:20],
+            "no_autonomy": True,
+        }
+    else:
+        continuity = None
+
     out: Dict[str, Any] = {
         "artifact_id": str(payload.get("artifact_id") or new_artifact_id()),
         "session_id": str(payload.get("session_id") or session_id or "default_user"),
@@ -80,6 +118,12 @@ def normalize_envelope(artifact: Dict[str, Any], *, session_id: str | None = Non
         "warnings": warnings,
         "revises_artifact_id": payload.get("revises_artifact_id"),
         "diff_summary": payload.get("diff_summary"),
+        "tags": tags,
+        "status": status,
+        "related_artifact_ids": related_artifact_ids,
+        "parent_artifact_id": parent_artifact_id,
+        "thread_id": thread_id,
+        "continuity": continuity,
         # backward aliases
         "artifact_type": contract_name,
         "content": data,
