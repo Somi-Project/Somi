@@ -423,6 +423,113 @@ def task_state_to_markdown(payload: Dict[str, Any]) -> str:
     return "\n".join(lines).strip()
 
 
+def validate_proposal_action_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(
+        c,
+        {
+            "type",
+            "proposal_id",
+            "capability",
+            "risk_tier",
+            "summary",
+            "justification",
+            "scope",
+            "steps",
+            "preconditions",
+            "requires_approval",
+            "expires_in_s",
+            "no_autonomy",
+            "related_artifact_ids",
+            "ui_hints",
+        },
+    )
+    if c.get("type") != "proposal_action":
+        raise ValueError("proposal_action.type required")
+    if not str(c.get("proposal_id") or "").strip() or not str(c.get("capability") or "").strip():
+        raise ValueError("proposal_action proposal_id/capability required")
+    if c.get("risk_tier") not in {"tier0", "tier1", "tier2", "tier3", "tier4"}:
+        raise ValueError("proposal_action risk_tier invalid")
+    c["requires_approval"] = bool(c.get("requires_approval", True))
+    if not c["requires_approval"]:
+        raise ValueError("proposal_action.requires_approval must be true")
+    if c.get("risk_tier") in {"tier2", "tier3", "tier4"} and not c["requires_approval"]:
+        raise ValueError("tier2+ requires approval")
+    c["summary"] = str(c.get("summary") or "")[:500]
+    _ensure_list_of_str(c, "justification", max_len=10)
+    c["scope"] = dict(c.get("scope") or {})
+    c["steps"] = [s for s in list(c.get("steps") or []) if isinstance(s, dict)]
+    _ensure_list_of_str(c, "preconditions", max_len=12)
+    c["expires_in_s"] = max(1, int(c.get("expires_in_s") or 300))
+    c["no_autonomy"] = bool(c.get("no_autonomy", True))
+    if not c["no_autonomy"]:
+        raise ValueError("proposal_action.no_autonomy must be true")
+    _ensure_list_of_str(c, "related_artifact_ids", max_len=20)
+    c["ui_hints"] = dict(c.get("ui_hints") or {})
+    return p
+
+
+def validate_approval_token_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "token_id", "token_digest", "proposal_id", "capability", "scope", "issued_at", "expires_at", "one_time", "revoked", "no_autonomy"})
+    if c.get("type") != "approval_token":
+        raise ValueError("approval_token.type required")
+    for k in ("token_id", "token_digest", "proposal_id", "capability", "issued_at", "expires_at"):
+        if not str(c.get(k) or "").strip():
+            raise ValueError(f"approval_token.{k} required")
+    c["scope"] = dict(c.get("scope") or {})
+    c["one_time"] = bool(c.get("one_time", True))
+    c["revoked"] = bool(c.get("revoked", False))
+    c["no_autonomy"] = bool(c.get("no_autonomy", True))
+    return p
+
+
+def validate_executed_action_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "proposal_id", "token_digest", "capability", "started_at", "ended_at", "success", "effects", "outputs", "errors", "audit_event_ids", "no_autonomy"})
+    if c.get("type") != "executed_action":
+        raise ValueError("executed_action.type required")
+    for k in ("proposal_id", "token_digest", "capability", "started_at", "ended_at"):
+        if not str(c.get(k) or "").strip():
+            raise ValueError(f"executed_action.{k} required")
+    c["success"] = bool(c.get("success"))
+    c["effects"] = dict(c.get("effects") or {})
+    c["outputs"] = dict(c.get("outputs") or {})
+    c["errors"] = [e for e in list(c.get("errors") or []) if isinstance(e, dict)]
+    _ensure_list_of_str(c, "audit_event_ids", max_len=50)
+    c["no_autonomy"] = bool(c.get("no_autonomy", True))
+    return p
+
+
+def validate_denied_action_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "proposal_id", "denied_at", "reason", "no_autonomy"})
+    if c.get("type") != "denied_action":
+        raise ValueError("denied_action.type required")
+    if not str(c.get("proposal_id") or "").strip():
+        raise ValueError("denied_action.proposal_id required")
+    c["reason"] = str(c.get("reason") or "")[:500]
+    c["no_autonomy"] = bool(c.get("no_autonomy", True))
+    return p
+
+
+def validate_revoked_token_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "token_digest", "revoked_at", "reason", "no_autonomy"})
+    if c.get("type") != "revoked_token":
+        raise ValueError("revoked_token.type required")
+    if not str(c.get("token_digest") or "").strip():
+        raise ValueError("revoked_token.token_digest required")
+    c["reason"] = str(c.get("reason") or "")[:500]
+    c["no_autonomy"] = bool(c.get("no_autonomy", True))
+    return p
+
+
 STRICT_VALIDATORS = {
     "research_brief": validate_research_brief_strict,
     "doc_extract": validate_doc_extract_strict,
@@ -433,6 +540,11 @@ STRICT_VALIDATORS = {
     "status_update": validate_status_update_strict,
     "artifact_continuity": validate_artifact_continuity_strict,
     "task_state": validate_task_state_strict,
+    "proposal_action": validate_proposal_action_strict,
+    "approval_token": validate_approval_token_strict,
+    "executed_action": validate_executed_action_strict,
+    "denied_action": validate_denied_action_strict,
+    "revoked_token": validate_revoked_token_strict,
 }
 
 MARKDOWN_RENDERERS = {

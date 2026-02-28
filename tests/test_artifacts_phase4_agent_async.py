@@ -104,6 +104,7 @@ from handlers.contracts.base import build_base
 from handlers.contracts.intent import ArtifactIntentDecision
 from handlers.contracts.store import ArtifactStore
 from handlers.routing import RouteDecision
+from runtime.ticketing import ExecutionTicket
 
 
 class _DummyLLM:
@@ -181,3 +182,20 @@ def test_async_agent_task_state_single_artifact_path(monkeypatch, patched_agent)
     plan = ag.artifact_store.get_last_by_type("u_async_test", "plan")
     assert ts is not None
     assert plan is None
+
+
+def test_async_agent_read_only_bypass_even_with_pending_ticket(monkeypatch, patched_agent):
+    ag = patched_agent
+    calls = {"n": 0}
+
+    def _handle_turn(*args, **kwargs):
+        calls["n"] += 1
+        return SimpleNamespace(handled=False, requires_approval=False, response_text="", action_package=None)
+
+    monkeypatch.setattr(agents_mod, "handle_turn", _handle_turn)
+    monkeypatch.setattr(agents_mod, "decide_route", lambda *a, **k: RouteDecision(route="llm_only", tool_veto=False, reason="test", signals={"read_only": True, "requires_execution": False}))
+    monkeypatch.setattr(ag, "_load_pending_ticket", lambda user_id: ExecutionTicket(job_id="j1", action="execute", commands=[["echo", "ok"]], cwd="."))
+
+    out = asyncio.run(ag.generate_response("just explain this concept", user_id="u_async_test"))
+    assert isinstance(out, str)
+    assert calls["n"] == 0

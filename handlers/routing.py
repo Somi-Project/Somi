@@ -184,17 +184,17 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
     pl = p.lower()
 
     if _is_command(pl):
-        return RouteDecision(route="command", tool_veto=True, reason="hard_command")
+        return RouteDecision(route="command", tool_veto=True, reason="hard_command", signals={"requires_execution": False, "read_only": True})
 
     if _is_personal_memory_intent(pl):
-        return RouteDecision(route="local_memory_intent", tool_veto=True, reason="personal_memory_intent")
+        return RouteDecision(route="local_memory_intent", tool_veto=True, reason="personal_memory_intent", signals={"requires_execution": False, "read_only": True})
 
     image_intent = _detect_image_intent(pl)
     if image_intent:
-        return RouteDecision(route="image_tool", tool_veto=True, reason="image_intent", signals={"image_intent": image_intent})
+        return RouteDecision(route="image_tool", tool_veto=True, reason="image_intent", signals={"image_intent": image_intent, "requires_execution": False, "read_only": True})
 
     if parse_conversion_request(p) is not None:
-        return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion")
+        return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion", signals={"requires_execution": False, "read_only": True})
 
     explicit = _is_explicit_websearch(pl)
     volatile = _is_volatile_with_strong_signal(pl)
@@ -209,7 +209,9 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
                 "explicit": explicit,
                 "volatile": volatile,
                 "intent": intent,  # <-- matches WebSearchHandler categories
+                "requires_execution": False,
+                "read_only": True,
             },
         )
 
-    return RouteDecision(route="llm_only", tool_veto=False, reason="default_llm")
+    return RouteDecision(route="llm_only", tool_veto=False, reason="default_llm", signals={"requires_execution": False, "read_only": True})

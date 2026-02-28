@@ -55,6 +55,7 @@ from handlers.skills.registry import build_registry_snapshot
 from runtime.approval import ApprovalReceipt
 from runtime.controller import handle_turn
 from runtime.ticketing import ExecutionTicket
+from executive.istari_runtime import IstariProtocol
 from toolbox.loader import ToolLoader
 
 from handlers.memory import Memory3Manager
@@ -185,6 +186,7 @@ class Agent:
         self.artifact_store = ArtifactStore()
         self.artifact_detector = ArtifactIntentDetector(threshold=float(ARTIFACT_INTENT_THRESHOLD))
         self.fact_distiller = FactDistiller()
+        self.istari_protocol = IstariProtocol()
 
         self.use_memory3 = bool(USE_MEMORY3)
         self.memory = Memory3Manager(
@@ -195,6 +197,7 @@ class Agent:
         )
 
         self.turn_counter = 0
+        self._perf_samples: list[dict[str, float | str | bool]] = []
         self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
         self.context_profile_cfg = dict((CHAT_CONTEXT_PROFILES or {}).get(self.context_profile, {}))
         self._load_mode_files()
@@ -1113,31 +1116,62 @@ class Agent:
             except Exception as e:
                 return f"Unable to prepare tool proposal safely: {e}"
 
-        control = handle_turn(prompt, controller_context)
-        if control.action_package and control.action_package.get("ticket_hash") and controller_context.get("proposed_ticket") is not None:
-            self._pending_tickets_by_user[active_user_id] = controller_context["proposed_ticket"]
-            self._persist_pending_ticket(active_user_id, controller_context["proposed_ticket"])
+        decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode})
+        requires_execution = bool(decision.signals.get("requires_execution", False))
+        read_only_fast_path = bool(decision.signals.get("read_only", False) and not toolbox_run)
 
-        if control.action_package and control.action_package.get("execute") and pending_ticket is not None:
-            try:
-                receipt = ApprovalReceipt(
-                    ticket_hash=control.action_package.get("ticket_hash", ""),
-                    confirmation_method="typed_phrase",
-                    timestamp=self.time_handler.get_system_date_time(),
-                    typed_phrase=prompt,
-                )
-                result = ToolLoader().execute_with_approval(pending_ticket, receipt)
-                self._pending_tickets_by_user.pop(active_user_id, None)
-                self._clear_pending_ticket(active_user_id)
-                return f"{control.response_text}\nExecution result: {json.dumps(result)}"
-            except Exception as e:
-                return f"{control.response_text} Execution blocked: {type(e).__name__}: {e}"
+        istari_started = time.time()
+        istari_handled, istari_text = self.istari_protocol.handle(prompt, active_user_id, toolbox_run_match=toolbox_run)
+        istari_ms = (time.time() - istari_started) * 1000.0
+        if istari_handled:
+            self._perf_samples.append({"turn": float(self.turn_counter), "route": "istari", "controller_ms": 0.0, "istari_ms": istari_ms, "read_only_fast_path": read_only_fast_path})
+            if len(self._perf_samples) > 300:
+                self._perf_samples = self._perf_samples[-300:]
+            return istari_text
 
-        if control.handled:
-            if prompt_lower.strip() == "cancel":
-                self._pending_tickets_by_user.pop(active_user_id, None)
-                self._clear_pending_ticket(active_user_id)
-            return control.response_text
+        approval_like = bool(re.match(r"^(approve(\s+&\s+run|\s+patch)?|deny|reject|revoke|cancel)\b", prompt.strip(), flags=re.IGNORECASE))
+        should_invoke_controller = bool(toolbox_run or requires_execution or approval_like)
+
+        if should_invoke_controller:
+            ctl_started = time.time()
+            control = handle_turn(prompt, controller_context)
+            ctl_ms = (time.time() - ctl_started) * 1000.0
+            if control.action_package and control.action_package.get("ticket_hash") and controller_context.get("proposed_ticket") is not None:
+                self._pending_tickets_by_user[active_user_id] = controller_context["proposed_ticket"]
+                self._persist_pending_ticket(active_user_id, controller_context["proposed_ticket"])
+
+            if control.action_package and control.action_package.get("execute") and pending_ticket is not None:
+                try:
+                    receipt = ApprovalReceipt(
+                        ticket_hash=control.action_package.get("ticket_hash", ""),
+                        confirmation_method="typed_phrase",
+                        timestamp=self.time_handler.get_system_date_time(),
+                        typed_phrase=prompt,
+                    )
+                    result = ToolLoader().execute_with_approval(pending_ticket, receipt)
+                    self._pending_tickets_by_user.pop(active_user_id, None)
+                    self._clear_pending_ticket(active_user_id)
+                    return f"{control.response_text}\nExecution result: {json.dumps(result)}"
+                except Exception as e:
+                    return f"{control.response_text} Execution blocked: {type(e).__name__}: {e}"
+
+            if control.handled:
+                if prompt_lower.strip() == "cancel":
+                    self._pending_tickets_by_user.pop(active_user_id, None)
+                    self._clear_pending_ticket(active_user_id)
+                self._perf_samples.append({"turn": float(self.turn_counter), "route": str(decision.route), "controller_ms": ctl_ms, "istari_ms": istari_ms, "read_only_fast_path": read_only_fast_path})
+                if len(self._perf_samples) > 300:
+                    self._perf_samples = self._perf_samples[-300:]
+                return control.response_text
+
+        self._perf_samples.append({"turn": float(self.turn_counter), "route": str(decision.route), "controller_ms": 0.0, "istari_ms": istari_ms, "read_only_fast_path": read_only_fast_path})
+        if len(self._perf_samples) > 300:
+            self._perf_samples = self._perf_samples[-300:]
+        if self.turn_counter % 40 == 0 and self._perf_samples:
+            ro = [x for x in self._perf_samples if bool(x.get("read_only_fast_path"))]
+            if ro:
+                avg = sum(float(x.get("controller_ms") or 0.0) for x in ro) / max(1, len(ro))
+                logger.info(f"Perf(read_only_fast_path): n={len(ro)} avg_controller_ms={avg:.3f}")
 
         skill_cmd = handle_skill_command(prompt)
         if skill_cmd.handled:
@@ -1187,7 +1221,6 @@ class Agent:
                     self.current_mode = "normal"
                 return game_response
 
-        decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode})
         if ROUTING_DEBUG:
             logger.info(f"Routing decision: route={decision.route} veto={decision.tool_veto} reason={decision.reason} signals={decision.signals}")
 

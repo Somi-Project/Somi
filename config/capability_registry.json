@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "token_ttl_seconds": 300,
+  "one_time_tokens": true,
+  "capabilities": [
+    {
+      "id": "external.read",
+      "risk_tier": "tier0",
+      "enabled": true,
+      "requires_approval": false,
+      "allowed_roots": [],
+      "protected_paths": [],
+      "command_allowlist": [],
+      "command_denylist_patterns": [],
+      "preconditions": []
+    },
+    {
+      "id": "file.read",
+      "risk_tier": "tier1",
+      "enabled": true,
+      "requires_approval": false,
+      "allowed_roots": ["/workspace/Somi"],
+      "protected_paths": ["/workspace/Somi/config", "/workspace/Somi/audit", "/workspace/Somi/executive/tokens.jsonl", "/workspace/Somi/config/capability_registry.json"],
+      "command_allowlist": [],
+      "command_denylist_patterns": [],
+      "preconditions": []
+    },
+    {
+      "id": "file.write_scoped",
+      "risk_tier": "tier2",
+      "enabled": true,
+      "requires_approval": true,
+      "allowed_roots": ["/workspace/Somi"],
+      "protected_paths": ["/workspace/Somi/config", "/workspace/Somi/audit", "/workspace/Somi/executive/tokens.jsonl", "/workspace/Somi/config/capability_registry.json"],
+      "command_allowlist": [],
+      "command_denylist_patterns": [],
+      "preconditions": ["diff_preview"]
+    },
+    {
+      "id": "shell.exec_scoped",
+      "risk_tier": "tier3",
+      "enabled": false,
+      "requires_approval": true,
+      "allowed_roots": ["/workspace/Somi"],
+      "protected_paths": ["/workspace/Somi/config", "/workspace/Somi/audit", "/workspace/Somi/executive/tokens.jsonl", "/workspace/Somi/config/capability_registry.json"],
+      "command_allowlist": ["git", "python", "uv", "pip"],
+      "command_denylist_patterns": ["rm\\s+-rf", "del\\s+/f", "format", "shutdown"],
+      "preconditions": ["command_preview"]
+    },
+    {
+      "id": "message.draft",
+      "risk_tier": "tier1",
+      "enabled": true,
+      "requires_approval": false,
+      "allowed_roots": [],
+      "protected_paths": [],
+      "command_allowlist": [],
+      "command_denylist_patterns": [],
+      "preconditions": []
+    },
+    {
+      "id": "message.send_scoped",
+      "risk_tier": "tier4",
+      "enabled": false,
+      "requires_approval": true,
+      "allowed_roots": [],
+      "protected_paths": [],
+      "command_allowlist": [],
+      "command_denylist_patterns": [],
+      "preconditions": []
+    }
+  ]
+}
