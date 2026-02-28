@@ -199,3 +199,38 @@ def test_async_agent_read_only_bypass_even_with_pending_ticket(monkeypatch, patc
     out = asyncio.run(ag.generate_response("just explain this concept", user_id="u_async_test"))
     assert isinstance(out, str)
     assert calls["n"] == 0
+
+
+def test_async_agent_invalid_persona_temperature_does_not_fail(monkeypatch, patched_agent):
+    ag = patched_agent
+
+    monkeypatch.setattr(
+        ag.artifact_detector,
+        "detect",
+        lambda *a, **k: ArtifactIntentDecision(artifact_intent=None, confidence=0.0, reason="none", trigger_reason={}),
+    )
+    monkeypatch.setattr(agents_mod, "maybe_emit_continuity_artifact", lambda *a, **k: ContinuityResult(artifact=None, confidence=0.0))
+    monkeypatch.setattr(ag, "_refresh_profile_and_persona", lambda: ({}, "Name: Somi", {"temperature": "hot"}))
+
+    out = asyncio.run(ag.generate_response("just chat", user_id="u_async_test"))
+    assert isinstance(out, str)
+
+
+def test_refresh_profile_persists_corrected_active_persona(monkeypatch, patched_agent):
+    ag = patched_agent
+    saved = {"n": 0, "profile": None}
+
+    monkeypatch.setattr(agents_mod, "load_assistant_profile", lambda: {"active_persona_key": "Name: Missing", "proactivity_level": 1, "focus_domains": [], "privacy_mode": "strict", "brief_first_interaction_of_day": False, "last_brief_date": None, "last_heartbeat_at": None})
+    monkeypatch.setattr(agents_mod, "load_persona_catalog", lambda: {"Name: Somi": {"role": "assistant", "temperature": 0.7}})
+
+    def _save(profile):
+        saved["n"] += 1
+        saved["profile"] = dict(profile or {})
+
+    monkeypatch.setattr(agents_mod, "save_assistant_profile", _save)
+
+    profile, key, persona = ag._refresh_profile_and_persona()
+    assert key == "Name: Somi"
+    assert saved["n"] == 1
+    assert saved["profile"]["active_persona_key"] == "Name: Somi"
+    assert isinstance(persona, dict)

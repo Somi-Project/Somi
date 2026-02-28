@@ -530,6 +530,148 @@ def validate_revoked_token_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     return p
 
 
+def _sanitize_rel_ids(items: Any, max_len: int = 20) -> list[str]:
+    out = []
+    for x in list(items or [])[:max_len]:
+        s = str(x or "").strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def validate_daily_brief_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "date", "active_persona_key", "highlights", "open_threads", "open_tasks", "suggestions", "risk_notes", "privacy", "guardrails", "no_autonomy"})
+    if c.get("type") != "daily_brief":
+        raise ValueError("daily_brief.type required")
+    if not str(c.get("date") or "").strip():
+        raise ValueError("daily_brief.date required")
+    c["active_persona_key"] = str(c.get("active_persona_key") or "")[:160]
+    _ensure_list_of_str(c, "highlights", max_len=5)
+    ots = []
+    for row in list(c.get("open_threads") or [])[:7]:
+        if not isinstance(row, dict):
+            continue
+        ots.append({"thread_id": str(row.get("thread_id") or "")[:120], "title": str(row.get("title") or "")[:200], "status": str(row.get("status") or "open")[:20], "last_updated": row.get("last_updated")})
+    c["open_threads"] = ots
+    tasks = []
+    for row in list(c.get("open_tasks") or [])[:10]:
+        if not isinstance(row, dict):
+            continue
+        tasks.append({"task_id": str(row.get("task_id") or "")[:64], "title": str(row.get("title") or "")[:240], "status": str(row.get("status") or "open")[:20], "age_days": int(row.get("age_days") or 0), "source_artifact_id": row.get("source_artifact_id")})
+    c["open_tasks"] = tasks
+    sugs = []
+    for row in list(c.get("suggestions") or [])[:7]:
+        if not isinstance(row, dict):
+            continue
+        sugs.append({"title": str(row.get("title") or "")[:200], "rationale": str(row.get("rationale") or "")[:300], "related_artifact_ids": _sanitize_rel_ids(row.get("related_artifact_ids"), 20), "requires_execution": bool(row.get("requires_execution", False))})
+    c["suggestions"] = sugs
+    _ensure_list_of_str(c, "risk_notes", max_len=5)
+    privacy = c.get("privacy") if isinstance(c.get("privacy"), dict) else {}
+    c["privacy"] = {"mode": "strict" if str(privacy.get("mode") or "strict") == "strict" else "standard", "redactions_applied": bool(privacy.get("redactions_applied", False))}
+    guardrails = c.get("guardrails") if isinstance(c.get("guardrails"), dict) else {}
+    c["guardrails"] = {"no_autonomy": True, "phase5_required_for_execution": bool(guardrails.get("phase5_required_for_execution", True))}
+    c["no_autonomy"] = True
+    return p
+
+
+def validate_heartbeat_tick_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "tick_id", "active_persona_key", "sense", "think", "propose", "privacy", "guardrails", "no_autonomy"})
+    if c.get("type") != "heartbeat_tick":
+        raise ValueError("heartbeat_tick.type required")
+    c["tick_id"] = str(c.get("tick_id") or "")[:160]
+    c["active_persona_key"] = str(c.get("active_persona_key") or "")[:160]
+    sense = c.get("sense") if isinstance(c.get("sense"), dict) else {}
+    c["sense"] = {"signals": [str(x)[:180] for x in list(sense.get("signals") or [])[:20]], "anomalies": [str(x)[:180] for x in list(sense.get("anomalies") or [])[:20]]}
+    think = c.get("think") if isinstance(c.get("think"), dict) else {}
+    c["think"] = {"summary": str(think.get("summary") or "")[:500], "priorities": [str(x)[:200] for x in list(think.get("priorities") or [])[:10]]}
+    props = []
+    for row in list(c.get("propose") or [])[:7]:
+        if not isinstance(row, dict):
+            continue
+        props.append({"proposal": str(row.get("proposal") or "")[:240], "related_artifact_ids": _sanitize_rel_ids(row.get("related_artifact_ids"), 20), "requires_execution": bool(row.get("requires_execution", False))})
+    c["propose"] = props
+    privacy = c.get("privacy") if isinstance(c.get("privacy"), dict) else {}
+    c["privacy"] = {"mode": "strict" if str(privacy.get("mode") or "strict") == "strict" else "standard", "redactions_applied": bool(privacy.get("redactions_applied", False))}
+    guardrails = c.get("guardrails") if isinstance(c.get("guardrails"), dict) else {}
+    c["guardrails"] = {"no_autonomy": True, "phase5_required_for_execution": bool(guardrails.get("phase5_required_for_execution", True))}
+    c["no_autonomy"] = True
+    return p
+
+
+def validate_reminder_digest_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "active_persona_key", "items", "suggested_next_actions", "privacy", "no_autonomy"})
+    if c.get("type") != "reminder_digest":
+        raise ValueError("reminder_digest.type required")
+    c["active_persona_key"] = str(c.get("active_persona_key") or "")[:160]
+    items = []
+    for row in list(c.get("items") or [])[:12]:
+        if not isinstance(row, dict):
+            continue
+        items.append({"title": str(row.get("title") or "")[:200], "why_now": str(row.get("why_now") or "")[:240], "status": str(row.get("status") or "open")[:20], "related_artifact_ids": _sanitize_rel_ids(row.get("related_artifact_ids"), 20)})
+    c["items"] = items
+    _ensure_list_of_str(c, "suggested_next_actions", max_len=7)
+    privacy = c.get("privacy") if isinstance(c.get("privacy"), dict) else {}
+    c["privacy"] = {"mode": "strict" if str(privacy.get("mode") or "strict") == "strict" else "standard", "redactions_applied": bool(privacy.get("redactions_applied", False))}
+    c["no_autonomy"] = True
+    return p
+
+
+def validate_profile_view_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "active_persona_key", "proactivity_level", "focus_domains", "privacy_mode", "brief_first_interaction_of_day", "last_brief_date", "last_heartbeat_at", "no_autonomy"})
+    if c.get("type") != "profile_view":
+        raise ValueError("profile_view.type required")
+    c["active_persona_key"] = str(c.get("active_persona_key") or "")[:160]
+    c["proactivity_level"] = int(c.get("proactivity_level") or 1)
+    _ensure_list_of_str(c, "focus_domains", max_len=7, item_max=40)
+    c["privacy_mode"] = "strict" if str(c.get("privacy_mode") or "strict") == "strict" else "standard"
+    c["brief_first_interaction_of_day"] = bool(c.get("brief_first_interaction_of_day", False))
+    c["last_brief_date"] = c.get("last_brief_date")
+    c["last_heartbeat_at"] = c.get("last_heartbeat_at")
+    c["no_autonomy"] = True
+    return p
+
+
+def daily_brief_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_daily_brief_strict(payload)["content"]
+    lines = ["# Daily Brief", f"Date: {c.get('date','')}", "", "## Highlights"]
+    lines += [f"- {x}" for x in c.get("highlights", [])]
+    lines += ["", "## Open Threads"] + [f"- [{r.get('status')}] {r.get('title')}" for r in c.get("open_threads", [])]
+    lines += ["", "## Suggestions"] + [f"- {s.get('title')}" for s in c.get("suggestions", [])]
+    return "\n".join(lines).strip()
+
+
+def heartbeat_tick_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_heartbeat_tick_strict(payload)["content"]
+    lines = ["# Heartbeat Tick", "", f"## Summary\n{c.get('think', {}).get('summary', '')}", "", "## Proposals"]
+    lines += [f"- {p.get('proposal')}" for p in c.get("propose", [])]
+    return "\n".join(lines).strip()
+
+
+def reminder_digest_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_reminder_digest_strict(payload)["content"]
+    lines = ["# Reminder Digest", "", "## Items"]
+    lines += [f"- [{it.get('status')}] {it.get('title')}: {it.get('why_now')}" for it in c.get("items", [])]
+    return "\n".join(lines).strip()
+
+
+def profile_view_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_profile_view_strict(payload)["content"]
+    return "\n".join([
+        "# Assistant Profile",
+        f"- Active persona: {c.get('active_persona_key')}",
+        f"- Proactivity level: {c.get('proactivity_level')}",
+        f"- Privacy mode: {c.get('privacy_mode')}",
+    ])
+
+
 STRICT_VALIDATORS = {
     "research_brief": validate_research_brief_strict,
     "doc_extract": validate_doc_extract_strict,
@@ -545,6 +687,10 @@ STRICT_VALIDATORS = {
     "executed_action": validate_executed_action_strict,
     "denied_action": validate_denied_action_strict,
     "revoked_token": validate_revoked_token_strict,
+    "daily_brief": validate_daily_brief_strict,
+    "heartbeat_tick": validate_heartbeat_tick_strict,
+    "reminder_digest": validate_reminder_digest_strict,
+    "profile_view": validate_profile_view_strict,
 }
 
 MARKDOWN_RENDERERS = {
@@ -557,6 +703,10 @@ MARKDOWN_RENDERERS = {
     "status_update": status_update_to_markdown,
     "artifact_continuity": artifact_continuity_to_markdown,
     "task_state": task_state_to_markdown,
+    "daily_brief": daily_brief_to_markdown,
+    "heartbeat_tick": heartbeat_tick_to_markdown,
+    "reminder_digest": reminder_digest_to_markdown,
+    "profile_view": profile_view_to_markdown,
 }
 
 

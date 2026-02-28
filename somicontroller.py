@@ -16,6 +16,7 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, 
 from PyQt6.QtGui import QIcon, QPainter
 from PyQt6.QtWidgets import (
     QApplication,
+    QComboBox,
     QDialog,
     QFileDialog,
     QFrame,
@@ -40,12 +41,14 @@ from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
 from handlers.memory import Memory3Manager
 from handlers.research.agentpedia import Agentpedia
+from handlers.heartbeat import load_assistant_profile, save_assistant_profile
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 PERSONALITY_CONFIG = Path("config/personalC.json")
 GUI_SETTINGS_PATH = Path("config/gui_settings.json")
+ASSISTANT_PROFILE_PATH = Path("config/assistant_profile.json")
 FACTS = [
     "Octopuses have three hearts, and two of them stop when swimming.",
     "A day on Venus is longer than a year on Venus.",
@@ -411,10 +414,61 @@ class SomiAIGUI(QMainWindow):
         self.tabs.addTab(executivegui.ExecutivePanel(self), "Executive")
         self.main_layout.addWidget(self.tabs)
 
+    def _selected_agent_name(self) -> str:
+        key = str(getattr(self, "selected_agent_key", "") or "")
+        if key and key in self.agent_keys:
+            return key.replace("Name: ", "")
+        return self.agent_names[0] if self.agent_names else "Somi"
+
+    def _load_selected_agent_key(self) -> str:
+        prof = load_assistant_profile(str(ASSISTANT_PROFILE_PATH))
+        requested = str(prof.get("active_persona_key") or "").strip()
+        if requested and requested in self.agent_keys:
+            return requested
+        return self._default_agent_key()
+
+    def _persist_selected_agent_key(self, agent_key: str) -> None:
+        prof = load_assistant_profile(str(ASSISTANT_PROFILE_PATH))
+        prof["active_persona_key"] = str(agent_key)
+        save_assistant_profile(prof, str(ASSISTANT_PROFILE_PATH))
+
+    def on_persona_changed(self):
+        idx = self.persona_combo.currentIndex() if getattr(self, "persona_combo", None) else -1
+        if idx < 0 or idx >= len(self.agent_keys):
+            return
+        agent_key = self.agent_keys[idx]
+        self.selected_agent_key = agent_key
+        self._persist_selected_agent_key(agent_key)
+        self.push_activity("core", f"Personality switched to {agent_key.replace('Name: ', '')}")
+
+        try:
+            from gui.aicoregui import ChatWorker
+            if self.chat_worker and self.chat_worker.isRunning():
+                if self.chat_worker.is_busy():
+                    self.push_activity("core", "Chat worker busy; personality will apply next turn")
+                    return
+                current_use_studies = bool(getattr(self.chat_worker, "use_studies", True))
+                changed = self.chat_worker.update_agent(agent_key, current_use_studies)
+                if changed:
+                    self.push_activity("core", "Chat worker updated for new personality")
+        except Exception as exc:
+            logger.warning("Failed to update chat worker after persona switch: %s", exc)
+
     def build_quick_action_bar(self):
         bar = QFrame()
         bar.setObjectName("card")
         l = QHBoxLayout(bar)
+
+        self.selected_agent_key = self._load_selected_agent_key()
+        l.addWidget(QLabel("Personality:"))
+        self.persona_combo = QComboBox()
+        self.persona_combo.addItems(self.agent_names)
+        cur_name = self.selected_agent_key.replace("Name: ", "")
+        if cur_name in self.agent_names:
+            self.persona_combo.setCurrentText(cur_name)
+        self.persona_combo.currentIndexChanged.connect(lambda _=None: self.on_persona_changed())
+        l.addWidget(self.persona_combo)
+
         for label, cb in [
             ("Chat", self.open_chat),
             ("Talk", self.toggle_speech_process),
@@ -918,6 +972,25 @@ class SomiAIGUI(QMainWindow):
 
     def refresh_agent_names(self):
         self.agent_keys, self.agent_names = self.load_agent_names()
+        previous_key = str(getattr(self, "selected_agent_key", "") or "")
+        if previous_key not in self.agent_keys:
+            self.selected_agent_key = self._default_agent_key()
+            if str(self.selected_agent_key or "") and str(self.selected_agent_key) != previous_key:
+                try:
+                    self._persist_selected_agent_key(self.selected_agent_key)
+                except Exception:
+                    pass
+        if getattr(self, "persona_combo", None):
+            previous = self.persona_combo.currentText()
+            self.persona_combo.blockSignals(True)
+            self.persona_combo.clear()
+            self.persona_combo.addItems(self.agent_names)
+            target = self.selected_agent_key.replace("Name: ", "")
+            if target in self.agent_names:
+                self.persona_combo.setCurrentText(target)
+            elif previous in self.agent_names:
+                self.persona_combo.setCurrentText(previous)
+            self.persona_combo.blockSignals(False)
 
     def _default_agent_key(self):
         if self.agent_keys:
@@ -926,7 +999,9 @@ class SomiAIGUI(QMainWindow):
 
     def preload_default_agent_and_chat_worker(self):
         self.refresh_agent_names()
-        agent_key = self._default_agent_key()
+        agent_key = str(getattr(self, "selected_agent_key", "") or self._default_agent_key())
+        if agent_key not in self.agent_keys:
+            agent_key = self._default_agent_key()
         self.push_activity("core", f"Preloading agent {agent_key.replace('Name: ', '')}")
 
         self.agent_warmup_worker = AgentWarmupWorker(agent_name=agent_key, user_id="default_user", use_studies=True)
@@ -944,7 +1019,9 @@ class SomiAIGUI(QMainWindow):
                 if self.chat_worker and self.chat_worker.isRunning():
                     return
 
-                agent_key = self._default_agent_key()
+                agent_key = str(getattr(self, "selected_agent_key", "") or self._default_agent_key())
+                if agent_key not in self.agent_keys:
+                    agent_key = self._default_agent_key()
                 self.chat_worker = ChatWorker(self, agent_key, True, preloaded_agent=self.preloaded_agent)
                 self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
                 self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
@@ -962,6 +1039,10 @@ class SomiAIGUI(QMainWindow):
 
     def open_chat(self):
         self.refresh_agent_names()
+        if getattr(self, "persona_combo", None):
+            idx = self.persona_combo.currentIndex()
+            if 0 <= idx < len(self.agent_keys):
+                self.selected_agent_key = self.agent_keys[idx]
         aicoregui.ai_chat(self)
         self.push_activity("core", "User opened chat")
 
