@@ -26,9 +26,10 @@ class FactDistiller:
             return 0
 
         facts: List[Dict[str, Any]] = []
-        for idx, f in enumerate(findings[: min(6, len(cits))]):
+        for idx, f in enumerate(findings[:6]):
             cit = cits[idx] if idx < len(cits) else {}
             src = str(cit.get("url") or "").strip()
+            # facts-only contract: each distilled claim must have a citation URL
             if not src:
                 continue
             facts.append(
@@ -53,9 +54,18 @@ class FactDistiller:
         if require_doc_page_refs and not page_refs:
             return 0
 
-        source_ref = page_refs[0] if page_refs else "doc_ref"
         facts: List[Dict[str, Any]] = []
-        for row in table_extract[:8]:
+        for idx, row in enumerate(table_extract[:8]):
+            row_ref = ""
+            if isinstance(row, dict):
+                row_ref = str(row.get("page_ref") or row.get("ref") or row.get("page") or "").strip()
+            if not row_ref and idx < len(page_refs):
+                row_ref = str(page_refs[idx] or "").strip()
+            if not row_ref and page_refs:
+                row_ref = str(page_refs[0] or "").strip()
+            if require_doc_page_refs and not row_ref:
+                continue
+            source_ref = row_ref or "doc_ref"
             facts.append(
                 {
                     "topic": str(artifact.get("inputs", {}).get("user_query") or "document")[0:120],

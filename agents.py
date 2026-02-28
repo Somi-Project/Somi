@@ -10,6 +10,7 @@ import os
 import random
 import re
 import time
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from ollama import AsyncClient
@@ -34,6 +35,13 @@ from config.settings import (
     PROMPT_ENTERPRISE_ENABLED,
     PROMPT_FORCE_LEGACY,
     SESSION_MEDIA_DIR,
+    ENABLE_NL_ARTIFACTS,
+    ARTIFACT_INTENT_THRESHOLD,
+    MIN_SOURCES_FOR_RESEARCH_BRIEF,
+    DOC_FACTS_REQUIRE_PAGE_REFS,
+    ONE_ARTIFACT_PER_TURN,
+    ARTIFACT_DEGRADE_NOTICE,
+    ARTIFACT_PLAN_REVISION_MAX_AGE_MINUTES,
 )
 
 from rag import RAGHandler
@@ -53,6 +61,7 @@ from handlers.contracts.intent import ArtifactIntentDetector
 from handlers.contracts.store import ArtifactStore
 from handlers.contracts.orchestrator import build_artifact_for_intent, validate_and_render
 from handlers.contracts.fact_distiller import FactDistiller
+from handlers.contracts.policy import apply_research_degrade_notice, should_force_research_websearch
 from promptforge import PromptForge
 
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
@@ -266,6 +275,85 @@ class Agent:
         )
 
         return (has_action and has_target) or has_code_cue
+
+    def _is_plan_revision_followup(self, prompt: str) -> bool:
+        p = (prompt or "").strip().lower()
+        if len(p) < 10:
+            return False
+        revision_markers = (
+            "update", "revise", "adjust", "change", "make it fit", "only have", "fit into",
+            "rework", "modify", "shorten", "tighten",
+        )
+        plan_markers = ("plan", "that", "it", "schedule", "steps")
+        return any(m in p for m in revision_markers) and any(m in p for m in plan_markers)
+
+    def _extract_plan_revision_constraints(self, prompt: str) -> List[str]:
+        p = (prompt or "").strip()
+        if not p:
+            return []
+        out: List[str] = []
+        lowered = p.lower()
+        time_match = re.search(r"(\d+(?:\.\d+)?)\s*(hours?|hrs?|minutes?|mins?)\s*/?\s*(week|wk|day|month)", lowered)
+        if time_match:
+            qty, unit, period = time_match.group(1), time_match.group(2), time_match.group(3)
+            out.append(f"Time budget: {qty} {unit} per {period}.")
+        if "only have" in lowered:
+            out.append("User has limited availability; prioritize essential steps.")
+        cleaned = p.strip().rstrip(".?!")
+        if cleaned:
+            out.append(f"User adjustment request: {cleaned}")
+        return out[:3]
+
+    def _plan_revision_confidence(self, prompt: str) -> float:
+        p = (prompt or "").strip().lower()
+        if not p:
+            return 0.0
+        strong_markers = ("update", "revise", "adjust", "change", "rework", "modify", "make it fit")
+        weak_markers = ("that", "it", "schedule", "steps", "hours/week", "hours per week", "only have")
+        score = 0.0
+        if any(m in p for m in strong_markers):
+            score += 0.55
+        if any(m in p for m in weak_markers):
+            score += 0.25
+        if "plan" in p:
+            score += 0.2
+        return min(score, 0.99)
+
+    def _is_recent_artifact(self, artifact: Optional[Dict[str, Any]], *, max_age_minutes: int) -> bool:
+        if not artifact:
+            return False
+        ts = str(artifact.get("timestamp") or artifact.get("created_at") or "").strip()
+        if not ts:
+            return False
+        try:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            age_s = (datetime.now(timezone.utc) - dt).total_seconds()
+            return age_s <= float(max_age_minutes) * 60.0
+        except Exception:
+            return False
+
+    def _get_plan_for_revision(self, user_id: str, prompt: str) -> Optional[Dict[str, Any]]:
+        conf = self._plan_revision_confidence(prompt)
+        if conf < 0.75:
+            return None
+        candidate = self.artifact_store.get_last_by_type(user_id, "plan")
+        max_age = int(ARTIFACT_PLAN_REVISION_MAX_AGE_MINUTES or 180)
+        if not self._is_recent_artifact(candidate, max_age_minutes=max_age):
+            return None
+        return candidate
+
+    def _should_force_research_websearch(self, route: str, artifact_intent: Optional[str]) -> bool:
+        return bool(ENABLE_NL_ARTIFACTS and artifact_intent == "research_brief" and str(route or "") != "websearch")
+
+    def _apply_research_degrade_notice(self, content: str, *, reason: str = "") -> str:
+        if not bool(ARTIFACT_DEGRADE_NOTICE):
+            return content
+        reason_l = str(reason or "").lower()
+        if "insufficient_sources" not in reason_l and "web search unavailable" not in reason_l:
+            return content
+        return (content or "").rstrip() + "\n\nI couldn’t fetch enough sources right now, so I answered without citations."
 
     def _select_response_model(self, prompt: str) -> str:
         if self._is_explicit_coding_intent(prompt):
@@ -900,6 +988,7 @@ class Agent:
 
         artifact_intent = None
         artifact_confidence = 0.0
+        force_websearch_for_research = False
         if ENABLE_NL_ARTIFACTS:
             try:
                 has_doc = bool(self.rag and getattr(self.rag, "texts", None))
@@ -916,6 +1005,11 @@ class Agent:
                     )
             except Exception as e:
                 logger.debug(f"Artifact intent detection failed (non-fatal): {e}")
+
+        if self._should_force_research_websearch(decision.route, artifact_intent):
+            force_websearch_for_research = True
+            if ROUTING_DEBUG:
+                logger.info("Artifact intent requested route upgrade: forcing websearch for research_brief")
 
         if decision.route == "command":
             cmd = prompt_lower.strip()
@@ -964,7 +1058,7 @@ class Agent:
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
 
-        should_search = decision.route == "websearch"
+        should_search = decision.route == "websearch" or force_websearch_for_research
 
         search_context = "Not required for this query. Use internal knowledge."
         memory_context = "No relevant memories found"
@@ -1221,14 +1315,23 @@ class Agent:
 
         if ENABLE_NL_ARTIFACTS and artifact_intent:
             try:
+                effective_route = "websearch" if should_search else decision.route
+                previous_plan = None
+                new_constraints: List[str] = []
+                if artifact_intent == "plan" and self._is_plan_revision_followup(prompt):
+                    previous_plan = self._get_plan_for_revision(active_user_id, prompt)
+                    if previous_plan:
+                        new_constraints = self._extract_plan_revision_constraints(prompt)
                 artifact = build_artifact_for_intent(
                     artifact_intent=artifact_intent,
                     query=prompt,
-                    route=decision.route,
+                    route=effective_route,
                     answer_text=content,
                     raw_search_results=results,
                     rag_block=rag_block,
                     min_sources=int(MIN_SOURCES_FOR_RESEARCH_BRIEF),
+                    previous_plan=previous_plan,
+                    new_constraints=new_constraints,
                 )
                 markdown = validate_and_render(artifact)
                 self.artifact_store.append(active_user_id, artifact)
@@ -1242,6 +1345,11 @@ class Agent:
                     content = markdown
             except Exception as e:
                 logger.warning(f"Artifact orchestration failed; returning original response: {type(e).__name__}: {e}")
+                if artifact_intent == "research_brief":
+                    insufficient = "insufficient_sources" in str(e).lower()
+                    search_issue = "web search unavailable" in str(search_context).lower()
+                    if (insufficient or search_issue) and bool(ARTIFACT_DEGRADE_NOTICE):
+                        content = (content or "").rstrip() + "\n\nI couldn’t fetch enough sources right now, so I answered without citations."
 
         self._push_history_for(active_user_id, prompt, content)
         logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")

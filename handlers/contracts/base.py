@@ -17,11 +17,13 @@ def new_artifact_id() -> str:
 
 
 def build_base(*, artifact_type: str, inputs: Dict[str, Any], content: Dict[str, Any], citations: list[dict] | None = None, metadata: dict | None = None, confidence: float | None = None) -> Dict[str, Any]:
+    created_at = utc_now_iso()
     out: Dict[str, Any] = {
         "artifact_id": new_artifact_id(),
         "artifact_type": str(artifact_type),
         "schema_version": ARTIFACT_SCHEMA_VERSION,
-        "created_at": utc_now_iso(),
+        "created_at": created_at,
+        "timestamp": created_at,
         "inputs": dict(inputs or {}),
         "content": dict(content or {}),
         "citations": list(citations or []),
