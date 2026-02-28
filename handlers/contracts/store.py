@@ -4,8 +4,14 @@ import json
 import os
 import re
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
+try:
+    import fcntl
+except Exception:  # pragma: no cover
+    fcntl = None
 
 from handlers.contracts.base import normalize_envelope
 
@@ -28,6 +34,27 @@ class ArtifactStore:
     def _index_path(self, session_id: str) -> str:
         sid = self._safe_session_id(session_id)
         return os.path.join(self.root_dir, f"{sid}.index.json")
+
+    def _lock_path(self, session_id: str) -> str:
+        sid = self._safe_session_id(session_id)
+        return os.path.join(self.root_dir, f"{sid}.lock")
+
+    @contextmanager
+    def _session_file_lock(self, session_id: str):
+        lock_path = self._lock_path(session_id)
+        fd = None
+        try:
+            fd = open(lock_path, "a+", encoding="utf-8")
+            if fcntl is not None:
+                fcntl.flock(fd.fileno(), fcntl.LOCK_EX)
+            yield
+        finally:
+            if fd is not None:
+                try:
+                    if fcntl is not None:
+                        fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
+                finally:
+                    fd.close()
 
     def _redact_value(self, value: Any) -> tuple[Any, bool]:
         redacted = False
@@ -69,26 +96,32 @@ class ArtifactStore:
 
         line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
-            with open(path, "a", encoding="utf-8") as f:
-                offset = f.tell()
-                f.write(line + "\n")
-                f.flush()
-            self._update_index(sid, payload, offset)
+            with self._session_file_lock(sid):
+                with open(path, "a", encoding="utf-8") as f:
+                    offset = f.tell()
+                    f.write(line + "\n")
+                    f.flush()
+                self._update_index(sid, payload, offset)
 
     def _update_index(self, session_id: str, artifact: Dict[str, Any], offset: int) -> None:
         idx_path = self._index_path(session_id)
         idx = {"session_id": session_id, "contracts": {}, "by_id": {}}
         if os.path.exists(idx_path):
             try:
-                idx = json.loads(open(idx_path, "r", encoding="utf-8").read())
+                with open(idx_path, "r", encoding="utf-8") as f:
+                    idx = json.loads(f.read())
             except Exception:
-                idx = idx
+                idx = {"session_id": session_id, "contracts": {}, "by_id": {}}
         cid = str(artifact.get("contract_name") or "")
         aid = str(artifact.get("artifact_id") or "")
-        idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": artifact.get("timestamp")}
-        idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": artifact.get("timestamp")}
-        with open(idx_path, "w", encoding="utf-8") as f:
+        if cid:
+            idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": artifact.get("timestamp")}
+        if aid:
+            idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": artifact.get("timestamp")}
+        tmp = idx_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, idx_path)
 
     def _iter_jsonl(self, session_id: str):
         path = self._path(session_id)
@@ -127,8 +160,10 @@ class ArtifactStore:
                     continue
                 cid = str(item.get("contract_name") or "")
                 aid = str(item.get("artifact_id") or "")
-                idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": item.get("timestamp")}
-                idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": item.get("timestamp")}
+                if cid:
+                    idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": item.get("timestamp")}
+                if aid:
+                    idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": item.get("timestamp")}
         with open(idx_path, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
 
@@ -138,7 +173,8 @@ class ArtifactStore:
         aid = None
         if os.path.exists(idx_path):
             try:
-                idx = json.loads(open(idx_path, "r", encoding="utf-8").read())
+                with open(idx_path, "r", encoding="utf-8") as f:
+                    idx = json.loads(f.read())
                 aid = ((idx.get("contracts") or {}).get(contract_name) or {}).get("artifact_id")
             except Exception:
                 self._rebuild_index(sid)
@@ -160,7 +196,8 @@ class ArtifactStore:
         idx_path = self._index_path(sid)
         if os.path.exists(idx_path):
             try:
-                idx = json.loads(open(idx_path, "r", encoding="utf-8").read())
+                with open(idx_path, "r", encoding="utf-8") as f:
+                    idx = json.loads(f.read())
                 rec = (idx.get("by_id") or {}).get(str(artifact_id))
                 if rec and rec.get("offset") is not None:
                     with open(self._path(sid), "r", encoding="utf-8") as f:

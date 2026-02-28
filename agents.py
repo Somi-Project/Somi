@@ -54,6 +54,7 @@ from handlers.skills.dispatch import handle_skill_command
 from handlers.skills.registry import build_registry_snapshot
 from runtime.approval import ApprovalReceipt
 from runtime.controller import handle_turn
+from runtime.ticketing import ExecutionTicket
 from toolbox.loader import ToolLoader
 
 from handlers.memory import Memory3Manager
@@ -107,7 +108,12 @@ class Agent:
         self._due_inject_cooldown_seconds = 300.0
         self._forced_skill_keys_by_user: Dict[str, List[str]] = {}
         self._pending_tickets_by_user: Dict[str, Any] = {}
+        self._pending_ticket_dir = os.path.join("sessions", "pending_tickets")
+        os.makedirs(self._pending_ticket_dir, exist_ok=True)
+        self._memory_queue_dir = os.path.join("sessions", "memory_queue")
+        os.makedirs(self._memory_queue_dir, exist_ok=True)
         self.last_attachments_by_user: Dict[str, List[Dict[str, Any]]] = {}
+        self._background_tasks: set[asyncio.Task] = set()
 
         # Load personality config
         try:
@@ -241,6 +247,162 @@ class Agent:
                 self.memory.embedder.client = self.ollama_client
         except Exception:
             pass
+
+    def _pending_ticket_path(self, user_id: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", str(user_id or "default_user"))[:120]
+        return os.path.join(self._pending_ticket_dir, f"{safe}.json")
+
+    def _persist_pending_ticket(self, user_id: str, ticket: ExecutionTicket) -> None:
+        try:
+            path = self._pending_ticket_path(user_id)
+            payload = {
+                "user_id": str(user_id),
+                "ticket": ticket.__dict__,
+                "saved_at": datetime.now(timezone.utc).isoformat(),
+            }
+            tmp = path + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+            os.replace(tmp, path)
+        except Exception as e:
+            logger.debug(f"Pending ticket persist failed: {e}")
+
+    def _load_pending_ticket(self, user_id: str) -> Optional[ExecutionTicket]:
+        path = self._pending_ticket_path(user_id)
+        if not os.path.exists(path):
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.loads(f.read())
+            ticket_raw = dict(raw.get("ticket") or {})
+            return ExecutionTicket(**ticket_raw)
+        except Exception as e:
+            logger.debug(f"Pending ticket load failed: {e}")
+            return None
+
+    def _clear_pending_ticket(self, user_id: str) -> None:
+        path = self._pending_ticket_path(user_id)
+        try:
+            if os.path.exists(path):
+                os.remove(path)
+        except Exception:
+            pass
+
+    def _schedule_background_task(self, coro: Any, *, label: str = "bg_task") -> None:
+        try:
+            task = asyncio.create_task(coro)
+            self._background_tasks.add(task)
+
+            def _done(t: asyncio.Task) -> None:
+                self._background_tasks.discard(t)
+                try:
+                    t.result()
+                except Exception as e:
+                    logger.debug(f"Background task '{label}' failed: {type(e).__name__}: {e}")
+
+            task.add_done_callback(_done)
+        except Exception as e:
+            logger.debug(f"Background task scheduling failed ({label}): {e}")
+
+    def _memory_queue_path(self, user_id: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9._-]", "_", str(user_id or "default_user"))[:120]
+        return os.path.join(self._memory_queue_dir, f"{safe}.jsonl")
+
+    def _enqueue_memory_write(self, *, prompt: str, content: str, active_user_id: str, should_search: bool) -> None:
+        path = self._memory_queue_path(active_user_id)
+        row = {
+            "prompt": str(prompt or "")[:4000],
+            "content": str(content or "")[:8000],
+            "active_user_id": str(active_user_id),
+            "should_search": bool(should_search),
+            "enqueued_at": datetime.now(timezone.utc).isoformat(),
+        }
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    def _read_memory_queue(self, active_user_id: str) -> List[Dict[str, Any]]:
+        path = self._memory_queue_path(active_user_id)
+        if not os.path.exists(path):
+            return []
+        out: List[Dict[str, Any]] = []
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    item = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(item, dict):
+                    continue
+                out.append(item)
+        return out
+
+    def _write_memory_queue(self, active_user_id: str, items: List[Dict[str, Any]]) -> None:
+        path = self._memory_queue_path(active_user_id)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            for item in items:
+                f.write(json.dumps(item, ensure_ascii=False) + "\n")
+        os.replace(tmp, path)
+
+    async def _memory_ingest_nonblocking(self, *, active_user_id: str, limit: int = 4) -> None:
+        try:
+            async with self._mem_write_sem:
+                queue = self._read_memory_queue(active_user_id)
+                if not queue:
+                    return
+                keep: List[Dict[str, Any]] = []
+                processed = 0
+                for idx, item in enumerate(queue):
+                    if processed >= max(1, int(limit)):
+                        keep.append(item)
+                        continue
+                    try:
+                        if bool(item.get("should_search", False)):
+                            mem_write = await self.memory.ingest_turn(
+                                str(item.get("prompt", "")),
+                                assistant_text="",
+                                tool_summaries=["websearch"],
+                                session_id=active_user_id,
+                            )
+                        else:
+                            mem_write = await self.memory.ingest_turn(
+                                str(item.get("prompt", "")),
+                                assistant_text=str(item.get("content", "")),
+                                tool_summaries=None,
+                                session_id=active_user_id,
+                            )
+                        notices = list((mem_write or {}).get("conflict_notices", []) or [])
+                        if notices:
+                            logger.info(f"[{active_user_id}] Memory update notice: {notices[0]}")
+                        processed += 1
+                    except Exception:
+                        keep.append(item)
+                        keep.extend(queue[idx + 1 :])
+                        break
+                self._write_memory_queue(active_user_id, keep)
+        except Exception:
+            pass
+
+    def _extract_user_correction(self, prompt: str) -> Tuple[str, str]:
+        p = (prompt or "").strip()
+        if len(p) < 8:
+            return "", ""
+
+        # Keep this conservative to avoid false-positive reroutes on generic "no" replies.
+        m = re.search(
+            r"\b(?:not quite|that'?s not what i (?:asked|meant)|i (?:wanted|meant)|instead i (?:wanted|meant))\b[\s,:-]*(.*)$",
+            p,
+            flags=re.IGNORECASE,
+        )
+        if not m:
+            return "", ""
+        tail = (m.group(1) or "").strip(" .")
+        if not tail:
+            return "User signaled previous answer mismatch; prioritize clarification and corrected intent.", ""
+        return f"User correction received: {tail}", tail
 
 
     def _is_explicit_coding_intent(self, prompt: str) -> bool:
@@ -807,6 +969,22 @@ class Agent:
             return "task"
         return "conversation"
 
+    def _response_timeout_seconds(self) -> float:
+        profile = str(self.context_profile or "").lower()
+        if profile in {"4k", "fast"}:
+            return 45.0
+        if profile in {"16k", "32k", "quality"}:
+            return 120.0
+        return 75.0
+
+    def _vision_timeout_seconds(self) -> float:
+        profile = str(self.context_profile or "").lower()
+        if profile in {"4k", "fast"}:
+            return 90.0
+        if profile in {"16k", "32k", "quality"}:
+            return 180.0
+        return 120.0
+
     def _token_budget(self, prompt: str, system_prompt: str, base_max: int) -> int:
         total_chars = len(prompt) + len(system_prompt)
         if total_chars > 14000:
@@ -897,9 +1075,22 @@ class Agent:
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
         self._set_last_attachments(active_user_id, [])
+        correction_note, corrected_intent_text = self._extract_user_correction(prompt)
+        routing_prompt = corrected_intent_text or prompt
+        if correction_note:
+            self._enqueue_memory_write(
+                prompt=f"Correction signal: {prompt}",
+                content=correction_note,
+                active_user_id=active_user_id,
+                should_search=False,
+            )
 
         controller_context = {"user_id": active_user_id}
         pending_ticket = self._pending_tickets_by_user.get(active_user_id)
+        if pending_ticket is None:
+            pending_ticket = self._load_pending_ticket(active_user_id)
+            if pending_ticket is not None:
+                self._pending_tickets_by_user[active_user_id] = pending_ticket
         if pending_ticket is not None:
             controller_context["pending_ticket"] = pending_ticket
 
@@ -916,6 +1107,7 @@ class Agent:
         control = handle_turn(prompt, controller_context)
         if control.action_package and control.action_package.get("ticket_hash") and controller_context.get("proposed_ticket") is not None:
             self._pending_tickets_by_user[active_user_id] = controller_context["proposed_ticket"]
+            self._persist_pending_ticket(active_user_id, controller_context["proposed_ticket"])
 
         if control.action_package and control.action_package.get("execute") and pending_ticket is not None:
             try:
@@ -927,11 +1119,15 @@ class Agent:
                 )
                 result = ToolLoader().execute_with_approval(pending_ticket, receipt)
                 self._pending_tickets_by_user.pop(active_user_id, None)
+                self._clear_pending_ticket(active_user_id)
                 return f"{control.response_text}\nExecution result: {json.dumps(result)}"
             except Exception as e:
                 return f"{control.response_text} Execution blocked: {type(e).__name__}: {e}"
 
         if control.handled:
+            if prompt_lower.strip() == "cancel":
+                self._pending_tickets_by_user.pop(active_user_id, None)
+                self._clear_pending_ticket(active_user_id)
             return control.response_text
 
         skill_cmd = handle_skill_command(prompt)
@@ -982,7 +1178,7 @@ class Agent:
                     self.current_mode = "normal"
                 return game_response
 
-        decision = decide_route(prompt, agent_state={"mode": self.current_mode})
+        decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode})
         if ROUTING_DEBUG:
             logger.info(f"Routing decision: route={decision.route} veto={decision.tool_veto} reason={decision.reason} signals={decision.signals}")
 
@@ -994,7 +1190,7 @@ class Agent:
             try:
                 has_doc = bool(self.rag and getattr(self.rag, "texts", None))
                 intent_decision = self.artifact_detector.detect(
-                    prompt,
+                    routing_prompt,
                     decision.route,
                     has_doc=has_doc,
                 )
@@ -1049,7 +1245,7 @@ class Agent:
         if decision.route == "conversion_tool":
             try:
                 async with asyncio.timeout(20.0):
-                    conv_result = await self.websearch.converter.convert(prompt)
+                    conv_result = await self.websearch.converter.convert(routing_prompt)
                 if conv_result and "Error" not in conv_result and len(conv_result.strip()) > 5:
                     self._push_history_for(active_user_id, prompt, conv_result)
                     return conv_result + "\n(Source: real-time finance data)"
@@ -1072,7 +1268,7 @@ class Agent:
             try:
                 # === PATCH: forward router metadata (reason/signals) into WebSearchHandler ===
                 results = await self.websearch.search(
-                    prompt,
+                    routing_prompt,
                     tool_veto=decision.tool_veto,
                     reason=decision.reason,
                     signals=decision.signals,
@@ -1089,7 +1285,7 @@ class Agent:
                 logger.info(f"Web search failed (non-fatal): {e}")
                 search_context = "Web search unavailable."
         else:
-            mem = await self.memory.build_injected_context(prompt, user_id=active_user_id)
+            mem = await self.memory.build_injected_context(routing_prompt, user_id=active_user_id)
             due_block = ""
             if self._should_inject_due_context(prompt, active_user_id):
                 due = await self.memory.peek_due_reminders(active_user_id, limit=3)
@@ -1108,7 +1304,7 @@ class Agent:
             if len(memory_context) > mem_cap:
                 memory_context = memory_context[:mem_cap]
 
-        rag_block = self._build_rag_block(prompt, k=2)
+        rag_block = self._build_rag_block(routing_prompt, k=2)
         current_time = self.time_handler.get_system_date_time()
         identity_block = self._compose_identity_block()
 
@@ -1177,7 +1373,7 @@ class Agent:
             "- Do not mention reminders or goals unless the user asked about them OR a [Due reminders] block is present.\n"
             "- Do not estimate due times. If mentioning a due time, use only the exact due_ts shown in context.\n"
         )
-        include_goal_context = self._is_personal_memory_query(prompt) or ("[Due reminders]" in memory_context)
+        include_goal_context = self._is_personal_memory_query(routing_prompt) or ("[Due reminders]" in memory_context)
         if include_goal_context:
             try:
                 goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=3)
@@ -1237,12 +1433,12 @@ class Agent:
         )
 
 
-        max_tokens = self._token_budget(prompt, system_prompt, base_max_tokens)
+        max_tokens = self._token_budget(routing_prompt, system_prompt, base_max_tokens)
 
         messages = self.promptforge.build_messages(
             system_prompt=system_prompt,
             history=[] if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else history_msgs,
-            user_prompt=prompt,
+            user_prompt=routing_prompt,
         )
 
         try:
@@ -1251,15 +1447,15 @@ class Agent:
             mem_est = int(est(memory_context))
             search_est = int(est(search_context))
             hist_est = int(sum(est(str(m.get("content", ""))) for m in history_msgs))
-            total_est = int(sys_est + hist_est + est(prompt) + int(BUDGET_OUTPUT_RESERVE_TOKENS or 320))
+            total_est = int(sys_est + hist_est + est(routing_prompt) + int(BUDGET_OUTPUT_RESERVE_TOKENS or 320))
             logger.info(f"Budget est tokens: system={sys_est} memory={mem_est} search={search_est} history={hist_est} total={total_est}")
         except Exception:
             pass
 
         content = ""
         try:
-            async with asyncio.timeout(120):
-                selected_model = self._select_response_model(prompt)
+            async with asyncio.timeout(self._response_timeout_seconds()):
+                selected_model = self._select_response_model(routing_prompt)
                 resp = await self.ollama_client.chat(
                     model=selected_model,
                     messages=messages,
@@ -1303,17 +1499,17 @@ class Agent:
                 content = content[:390] + "... (kept short and clear)"
             content = content.replace("however", "but").replace("therefore", "so")
 
-        # Memory write-back: always capture user-turn memory; avoid noisy search-answer injection.
-        try:
-            if should_search:
-                mem_write = await self.memory.ingest_turn(prompt, assistant_text="", tool_summaries=["websearch"], session_id=active_user_id)
-            else:
-                mem_write = await self.memory.ingest_turn(prompt, assistant_text=content, tool_summaries=None, session_id=active_user_id)
-            notices = list((mem_write or {}).get("conflict_notices", []) or [])
-            if notices:
-                content = content.rstrip() + "\n\nMemory update: " + " ".join(notices[:1])
-        except Exception:
-            pass
+        # Memory write-back: non-blocking to reduce user-perceived latency.
+        self._enqueue_memory_write(
+            prompt=prompt,
+            content=content,
+            active_user_id=active_user_id,
+            should_search=should_search,
+        )
+        self._schedule_background_task(
+            self._memory_ingest_nonblocking(active_user_id=active_user_id),
+            label="memory_ingest",
+        )
 
         if ENABLE_NL_ARTIFACTS and artifact_intent:
             try:
@@ -1326,7 +1522,7 @@ class Agent:
                         new_constraints = self._extract_plan_revision_constraints(prompt)
                 artifact = build_artifact_for_intent(
                     artifact_intent=artifact_intent,
-                    query=prompt,
+                    query=routing_prompt,
                     route=effective_route,
                     answer_text=content,
                     raw_search_results=results,
@@ -1405,7 +1601,7 @@ class Agent:
             with open(image_path, "rb") as img:
                 image_data = img.read()
 
-            async with asyncio.timeout(180):
+            async with asyncio.timeout(self._vision_timeout_seconds()):
                 resp = await self.vision_client.chat(
                     model=self.vision_model,
                     messages=[

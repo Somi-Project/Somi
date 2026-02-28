@@ -99,3 +99,36 @@ def test_controller_respects_quiet_hours_for_nudges(tmp_path, monkeypatch):
     handle_turn("this is pending follow up", {"user_id": "u-quiet"})
     st = load_user_state("u-quiet")
     assert st.scheduled_nudges == []
+
+
+def test_controller_cancel_clears_pending_approvals(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    ticket = ExecutionTicket(job_id="ctrl2", action="execute", commands=[["echo", "ok"]], cwd=".")
+    first = handle_turn("run tool demo", {"user_id": "u-cancel", "proposed_ticket": ticket})
+    assert first.action_package and first.action_package.get("ticket_hash")
+
+    st = load_user_state("u-cancel")
+    assert st.pending_approvals
+
+    second = handle_turn("cancel", {"user_id": "u-cancel"})
+    assert "Cancelled pending approvals" in second.response_text
+
+    st2 = load_user_state("u-cancel")
+    assert st2.pending_approvals == []
+
+
+def test_controller_does_not_track_noisy_topic_mentions(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    handle_turn("project updates are interesting", {"user_id": "u-noise"})
+    st = load_user_state("u-noise")
+    assert st.active_items == []
+
+
+def test_controller_tracks_actionable_active_item(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+
+    handle_turn("I need to finish my project plan this week", {"user_id": "u-track"})
+    st = load_user_state("u-track")
+    assert st.active_items
