@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import re
 from typing import Any
 
 from config import assistantsettings as aset
@@ -43,6 +44,8 @@ def _detect_approval(text: str) -> str | None:
 def _classify(user_input: str, approval_signal: str | None) -> str:
     if approval_signal == "approve & run":
         return "EXECUTE_APPROVED"
+    if approval_signal == "cancel":
+        return "CANCEL_PENDING"
     if approval_signal:
         return "CHAT_WITH_SUGGESTION"
     low = user_input.lower()
@@ -53,6 +56,25 @@ def _classify(user_input: str, approval_signal: str | None) -> str:
     if "next step" in low or "suggest" in low:
         return "CHAT_WITH_SUGGESTION"
     return "CHAT_ONLY"
+
+
+def _should_track_active_item(text: str) -> bool:
+    t = (text or "").strip()
+    if len(t.split()) < 3:
+        return False
+    low = t.lower()
+    action = bool(re.search(r"\b(i need to|i should|i must|working on|my project|my task|help me with)\b", low))
+    topic = bool(re.search(r"\b(project|task|learning|problem)\b", low))
+    return action and topic
+
+
+def _should_open_loop(text: str, approval_signal: str | None) -> bool:
+    if approval_signal is not None:
+        return False
+    low = (text or "").lower()
+    if len(low.split()) < 4:
+        return False
+    return bool(re.search(r"\b(pending|follow[ -]?up|unfinished|blocked|todo|to do)\b", low))
 
 
 def handle_turn(user_input: str, session_context: dict[str, Any]) -> ControllerResult:
@@ -70,14 +92,14 @@ def handle_turn(user_input: str, session_context: dict[str, Any]) -> ControllerR
 
     # Stage B — State update
     if text:
-        if any(x in text.lower() for x in ["project", "task", "learning", "problem"]):
+        if _should_track_active_item(text):
             upsert_active_item(
                 state,
                 title=text[:80],
                 item_type="task",
                 summary=text[:140],
             )
-        if approval_signal is None and "pending" in text.lower():
+        if _should_open_loop(text, approval_signal):
             exists = any(l.title.lower() == text[:80].lower() for l in state.open_loops)
             if not exists and len(state.open_loops) < aset.MAX_UNRESOLVED_LOOPS:
                 state.open_loops.append(OpenLoop(title=text[:80], loop_type="pending implementation steps"))
@@ -108,6 +130,12 @@ def handle_turn(user_input: str, session_context: dict[str, Any]) -> ControllerR
                 }
                 state.pending_approvals = [h for h in state.pending_approvals if h != th]
                 response = "Approval received. Preparing staged execution."
+    elif intent == "CANCEL_PENDING":
+        if state.pending_approvals:
+            state.pending_approvals = []
+            response = "Cancelled pending approvals for this session."
+        else:
+            response = "There are no pending approvals to cancel."
     elif intent == "PROPOSE_JOB":
         proposed_ticket = session_context.get("proposed_ticket")
         if proposed_ticket:

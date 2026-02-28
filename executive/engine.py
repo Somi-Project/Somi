@@ -11,6 +11,7 @@ from executive.budgets import ExecutiveBudgets
 from executive.queue import ExecutiveQueue
 from executive.signals import suggest_hello_intent
 from handlers.toolbox_handler import create_tool_job
+from runtime.errors import RateLimitError
 
 
 class ExecutiveEngine:
@@ -43,7 +44,10 @@ class ExecutiveEngine:
     def tick(self):
         if self.paused:
             return {"paused": True, "message": "Executive is paused"}
-        self.budgets.allow_intent()
+        try:
+            self.budgets.allow_intent()
+        except RateLimitError:
+            return {"error": "rate_limited", "message": "Executive intent budget exceeded. Try again later."}
         intent = suggest_hello_intent()
         intent_id = str(uuid.uuid4())[:8]
         token = self.approvals.issue(intent_id)

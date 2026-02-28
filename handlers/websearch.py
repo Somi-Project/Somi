@@ -824,8 +824,12 @@ Query: {query}
         if not q:
             return []
 
-        # 1) Agentpedia
-        if self.agentpedia:
+        deadline_s = 12.0
+        started = time.monotonic()
+
+        async def _agentpedia_task() -> List[Dict[str, Any]]:
+            if not self.agentpedia:
+                return []
             try:
                 research_results = await self.agentpedia.search(q)
                 if research_results and isinstance(research_results, list):
@@ -839,25 +843,100 @@ Query: {query}
                         return self._tag(research_results, "science", True)
             except Exception as e:
                 logger.warning(f"Agentpedia failed for '{q}': {e}")
+            return []
 
-        # 2) SearXNG (local metasearch)
+        async def _searx_task() -> List[Dict[str, Any]]:
+            try:
+                async with httpx.AsyncClient(timeout=8.0) as client:
+                    searx = await search_searxng(
+                        client,
+                        q,
+                        max_results=8,
+                        category="science",
+                        source_name="searxng_research",
+                        domain="science",
+                    )
+                    if searx and isinstance(searx, list):
+                        logger.info(f"SearXNG research results: {len(searx)} for '{q}'")
+                        return self._tag(searx, "science", True)
+            except Exception as e:
+                logger.warning(f"SearXNG research failed for '{q}': {e}")
+            return []
+
+        tasks = {
+            "agentpedia": asyncio.create_task(_agentpedia_task()),
+            "searxng": asyncio.create_task(_searx_task()),
+        }
+
+        def _pick_best(candidates: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+            # Middle-ground determinism: prefer richer internal structured provider when both are available,
+            # otherwise return whichever viable result exists.
+            for key in ("agentpedia", "searxng"):
+                v = candidates.get(key) or []
+                if v:
+                    return v
+            return []
+
         try:
-            async with httpx.AsyncClient(timeout=12.0) as client:
-                searx = await search_searxng(
-                    client,
-                    q,
-                    max_results=8,
-                    category="science",  # PATCH: use science category for research
-                    source_name="searxng_research",
-                    domain="science",
-                )
-                if searx and isinstance(searx, list):
-                    logger.info(f"SearXNG research results: {len(searx)} for '{q}'")
-                    return self._tag(searx, "science", True)
-        except Exception as e:
-            logger.warning(f"SearXNG research failed for '{q}': {e}")
+            done, pending = await asyncio.wait(list(tasks.values()), timeout=deadline_s, return_when=asyncio.FIRST_COMPLETED)
+            candidate_results: Dict[str, List[Dict[str, Any]]] = {}
+            for d in done:
+                try:
+                    res = d.result()
+                except Exception:
+                    continue
+
+                src = next((k for k, t in tasks.items() if t is d), "")
+                if src:
+                    candidate_results[src] = res or []
+
+            # Give a very short grace window to collect second provider for deterministic preference.
+            grace_s = 0.35
+            if pending and candidate_results and (time.monotonic() - started + grace_s) < deadline_s:
+                done_grace, pending = await asyncio.wait(pending, timeout=grace_s)
+                for d in done_grace:
+                    try:
+                        res = d.result()
+                    except Exception:
+                        continue
+                    src = next((k for k, t in tasks.items() if t is d), "")
+                    if src:
+                        candidate_results[src] = res or []
+
+            picked = _pick_best(candidate_results)
+            if picked:
+                for p in pending:
+                    p.cancel()
+                return picked
+
+            # No winner yet, collect remaining within budget
+            remaining = max(0.0, deadline_s - (time.monotonic() - started))
+            if pending and remaining > 0:
+                done2, pending2 = await asyncio.wait(pending, timeout=remaining)
+                candidate_results2: Dict[str, List[Dict[str, Any]]] = {}
+                for d in done2:
+                    try:
+                        res = d.result()
+                    except Exception:
+                        continue
+                    src = next((k for k, t in tasks.items() if t is d), "")
+                    if src:
+                        candidate_results2[src] = res or []
+                picked2 = _pick_best(candidate_results2)
+                if picked2:
+                    for p in pending2:
+                        p.cancel()
+                    return picked2
+                for p in pending2:
+                    p.cancel()
+        finally:
+            for t in tasks.values():
+                if not t.done():
+                    t.cancel()
 
         # 3) DDG web fallback (still tagged science because intent)
+        if (time.monotonic() - started) > deadline_s:
+            return []
         try:
             res = await self.search_web(q, retries=2, backoff_factor=0.5)
             return self._tag(res, "science", False)
