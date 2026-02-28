@@ -4,6 +4,7 @@ import json
 import os
 import re
 import threading
+from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
 
@@ -24,7 +25,14 @@ class ArtifactStore:
 
     def append(self, session_id: str, artifact: Dict[str, Any]) -> None:
         path = self._path(session_id)
-        line = json.dumps(dict(artifact or {}), ensure_ascii=False)
+        sid = self._safe_session_id(session_id)
+        payload = dict(artifact or {})
+        payload.setdefault("session_id", sid)
+        created_at = str(payload.get("created_at") or "").strip()
+        if not payload.get("timestamp"):
+            payload["timestamp"] = created_at or datetime.now(timezone.utc).isoformat()
+        payload.setdefault("artifact_id", f"adhoc_{int(datetime.now(timezone.utc).timestamp() * 1000)}")
+        line = json.dumps(payload, ensure_ascii=False)
         with self._lock:
             with open(path, "a", encoding="utf-8") as f:
                 f.write(line + "\n")

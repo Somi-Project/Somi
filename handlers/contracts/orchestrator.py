@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from handlers.contracts.envelopes import to_doc_envelope, to_llm_envelope, to_search_envelope
-from handlers.contracts.pipelines import build_doc_extract, build_plan, build_research_brief
+from handlers.contracts.pipelines import build_doc_extract, build_plan, build_plan_revision, build_research_brief
 from handlers.contracts.schemas import MARKDOWN_RENDERERS, STRICT_VALIDATORS
 
 
@@ -20,6 +20,8 @@ def build_artifact_for_intent(
     raw_search_results: list[dict] | None = None,
     rag_block: str | None = None,
     min_sources: int = 3,
+    previous_plan: Dict[str, Any] | None = None,
+    new_constraints: list[str] | None = None,
 ) -> Dict[str, Any]:
     if artifact_intent == "research_brief":
         env = to_search_envelope(answer_text, raw_search_results)
@@ -32,6 +34,13 @@ def build_artifact_for_intent(
             raise ArtifactBuildError("insufficient_doc_context")
         return build_doc_extract(query=query, route=route, envelope=env)
     if artifact_intent == "plan":
+        if previous_plan:
+            return build_plan_revision(
+                query=query,
+                route=route,
+                previous_plan=previous_plan,
+                new_constraints=list(new_constraints or []),
+            )
         env = to_llm_envelope(answer_text)
         return build_plan(query=query, route=route, envelope=env)
     raise ValueError(f"Unsupported artifact intent: {artifact_intent}")
