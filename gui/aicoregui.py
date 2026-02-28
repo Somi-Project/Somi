@@ -171,13 +171,13 @@ class ChatWorker(QThread):
     error_signal = pyqtSignal(str)
     status_signal = pyqtSignal(str)
 
-    def __init__(self, app, agent_name, use_studies, parent=None):
+    def __init__(self, app, agent_name, use_studies, parent=None, preloaded_agent=None):
         super().__init__(parent)
         self.app = app
         self.agent_name = agent_name
         self.use_studies = use_studies
         self.loop = asyncio.new_event_loop()
-        self.agent = None
+        self.agent = preloaded_agent
         self.running = False
         self.pending_future = None
 
@@ -186,8 +186,8 @@ class ChatWorker(QThread):
         try:
             if not self.agent:
                 self.agent = Agent(name=self.agent_name, use_studies=self.use_studies)
-                self.agent.model = settings.DEFAULT_MODEL
-                self.agent.temperature = settings.DEFAULT_TEMP
+            self.agent.model = settings.DEFAULT_MODEL
+            self.agent.temperature = settings.DEFAULT_TEMP
             self.running = True
             self.loop.run_forever()
         except Exception as e:
@@ -428,6 +428,44 @@ def ai_chat(app):
         stop_button.setEnabled(False)
         QMessageBox.critical(chat_window, "Error", msg)
 
+    def _matching_preloaded_agent(agent_key):
+        preloaded = getattr(app, "preloaded_agent", None)
+        if not preloaded:
+            return None
+        preloaded_key = str(getattr(preloaded, "agent_key", "") or "")
+        if preloaded_key == str(agent_key):
+            return preloaded
+        return None
+
+    def _worker_is_busy(worker):
+        if not worker or not worker.isRunning():
+            return False
+        try:
+            return bool(worker.is_busy())
+        except Exception:
+            return False
+
+    def _restart_chat_worker(agent_key, use_studies):
+        nonlocal chat_worker, using_app_chat_worker
+        old_worker = chat_worker if (chat_worker and chat_worker.isRunning()) else getattr(app, "chat_worker", None)
+        if old_worker and old_worker.isRunning():
+            if _worker_is_busy(old_worker):
+                old_worker.cancel_current()
+            if old_worker is chat_worker:
+                _detach_worker_signals(old_worker)
+            old_worker.stop()
+            old_worker.wait()
+        chat_worker = ChatWorker(
+            app,
+            agent_key,
+            use_studies,
+            preloaded_agent=_matching_preloaded_agent(agent_key),
+        )
+        using_app_chat_worker = False
+        _attach_worker_signals(chat_worker)
+        chat_worker.start()
+        app.chat_worker = chat_worker
+
     def start_chat():
         nonlocal chat_worker, using_app_chat_worker
         selected_name = name_combo.currentText()
@@ -459,16 +497,18 @@ def ai_chat(app):
 
         existing_worker = getattr(app, "chat_worker", None)
         if existing_worker and existing_worker.isRunning():
-            chat_worker = existing_worker
-            using_app_chat_worker = True
-            _attach_worker_signals(chat_worker)
-            chat_worker.update_agent(agent_key, use_studies_check.isChecked())
+            if _worker_is_busy(existing_worker):
+                set_status("Busy — stop current response before switching agent")
+                return
+            if str(getattr(existing_worker, "agent_name", "")) != str(agent_key):
+                _restart_chat_worker(agent_key, use_studies_check.isChecked())
+            else:
+                chat_worker = existing_worker
+                using_app_chat_worker = True
+                _attach_worker_signals(chat_worker)
+                chat_worker.update_agent(agent_key, use_studies_check.isChecked())
         else:
-            chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-            using_app_chat_worker = False
-            _attach_worker_signals(chat_worker)
-            chat_worker.start()
-            app.chat_worker = chat_worker
+            _restart_chat_worker(agent_key, use_studies_check.isChecked())
         chat_area.append(f"Connected to {selected_name}. You can start chatting now.\n")
         set_status("Idle")
         send_button.setEnabled(True)
@@ -486,27 +526,34 @@ def ai_chat(app):
         except ValueError:
             return
 
-        if chat_worker and chat_worker.isRunning():
-            if chat_worker.is_busy():
-                set_status("Busy — stop current response before switching agent")
-                return
+        existing_worker = chat_worker if (chat_worker and chat_worker.isRunning()) else getattr(app, "chat_worker", None)
+        if _worker_is_busy(existing_worker):
+            set_status("Busy — stop current response before switching agent")
+            return
+
+        existing_agent = str(getattr(existing_worker, "agent_name", "")) if existing_worker else ""
+        should_restart = bool(existing_worker and existing_agent != str(agent_key))
+
+        if should_restart:
+            _restart_chat_worker(agent_key, use_studies_check.isChecked())
+            chat_area.clear()
+            chat_area.append(f"Switched to {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
+            return
+
+        if existing_worker and existing_worker.isRunning():
+            chat_worker = existing_worker
+            using_app_chat_worker = True
+            _attach_worker_signals(chat_worker)
             if not chat_worker.update_agent(agent_key, use_studies_check.isChecked()):
                 chat_area.append(f"Agent unchanged: {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
                 return
             chat_area.clear()
-            chat_area.append(f"Switched to {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
-        else:
-            if chat_worker:
-                if not using_app_chat_worker:
-                    chat_worker.stop()
-                    chat_worker.wait()
-            chat_worker = ChatWorker(app, agent_key, use_studies_check.isChecked())
-            using_app_chat_worker = False
-            _attach_worker_signals(chat_worker)
-            chat_worker.start()
-            app.chat_worker = chat_worker
-            chat_area.clear()
-            chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
+            chat_area.append(f"Updated settings for {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
+            return
+
+        _restart_chat_worker(agent_key, use_studies_check.isChecked())
+        chat_area.clear()
+        chat_area.append(f"Now chatting with {selected_name}{' using studies' if use_studies_check.isChecked() else ''}.\n")
 
     def choose_image():
         nonlocal selected_image_path

@@ -933,23 +933,26 @@ class SomiAIGUI(QMainWindow):
         self.agent_warmup_worker.warmed.connect(self._on_agent_warmed)
         self.agent_warmup_worker.start()
 
-        try:
-            from gui.aicoregui import ChatWorker
-
-            self.chat_worker = ChatWorker(self, agent_key, True)
-            self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
-            self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
-            self.chat_worker.start()
-            self.push_activity("core", "Chat worker pre-initialized")
-        except Exception as exc:
-            logger.exception("Failed to pre-initialize chat worker")
-            self.push_activity("core", f"Chat worker preload failed: {exc}")
-
     def _on_agent_warmed(self, ok: bool, detail: str):
         if ok:
             if self.agent_warmup_worker:
                 self.preloaded_agent = self.agent_warmup_worker.agent
             self.push_activity("core", f"Agent warmup ready: {detail}")
+            try:
+                from gui.aicoregui import ChatWorker
+
+                if self.chat_worker and self.chat_worker.isRunning():
+                    return
+
+                agent_key = self._default_agent_key()
+                self.chat_worker = ChatWorker(self, agent_key, True, preloaded_agent=self.preloaded_agent)
+                self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
+                self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
+                self.chat_worker.start()
+                self.push_activity("core", "Chat worker pre-initialized")
+            except Exception as exc:
+                logger.exception("Failed to pre-initialize chat worker")
+                self.push_activity("core", f"Chat worker preload failed: {exc}")
         else:
             self.push_activity("core", f"Agent warmup failed: {detail}")
 
