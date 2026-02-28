@@ -1,3 +1,6 @@
+import sys
+import types
+
 import pytest
 
 from handlers.contracts.intent import ArtifactIntentDetector
@@ -235,6 +238,45 @@ def test_smoke_plan_revision_references_previous_id():
     assert art["metadata"].get("revises_artifact_id") == "art_prev2"
 
 
+
+
+def _import_assistant_agent_with_stubbed_ollama():
+    if "ollama" not in sys.modules:
+        sys.modules["ollama"] = types.SimpleNamespace(AsyncClient=type("AsyncClient", (), {}))
+    try:
+        from agents import AssistantAgent
+    except ModuleNotFoundError as exc:
+        pytest.skip(f"AssistantAgent dependencies unavailable in test env: {exc}")
+    return AssistantAgent
+
+
+def test_plan_revision_followup_requires_explicit_prior_reference(monkeypatch):
+    AssistantAgent = _import_assistant_agent_with_stubbed_ollama()
+
+    monkeypatch.setenv("LLM_BACKEND", "none")
+    agent = AssistantAgent()
+    assert agent._is_plan_revision_followup("update that plan to 2 hours/week") is True
+    assert agent._is_plan_revision_followup("I need a plan to update my resume") is False
+
+
+def test_get_plan_for_revision_ignores_new_plan_requests(monkeypatch, tmp_path):
+    AssistantAgent = _import_assistant_agent_with_stubbed_ollama()
+    from handlers.contracts.store import ArtifactStore
+
+    monkeypatch.setenv("LLM_BACKEND", "none")
+    agent = AssistantAgent()
+    agent.artifact_store = ArtifactStore(str(tmp_path / "artifacts"))
+    agent.artifact_store.append(
+        "u1",
+        {
+            "artifact_id": "art_prev",
+            "artifact_type": "plan",
+            "created_at": "2099-01-01T00:00:00+00:00",
+            "content": {"objective": "Old plan", "steps": ["a"]},
+        },
+    )
+
+    assert agent._get_plan_for_revision("u1", "I need a plan to update my resume") is None
 def test_distiller_research_only_distills_claims_with_citations(monkeypatch):
     distiller = FactDistiller()
     captured = {"facts": []}

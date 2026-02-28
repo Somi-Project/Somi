@@ -280,12 +280,21 @@ class Agent:
         p = (prompt or "").strip().lower()
         if len(p) < 10:
             return False
+        explicit_prior_plan_markers = (
+            "that plan", "the plan", "my plan", "our plan", "previous plan", "prior plan",
+            "last plan", "existing plan", "earlier plan", "plan you made", "plan you gave",
+            "revise it", "update it", "change it", "adjust it", "modify it", "rework it",
+            "those steps", "the steps",
+        )
         revision_markers = (
             "update", "revise", "adjust", "change", "make it fit", "only have", "fit into",
             "rework", "modify", "shorten", "tighten",
         )
         plan_markers = ("plan", "that", "it", "schedule", "steps")
-        return any(m in p for m in revision_markers) and any(m in p for m in plan_markers)
+        has_revision = any(m in p for m in revision_markers)
+        has_plan_token = any(m in p for m in plan_markers)
+        has_explicit_prior_reference = any(m in p for m in explicit_prior_plan_markers)
+        return has_revision and has_plan_token and has_explicit_prior_reference
 
     def _extract_plan_revision_constraints(self, prompt: str) -> List[str]:
         p = (prompt or "").strip()
@@ -307,6 +316,14 @@ class Agent:
     def _plan_revision_confidence(self, prompt: str) -> float:
         p = (prompt or "").strip().lower()
         if not p:
+            return 0.0
+        explicit_prior_plan_markers = (
+            "that plan", "the plan", "my plan", "our plan", "previous plan", "prior plan",
+            "last plan", "existing plan", "earlier plan", "plan you made", "plan you gave",
+            "revise it", "update it", "change it", "adjust it", "modify it", "rework it",
+            "those steps", "the steps",
+        )
+        if not any(m in p for m in explicit_prior_plan_markers):
             return 0.0
         strong_markers = ("update", "revise", "adjust", "change", "rework", "modify", "make it fit")
         weak_markers = ("that", "it", "schedule", "steps", "hours/week", "hours per week", "only have")
