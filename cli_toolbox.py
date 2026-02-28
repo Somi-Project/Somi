@@ -6,6 +6,7 @@ import re
 import sys
 
 from executive.engine import ExecutiveEngine
+from handlers.contracts.store import ArtifactStore
 from jobs.engine import JobsEngine
 from runtime.ctx import ToolContext
 from runtime.errors import PolicyError, VerifyError
@@ -55,6 +56,13 @@ def main():
     sj = sub.add_parser("show-job")
     sj.add_argument("job_id")
 
+    art = sub.add_parser("artifacts")
+    art_sub = art.add_subparsers(dest="art_cmd")
+    art_sub.add_parser("rebuild-index")
+    compact = art_sub.add_parser("compact-index")
+    compact.add_argument("--max-age-days", type=int, default=180)
+    compact.add_argument("--no-adaptive", action="store_true")
+
     ex = sub.add_parser("exec")
     ex_sub = ex.add_subparsers(dest="exec_cmd")
     ex_sub.add_parser("status")
@@ -101,6 +109,15 @@ def main():
             with open(path, "r", encoding="utf-8") as f:
                 print(f.read())
             return 0
+        if args.cmd == "artifacts":
+            if args.art_cmd == "rebuild-index":
+                ArtifactStore().rebuild_indexes()
+                return _emit_result({"ok": True, "message": "artifact indexes rebuilt"})
+            if args.art_cmd == "compact-index":
+                stats = ArtifactStore().compact_global_indexes(max_age_days=int(args.max_age_days), adaptive=not bool(args.no_adaptive))
+                return _emit_result({"ok": True, "message": "artifact indexes compacted", "stats": stats, "adaptive": not bool(args.no_adaptive)})
+            return _emit_result({"error": "unknown artifacts subcommand"})
+
         if args.cmd == "exec":
             engine = ExecutiveEngine()
             if args.exec_cmd in ("status", "list"):

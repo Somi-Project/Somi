@@ -61,6 +61,15 @@ from handlers.memory import Memory3Manager
 from handlers.contracts.intent import ArtifactIntentDetector
 from handlers.contracts.store import ArtifactStore
 from handlers.contracts.orchestrator import build_artifact_for_intent, validate_and_render
+from handlers.continuity import (
+    build_task_state_from_artifact,
+    choose_thread_id_for_request,
+    derive_thread_id,
+    maybe_emit_continuity_artifact,
+    normalize_tags,
+    should_emit_task_state,
+    suggest_tags,
+)
 from handlers.contracts.fact_distiller import FactDistiller
 from handlers.contracts.policy import apply_research_degrade_notice, should_force_research_websearch
 from promptforge import PromptForge
@@ -1209,6 +1218,27 @@ class Agent:
             if ROUTING_DEBUG:
                 logger.info("Artifact intent requested route upgrade: forcing websearch for research_brief")
 
+        idx_snapshot = None
+        if ENABLE_NL_ARTIFACTS:
+            try:
+                continuity_signals = {
+                    "route": decision.route,
+                    "artifact_intent": artifact_intent,
+                    "thread_id": None,
+                    "tags": suggest_tags(user_text=routing_prompt, artifact_type=artifact_intent or "", strong_continuity=True),
+                }
+                idx_snapshot = self.artifact_store.get_index_snapshot()
+                cres = maybe_emit_continuity_artifact(routing_prompt, continuity_signals, idx_snapshot)
+                if cres.artifact:
+                    c_art = cres.artifact
+                    c_art["tags"] = normalize_tags(c_art.get("tags") or [])
+                    self.artifact_store.append(active_user_id, c_art)
+                    markdown = validate_and_render(c_art)
+                    self._push_history_for(active_user_id, prompt, markdown)
+                    return markdown
+            except Exception as e:
+                logger.debug(f"Continuity engine failed (non-fatal): {e}")
+
         if decision.route == "command":
             cmd = prompt_lower.strip()
             if cmd == "memory doctor":
@@ -1532,10 +1562,45 @@ class Agent:
                     new_constraints=new_constraints,
                     trigger_reason=artifact_trigger_reason,
                 )
-                markdown = validate_and_render(artifact)
-                self.artifact_store.append(active_user_id, artifact)
+                artifact["tags"] = suggest_tags(user_text=routing_prompt, artifact_type=artifact_intent or "")
+                artifact["status"] = "open" if artifact_intent in {"plan", "meeting_summary", "task_state"} else "unknown"
+                chosen_thread = choose_thread_id_for_request(
+                    routing_prompt,
+                    {
+                        "route": decision.route,
+                        "artifact_intent": artifact_intent,
+                        "thread_id": None,
+                        "tags": artifact.get("tags") or [],
+                    },
+                    idx_snapshot or self.artifact_store.get_index_snapshot(),
+                )
+                artifact["thread_id"] = chosen_thread
+                if artifact.get("revises_artifact_id"):
+                    artifact["parent_artifact_id"] = artifact.get("revises_artifact_id")
+
+                emit_task_state = artifact_intent in {"plan", "meeting_summary"} and should_emit_task_state(routing_prompt)
+                artifact_to_persist = artifact
+                if emit_task_state:
+                    prev_task_state = self.artifact_store.get_last(active_user_id, "task_state")
+                    if prev_task_state and str(prev_task_state.get("thread_id") or "") != str(artifact.get("thread_id") or ""):
+                        prev_task_state = None
+                    t_art = build_task_state_from_artifact(
+                        source_artifact=artifact,
+                        thread_id=str(artifact.get("thread_id") or derive_thread_id(routing_prompt)),
+                        previous_task_state=prev_task_state,
+                        status_hint_text="\n".join([routing_prompt or "", content or ""]),
+                    )
+                    t_art["tags"] = suggest_tags(user_text=routing_prompt, artifact_type="task_state")
+                    t_art["status"] = "open"
+                    t_art["thread_id"] = artifact.get("thread_id")
+                    t_art["parent_artifact_id"] = artifact.get("artifact_id")
+                    t_art["related_artifact_ids"] = [artifact.get("artifact_id")]
+                    artifact_to_persist = t_art
+
+                markdown = validate_and_render(artifact_to_persist)
+                self.artifact_store.append(active_user_id, artifact_to_persist)
                 self.fact_distiller.distill_and_write(
-                    artifact,
+                    artifact_to_persist,
                     require_doc_page_refs=bool(DOC_FACTS_REQUIRE_PAGE_REFS),
                 )
                 if len(markdown) > 6000:

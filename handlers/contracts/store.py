@@ -5,8 +5,8 @@ import os
 import re
 import threading
 from contextlib import contextmanager
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional, List
 
 try:
     import fcntl
@@ -34,6 +34,20 @@ class ArtifactStore:
     def _index_path(self, session_id: str) -> str:
         sid = self._safe_session_id(session_id)
         return os.path.join(self.root_dir, f"{sid}.index.json")
+
+    def _global_index_dir(self) -> str:
+        p = os.path.join(self.root_dir, "index")
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    def _thread_index_path(self) -> str:
+        return os.path.join(self._global_index_dir(), "thread_index.json")
+
+    def _tag_index_path(self) -> str:
+        return os.path.join(self._global_index_dir(), "tag_index.json")
+
+    def _status_index_path(self) -> str:
+        return os.path.join(self._global_index_dir(), "status_index.json")
 
     def _lock_path(self, session_id: str) -> str:
         sid = self._safe_session_id(session_id)
@@ -102,6 +116,7 @@ class ArtifactStore:
                     f.write(line + "\n")
                     f.flush()
                 self._update_index(sid, payload, offset)
+                self._update_global_indexes(sid, payload)
 
     def _update_index(self, session_id: str, artifact: Dict[str, Any], offset: int) -> None:
         idx_path = self._index_path(session_id)
@@ -122,6 +137,197 @@ class ArtifactStore:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
         os.replace(tmp, idx_path)
+
+
+    def _minimal_meta(self, session_id: str, artifact: Dict[str, Any]) -> Dict[str, Any]:
+        data = dict(artifact.get("data") or artifact.get("content") or {})
+        title = data.get("title") or data.get("objective") or data.get("question") or data.get("thread_id") or artifact.get("artifact_type")
+        return {
+            "artifact_id": str(artifact.get("artifact_id") or ""),
+            "session_id": session_id,
+            "thread_id": artifact.get("thread_id"),
+            "type": str(artifact.get("artifact_type") or artifact.get("contract_name") or ""),
+            "title": str(title or "")[:200],
+            "updated_at": artifact.get("timestamp"),
+            "status": str(artifact.get("status") or "unknown"),
+            "tags": [str(x) for x in list(artifact.get("tags") or [])][:20],
+        }
+
+    def _read_json(self, path: str, default: Dict[str, Any]) -> Dict[str, Any]:
+        if not os.path.exists(path):
+            return dict(default)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.loads(f.read())
+        except Exception:
+            return dict(default)
+
+    def _write_json_atomic(self, path: str, payload: Dict[str, Any]) -> None:
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, path)
+
+    def _append_unique(self, rows: List[Dict[str, Any]], item: Dict[str, Any], *, max_items: int = 200) -> List[Dict[str, Any]]:
+        aid = str(item.get("artifact_id") or "")
+        out = [r for r in rows if str(r.get("artifact_id") or "") != aid]
+        out.insert(0, item)
+        return out[:max_items]
+
+    def _update_global_indexes(self, session_id: str, artifact: Dict[str, Any]) -> None:
+        item = self._minimal_meta(session_id, artifact)
+        if not item.get("artifact_id"):
+            return
+
+        thread_idx = self._read_json(self._thread_index_path(), {"by_thread_id": {}, "recent_open_threads": []})
+        tid = str(item.get("thread_id") or "").strip()
+        if tid:
+            rows = list(((thread_idx.get("by_thread_id") or {}).get(tid) or []))
+            thread_idx.setdefault("by_thread_id", {})[tid] = self._append_unique(rows, item, max_items=200)
+        if item.get("status") in {"open", "in_progress", "blocked"}:
+            thread_idx["recent_open_threads"] = self._append_unique(list(thread_idx.get("recent_open_threads") or []), item, max_items=300)
+        else:
+            thread_idx["recent_open_threads"] = [r for r in list(thread_idx.get("recent_open_threads") or []) if str(r.get("artifact_id")) != item["artifact_id"]][:300]
+        self._write_json_atomic(self._thread_index_path(), thread_idx)
+
+        tag_idx = self._read_json(self._tag_index_path(), {"by_tag": {}})
+        for tag in list(item.get("tags") or [])[:20]:
+            key = str(tag or "").strip().lower()
+            if not key:
+                continue
+            rows = list(((tag_idx.get("by_tag") or {}).get(key) or []))
+            tag_idx.setdefault("by_tag", {})[key] = self._append_unique(rows, item, max_items=200)
+        self._write_json_atomic(self._tag_index_path(), tag_idx)
+
+        status_idx = self._read_json(self._status_index_path(), {"by_status": {}})
+        st = str(item.get("status") or "unknown")
+        rows = list(((status_idx.get("by_status") or {}).get(st) or []))
+        status_idx.setdefault("by_status", {})[st] = self._append_unique(rows, item, max_items=300)
+        self._write_json_atomic(self._status_index_path(), status_idx)
+
+
+    def _compact_rows_by_age(self, rows: List[Dict[str, Any]], *, max_age_days: int, max_items: int) -> List[Dict[str, Any]]:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=max(1, int(max_age_days)))
+        out: List[Dict[str, Any]] = []
+        for row in list(rows or []):
+            ts = str((row or {}).get("updated_at") or "").strip()
+            keep = True
+            if ts:
+                try:
+                    if ts.endswith("Z"):
+                        ts = ts[:-1] + "+00:00"
+                    dt = datetime.fromisoformat(ts)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    if dt < cutoff:
+                        keep = False
+                except Exception:
+                    keep = True
+            if keep:
+                out.append(dict(row))
+            if len(out) >= max_items:
+                break
+        return out
+
+
+    def _status_age_limit_days(self, status: str, base_days: int, *, adaptive: bool) -> int:
+        if not adaptive:
+            return max(1, int(base_days))
+        s = str(status or "unknown")
+        if s in {"open", "in_progress"}:
+            return max(int(base_days), 365)
+        if s in {"blocked"}:
+            return max(int(base_days), 270)
+        if s in {"done", "unknown"}:
+            return min(int(base_days), 120)
+        return max(1, int(base_days))
+
+    def _adaptive_age_days_for_rows(self, rows: List[Dict[str, Any]], base_days: int, *, adaptive: bool) -> int:
+        if not adaptive:
+            return max(1, int(base_days))
+        n = len(list(rows or []))
+        if n >= 120:
+            return min(540, int(base_days) * 2)
+        if n >= 60:
+            return min(365, int(base_days) + 90)
+        return max(1, int(base_days))
+
+
+    def _age_days_with_status_mix(self, rows: List[Dict[str, Any]], base_days: int, *, adaptive: bool) -> int:
+        age_days = self._adaptive_age_days_for_rows(rows, base_days, adaptive=adaptive)
+        if not adaptive:
+            return age_days
+        statuses = {str((r or {}).get("status") or "unknown") for r in list(rows or [])}
+        for st in statuses:
+            age_days = max(age_days, self._status_age_limit_days(st, base_days, adaptive=adaptive))
+        return age_days
+
+    def compact_global_indexes(self, *, max_age_days: int = 180, adaptive: bool = True) -> Dict[str, int]:
+        thread_idx = self._read_json(self._thread_index_path(), {"by_thread_id": {}, "recent_open_threads": []})
+        tag_idx = self._read_json(self._tag_index_path(), {"by_tag": {}})
+        status_idx = self._read_json(self._status_index_path(), {"by_status": {}})
+
+        t_count = 0
+        by_thread = dict(thread_idx.get("by_thread_id") or {})
+        for tid, rows in list(by_thread.items()):
+            age_days = self._age_days_with_status_mix(list(rows or []), max_age_days, adaptive=adaptive)
+            compacted = self._compact_rows_by_age(list(rows or []), max_age_days=age_days, max_items=200)
+            if compacted:
+                by_thread[tid] = compacted
+                t_count += len(compacted)
+            else:
+                by_thread.pop(tid, None)
+        thread_idx["by_thread_id"] = by_thread
+        thread_idx["recent_open_threads"] = self._compact_rows_by_age(
+            list(thread_idx.get("recent_open_threads") or []),
+            max_age_days=self._adaptive_age_days_for_rows(list(thread_idx.get("recent_open_threads") or []), max_age_days, adaptive=adaptive),
+            max_items=300,
+        )
+
+        tag_count = 0
+        by_tag = dict(tag_idx.get("by_tag") or {})
+        for tag, rows in list(by_tag.items()):
+            age_days = self._age_days_with_status_mix(list(rows or []), max_age_days, adaptive=adaptive)
+            compacted = self._compact_rows_by_age(list(rows or []), max_age_days=age_days, max_items=200)
+            if compacted:
+                by_tag[tag] = compacted
+                tag_count += len(compacted)
+            else:
+                by_tag.pop(tag, None)
+        tag_idx["by_tag"] = by_tag
+
+        status_count = 0
+        by_status = dict(status_idx.get("by_status") or {})
+        for st, rows in list(by_status.items()):
+            age_days = self._status_age_limit_days(str(st), max_age_days, adaptive=adaptive)
+            compacted = self._compact_rows_by_age(list(rows or []), max_age_days=age_days, max_items=300)
+            if compacted:
+                by_status[st] = compacted
+                status_count += len(compacted)
+            else:
+                by_status.pop(st, None)
+        status_idx["by_status"] = by_status
+
+        self._write_json_atomic(self._thread_index_path(), thread_idx)
+        self._write_json_atomic(self._tag_index_path(), tag_idx)
+        self._write_json_atomic(self._status_index_path(), status_idx)
+        return {"thread_rows": t_count, "tag_rows": tag_count, "status_rows": status_count}
+
+    def get_index_snapshot(self) -> Dict[str, Any]:
+        tpath = self._thread_index_path()
+        g_missing = any(not os.path.exists(p) for p in [tpath, self._tag_index_path(), self._status_index_path()])
+        if g_missing:
+            self.rebuild_indexes()
+        thread_doc = self._read_json(tpath, {"by_thread_id": {}, "recent_open_threads": []})
+        if not isinstance(thread_doc, dict):
+            self.rebuild_indexes()
+            thread_doc = self._read_json(tpath, {"by_thread_id": {}, "recent_open_threads": []})
+        return {
+            "by_thread_id": thread_doc.get("by_thread_id", {}),
+            "recent_open_threads": thread_doc.get("recent_open_threads", []),
+            "by_tag": self._read_json(self._tag_index_path(), {"by_tag": {}}).get("by_tag", {}),
+            "by_status": self._read_json(self._status_index_path(), {"by_status": {}}).get("by_status", {}),
+        }
 
     def _iter_jsonl(self, session_id: str):
         path = self._path(session_id)
@@ -166,6 +372,23 @@ class ArtifactStore:
                     idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": item.get("timestamp")}
         with open(idx_path, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
+
+    def rebuild_indexes(self) -> None:
+        for name in os.listdir(self.root_dir):
+            if not name.endswith(".jsonl"):
+                continue
+            sid = name[:-6]
+            self._rebuild_index(sid)
+        self._write_json_atomic(self._thread_index_path(), {"by_thread_id": {}, "recent_open_threads": []})
+        self._write_json_atomic(self._tag_index_path(), {"by_tag": {}})
+        self._write_json_atomic(self._status_index_path(), {"by_status": {}})
+        for name in os.listdir(self.root_dir):
+            if not name.endswith(".jsonl"):
+                continue
+            sid = name[:-6]
+            for item in self._iter_jsonl(sid):
+                self._update_global_indexes(sid, item)
+        self.compact_global_indexes(max_age_days=180, adaptive=True)
 
     def get_last(self, session_id: str, contract_name: str) -> Optional[Dict[str, Any]]:
         sid = self._safe_session_id(session_id)
