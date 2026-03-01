@@ -14,6 +14,17 @@ except Exception:  # pragma: no cover
     fcntl = None
 
 from handlers.contracts.base import normalize_envelope
+from config import settings as runtime_settings
+
+try:
+    from executive.life_modeling import on_artifact_written
+except Exception:  # pragma: no cover
+    on_artifact_written = None
+
+try:
+    from executive.life_modeling.telemetry import Phase7Telemetry
+except Exception:  # pragma: no cover
+    Phase7Telemetry = None
 
 
 class ArtifactStore:
@@ -21,6 +32,12 @@ class ArtifactStore:
         self.root_dir = root_dir
         self._lock = threading.Lock()
         os.makedirs(self.root_dir, exist_ok=True)
+        self._telemetry = None
+        if Phase7Telemetry is not None:
+            try:
+                self._telemetry = Phase7Telemetry(path=str(getattr(runtime_settings, "PHASE7_TELEMETRY_PATH", "executive/index/phase7_telemetry.json")))
+            except Exception:
+                self._telemetry = None
 
     def _safe_session_id(self, session_id: str) -> str:
         sid = str(session_id or "default_user").strip() or "default_user"
@@ -34,6 +51,52 @@ class ArtifactStore:
     def _index_path(self, session_id: str) -> str:
         sid = self._safe_session_id(session_id)
         return os.path.join(self.root_dir, f"{sid}.index.json")
+
+
+    def _shard_enabled(self) -> bool:
+        return bool(getattr(runtime_settings, "ARTIFACT_STORE_SHARD_BY_DATE", False))
+
+    def _shard_dir(self) -> str:
+        name = str(getattr(runtime_settings, "ARTIFACT_STORE_SHARD_DIRNAME", "shards") or "shards")
+        p = os.path.join(self.root_dir, name)
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    def _path_for_timestamp(self, session_id: str, ts: Any | None) -> str:
+        sid = self._safe_session_id(session_id)
+        if not self._shard_enabled():
+            return self._path(sid)
+        day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        txt = str(ts or "").strip()
+        if txt:
+            try:
+                day = datetime.fromisoformat(txt.replace("Z", "+00:00")).strftime("%Y-%m-%d")
+            except Exception:
+                pass
+        return os.path.join(self._shard_dir(), f"{sid}.{day}.jsonl")
+
+    def _iter_session_paths(self, session_id: str) -> List[str]:
+        sid = self._safe_session_id(session_id)
+        paths: List[str] = []
+        primary = self._path(sid)
+        if os.path.exists(primary):
+            paths.append(primary)
+        shard_dir = self._shard_dir()
+        prefix = f"{sid}."
+        for name in sorted(os.listdir(shard_dir)):
+            if name.startswith(prefix) and name.endswith('.jsonl'):
+                paths.append(os.path.join(shard_dir, name))
+        return paths
+
+    def _record_shard_telemetry(self) -> None:
+        if self._telemetry is None:
+            return
+        try:
+            shard_dir = self._shard_dir()
+            count = len([n for n in os.listdir(shard_dir) if str(n).endswith('.jsonl')])
+            self._telemetry.record_shard_files(count)
+        except Exception:
+            return
 
     def _global_index_dir(self) -> str:
         p = os.path.join(self.root_dir, "index")
@@ -100,7 +163,7 @@ class ArtifactStore:
 
     def append(self, session_id: str, artifact: Dict[str, Any]) -> None:
         sid = self._safe_session_id(session_id)
-        path = self._path(sid)
+        path = self._path_for_timestamp(sid, artifact.get("timestamp") if isinstance(artifact, dict) else None)
         payload = normalize_envelope(dict(artifact or {}), session_id=sid)
         payload, was_redacted = self._redact_value(payload)
         if was_redacted:
@@ -115,10 +178,21 @@ class ArtifactStore:
                     offset = f.tell()
                     f.write(line + "\n")
                     f.flush()
-                self._update_index(sid, payload, offset)
+                if self._shard_enabled() and bool(getattr(runtime_settings, "ARTIFACT_STORE_MIRROR_PRIMARY_WHEN_SHARDED", False)):
+                    with open(self._path(sid), "a", encoding="utf-8") as pf:
+                        pf.write(line + "\n")
+                        pf.flush()
+                self._update_index(sid, payload, offset, source_path=path)
                 self._update_global_indexes(sid, payload)
+                if self._shard_enabled():
+                    self._record_shard_telemetry()
+            if on_artifact_written is not None:
+                try:
+                    on_artifact_written(str(payload.get("artifact_type") or payload.get("contract_name") or ""))
+                except Exception:
+                    pass
 
-    def _update_index(self, session_id: str, artifact: Dict[str, Any], offset: int) -> None:
+    def _update_index(self, session_id: str, artifact: Dict[str, Any], offset: int, source_path: str | None = None) -> None:
         idx_path = self._index_path(session_id)
         idx = {"session_id": session_id, "contracts": {}, "by_id": {}}
         if os.path.exists(idx_path):
@@ -132,7 +206,7 @@ class ArtifactStore:
         if cid:
             idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": artifact.get("timestamp")}
         if aid:
-            idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": artifact.get("timestamp")}
+            idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": artifact.get("timestamp"), "path": source_path or self._path(session_id)}
         tmp = idx_path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
@@ -330,62 +404,65 @@ class ArtifactStore:
         }
 
     def _iter_jsonl(self, session_id: str):
-        path = self._path(session_id)
-        if not os.path.exists(path):
-            return
-        with open(path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    yield normalize_envelope(json.loads(line), session_id=session_id)
-                except Exception:
-                    continue
+        for path in self._iter_session_paths(session_id):
+            if not os.path.exists(path):
+                continue
+            with open(path, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        yield normalize_envelope(json.loads(line), session_id=session_id)
+                    except Exception:
+                        continue
 
     def _rebuild_index(self, session_id: str) -> None:
-        path = self._path(session_id)
         idx_path = self._index_path(session_id)
-        if not os.path.exists(path):
+        paths = self._iter_session_paths(session_id)
+        if not paths:
             if os.path.exists(idx_path):
                 os.remove(idx_path)
             return
         idx = {"session_id": session_id, "contracts": {}, "by_id": {}}
-        with open(path, "r", encoding="utf-8") as f:
-            while True:
-                offset = f.tell()
-                line = f.readline()
-                if not line:
-                    break
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    item = normalize_envelope(json.loads(line), session_id=session_id)
-                except Exception:
-                    continue
-                cid = str(item.get("contract_name") or "")
-                aid = str(item.get("artifact_id") or "")
-                if cid:
-                    idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": item.get("timestamp")}
-                if aid:
-                    idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": item.get("timestamp")}
+        for path in paths:
+            with open(path, "r", encoding="utf-8") as f:
+                while True:
+                    offset = f.tell()
+                    line = f.readline()
+                    if not line:
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        item = normalize_envelope(json.loads(line), session_id=session_id)
+                    except Exception:
+                        continue
+                    cid = str(item.get("contract_name") or "")
+                    aid = str(item.get("artifact_id") or "")
+                    if cid:
+                        idx.setdefault("contracts", {})[cid] = {"artifact_id": aid, "timestamp": item.get("timestamp")}
+                    if aid:
+                        idx.setdefault("by_id", {})[aid] = {"contract_name": cid, "offset": offset, "timestamp": item.get("timestamp"), "path": path}
         with open(idx_path, "w", encoding="utf-8") as f:
             json.dump(idx, f, ensure_ascii=False, indent=2)
 
     def rebuild_indexes(self) -> None:
+        sids: set[str] = set()
         for name in os.listdir(self.root_dir):
-            if not name.endswith(".jsonl"):
-                continue
-            sid = name[:-6]
+            if name.endswith(".jsonl"):
+                sids.add(name[:-6])
+        shard_dir = self._shard_dir()
+        for name in os.listdir(shard_dir):
+            if name.endswith('.jsonl') and '.' in name:
+                sids.add(name.split('.', 1)[0])
+        for sid in sorted(sids):
             self._rebuild_index(sid)
         self._write_json_atomic(self._thread_index_path(), {"by_thread_id": {}, "recent_open_threads": []})
         self._write_json_atomic(self._tag_index_path(), {"by_tag": {}})
         self._write_json_atomic(self._status_index_path(), {"by_status": {}})
-        for name in os.listdir(self.root_dir):
-            if not name.endswith(".jsonl"):
-                continue
-            sid = name[:-6]
+        for sid in sorted(sids):
             for item in self._iter_jsonl(sid):
                 self._update_global_indexes(sid, item)
         self.compact_global_indexes(max_age_days=180, adaptive=True)
@@ -423,7 +500,7 @@ class ArtifactStore:
                     idx = json.loads(f.read())
                 rec = (idx.get("by_id") or {}).get(str(artifact_id))
                 if rec and rec.get("offset") is not None:
-                    with open(self._path(sid), "r", encoding="utf-8") as f:
+                    with open(str(rec.get("path") or self._path(sid)), "r", encoding="utf-8") as f:
                         f.seek(int(rec.get("offset")))
                         line = f.readline().strip()
                         if line:
