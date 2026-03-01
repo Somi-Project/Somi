@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from handlers.contracts.base import build_base
 
+try:
+    from executive.life_modeling import run_phase7_if_enabled
+except Exception:  # pragma: no cover
+    run_phase7_if_enabled = None
+
 PROFILE_PATH = os.path.join("config", "assistant_profile.json")
 PERSONA_PATH = os.path.join("config", "personalC.json")
 DEFAULT_PERSONA_KEY = "Name: Somi"
@@ -378,6 +383,11 @@ class HeartbeatEngine:
             )
 
         if kind == "heartbeat_tick":
+            if run_phase7_if_enabled is not None:
+                try:
+                    run_phase7_if_enabled(reason="heartbeat")
+                except Exception:
+                    pass
             proposals = [
                 {
                     "proposal": s["title"],
