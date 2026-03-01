@@ -672,6 +672,39 @@ def profile_view_to_markdown(payload: Dict[str, Any]) -> str:
     ])
 
 
+def validate_plan_revision_missing_original_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
+    p = dict(payload or {})
+    c = _content(p)
+    _require_known_fields(c, {"type", "artifact_id", "message", "requested_field", "examples", "no_autonomy"})
+    if str(c.get("type") or "") != "plan_revision_missing_original":
+        raise ValueError("plan_revision_missing_original.type required")
+    aid = str(c.get("artifact_id") or "")
+    if not aid.startswith("prm_"):
+        raise ValueError("plan_revision_missing_original.artifact_id prefix prm_ required")
+    if str(c.get("requested_field") or "") != "original_plan_id":
+        raise ValueError("plan_revision_missing_original.requested_field must be original_plan_id")
+    c["message"] = str(c.get("message") or "")[:500]
+    _ensure_list_of_str(c, "examples", max_len=5, item_max=80)
+    c["no_autonomy"] = True
+    return p
+
+
+def plan_revision_missing_original_to_markdown(payload: Dict[str, Any]) -> str:
+    c = validate_plan_revision_missing_original_strict(payload)["content"]
+    lines = [
+        "# Plan Revision Needs Context",
+        "",
+        c.get("message", "I need the original plan identifier before I can revise this."),
+        "",
+        "## Required field",
+        f"- {c.get('requested_field','original_plan_id')}",
+    ]
+    examples = list(c.get("examples") or [])
+    if examples:
+        lines += ["", "## Example values"] + [f"- {x}" for x in examples]
+    return "\n".join(lines).strip()
+
+
 STRICT_VALIDATORS = {
     "research_brief": validate_research_brief_strict,
     "doc_extract": validate_doc_extract_strict,
@@ -691,6 +724,7 @@ STRICT_VALIDATORS = {
     "heartbeat_tick": validate_heartbeat_tick_strict,
     "reminder_digest": validate_reminder_digest_strict,
     "profile_view": validate_profile_view_strict,
+    "plan_revision_missing_original": validate_plan_revision_missing_original_strict,
 }
 
 MARKDOWN_RENDERERS = {
@@ -707,6 +741,7 @@ MARKDOWN_RENDERERS = {
     "heartbeat_tick": heartbeat_tick_to_markdown,
     "reminder_digest": reminder_digest_to_markdown,
     "profile_view": profile_view_to_markdown,
+    "plan_revision_missing_original": plan_revision_missing_original_to_markdown,
 }
 
 
