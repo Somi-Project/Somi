@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-class Phase7Telemetry:
-    def __init__(self, path: str = "executive/index/phase7_telemetry.json"):
+class MontagueTelemetry:
+    def __init__(self, path: str = "executive/index/montague_context_telemetry.json"):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 

@@ -22,9 +22,9 @@ except Exception:  # pragma: no cover
     on_artifact_written = None
 
 try:
-    from executive.life_modeling.telemetry import Phase7Telemetry
+    from executive.life_modeling.telemetry import MontagueTelemetry
 except Exception:  # pragma: no cover
-    Phase7Telemetry = None
+    MontagueTelemetry = None
 
 
 class ArtifactStore:
@@ -33,9 +33,9 @@ class ArtifactStore:
         self._lock = threading.Lock()
         os.makedirs(self.root_dir, exist_ok=True)
         self._telemetry = None
-        if Phase7Telemetry is not None:
+        if MontagueTelemetry is not None:
             try:
-                self._telemetry = Phase7Telemetry(path=str(getattr(runtime_settings, "PHASE7_TELEMETRY_PATH", "executive/index/phase7_telemetry.json")))
+                self._telemetry = MontagueTelemetry(path=str(getattr(runtime_settings, "MONTAGUE_TELEMETRY_PATH", "executive/index/montague_context_telemetry.json")))
             except Exception:
                 self._telemetry = None
 

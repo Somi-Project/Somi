@@ -1,9 +1,9 @@
 from executive.strategic.planner import StrategicPlanner, PlannerConfig
-from executive.strategic.routing_adapter import detect_phase8_artifact_type, should_bypass_phase8
+from executive.strategic.routing_adapter import detect_capulet_artifact_type, should_bypass_capulet
 
 __all__ = [
     "StrategicPlanner",
     "PlannerConfig",
-    "detect_phase8_artifact_type",
-    "should_bypass_phase8",
+    "detect_capulet_artifact_type",
+    "should_bypass_capulet",
 ]

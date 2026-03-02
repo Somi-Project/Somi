@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config import settings
-from executive.life_modeling.telemetry import Phase7Telemetry
+from executive.life_modeling.telemetry import MontagueTelemetry
 
 
 class GoalLinkConfirmationQueue:
@@ -15,7 +15,7 @@ class GoalLinkConfirmationQueue:
     def __init__(self, path: str = "executive/index/goal_link_queue.json"):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.telemetry = Phase7Telemetry(path=str(getattr(settings, "PHASE7_TELEMETRY_PATH", "executive/index/phase7_telemetry.json")))
+        self.telemetry = MontagueTelemetry(path=str(getattr(settings, "MONTAGUE_TELEMETRY_PATH", "executive/index/montague_context_telemetry.json")))
 
     def _read(self) -> dict[str, Any]:
         if not self.path.exists():

@@ -57,7 +57,7 @@ from runtime.approval import ApprovalReceipt
 from runtime.controller import handle_turn
 from runtime.ticketing import ExecutionTicket
 from executive.istari_runtime import IstariProtocol
-from executive.life_modeling.artifact_store import ArtifactStore as Phase7ArtifactStore
+from executive.life_modeling.artifact_store import ArtifactStore as MontagueArtifactStore
 from executive.strategic import StrategicPlanner
 from executive.strategic.human_summary import render_human_summary
 from toolbox.loader import ToolLoader
@@ -206,7 +206,7 @@ class Agent:
         self.artifact_detector = ArtifactIntentDetector(threshold=float(ARTIFACT_INTENT_THRESHOLD))
         self.fact_distiller = FactDistiller()
         self.istari_protocol = IstariProtocol()
-        self.phase7_store = Phase7ArtifactStore()
+        self.montague_context_store = MontagueArtifactStore()
         self.strategic_planner = StrategicPlanner()
 
         self.use_memory3 = bool(USE_MEMORY3)
@@ -219,7 +219,7 @@ class Agent:
 
         self.turn_counter = 0
         self._perf_samples: list[dict[str, float | str | bool]] = []
-        self._phase8_context_cache: dict[str, Any] = {"fetched_at": 0.0, "payload": None}
+        self._capulet_context_cache: dict[str, Any] = {"fetched_at": 0.0, "payload": None}
         self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
         self.context_profile_cfg = dict((CHAT_CONTEXT_PROFILES or {}).get(self.context_profile, {}))
         self._load_mode_files()
@@ -293,13 +293,13 @@ class Agent:
             return parts[0].strip(" ?.!,"), parts[1].strip(" ?.!,")
         return "Option A", "Option B"
 
-    def _get_latest_phase7_context_pack(self, *, cache_ttl_seconds: float = 2.0) -> dict[str, Any]:
+    def _get_latest_montague_context_context_pack(self, *, cache_ttl_seconds: float = 2.0) -> dict[str, Any]:
         now = time.time()
-        cached = self._phase8_context_cache.get("payload")
-        fetched_at = float(self._phase8_context_cache.get("fetched_at") or 0.0)
+        cached = self._capulet_context_cache.get("payload")
+        fetched_at = float(self._capulet_context_cache.get("fetched_at") or 0.0)
         if isinstance(cached, dict) and (now - fetched_at) <= max(0.0, float(cache_ttl_seconds)):
             return cached
-        cp = self.phase7_store.read_latest("context_pack_v1") or {
+        cp = self.montague_context_store.read_latest("context_pack_v1") or {
             "artifact_type": "context_pack_v1",
             "projects": [],
             "confirmed_goals": [],
@@ -308,7 +308,7 @@ class Agent:
             "calendar_conflicts": [],
             "relevant_artifact_ids": [],
         }
-        self._phase8_context_cache = {"fetched_at": now, "payload": cp}
+        self._capulet_context_cache = {"fetched_at": now, "payload": cp}
         return cp
 
     def _ensure_async_clients_for_current_loop(self) -> None:
@@ -492,7 +492,8 @@ class Agent:
         tail = (m.group(1) or "").strip(" .")
         if not tail:
             return "User signaled previous answer mismatch; prioritize clarification and corrected intent.", ""
-        return f"User correction received: {tail}", tail
+        tail_norm = tail.lower()
+        return f"User correction received: {tail_norm}", tail_norm
 
 
     def _is_explicit_coding_intent(self, prompt: str) -> bool:
@@ -1195,7 +1196,7 @@ class Agent:
                 return f"Unable to prepare tool proposal safely: {e}"
 
         decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode})
-        phase8_requested = bool(decision.signals.get("phase8_artifact_type"))
+        capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
         read_only_fast_path = bool(decision.signals.get("read_only", False) and not toolbox_run)
 
@@ -1331,7 +1332,7 @@ class Agent:
                 logger.info("Artifact intent requested route upgrade: forcing websearch for research_brief")
 
         idx_snapshot = None
-        if ENABLE_NL_ARTIFACTS and not phase8_requested:
+        if ENABLE_NL_ARTIFACTS and not capulet_requested:
             try:
                 continuity_signals = {
                     "route": decision.route,
@@ -1352,7 +1353,7 @@ class Agent:
                 logger.debug(f"Continuity engine failed (non-fatal): {e}")
 
         active_persona_for_turn = {"temperature": self.temperature}
-        if not phase8_requested:
+        if not capulet_requested:
             try:
                 profile, active_persona_key, active_persona = self._refresh_profile_and_persona()
                 active_persona_for_turn = dict(active_persona or {})
@@ -1378,41 +1379,41 @@ class Agent:
             except Exception as e:
                 logger.debug(f"Heartbeat engine failed (non-fatal): {e}")
 
-        phase8_type = str(decision.signals.get("phase8_artifact_type") or "").strip()
-        if phase8_type:
+        capulet_type = str(decision.signals.get("capulet_artifact_type") or "").strip()
+        if capulet_type:
             try:
-                cp = self._get_latest_phase7_context_pack()
+                cp = self._get_latest_montague_context_context_pack()
                 allowed_ids = [str(x) for x in list(cp.get("relevant_artifact_ids") or [])[:12] if str(x)]
                 allowed_set = set(allowed_ids)
                 exists_fn = lambda aid: str(aid) in allowed_set
                 plan_id = ""
-                if phase8_type == "plan_revision":
+                if capulet_type == "plan_revision":
                     prev_plan = self.artifact_store.get_last(active_user_id, "plan") or {}
                     plan_id = str(prev_plan.get("artifact_id") or "")
                 option_a, option_b = self._extract_tradeoff_options(routing_prompt)
-                phase8_artifact = self.strategic_planner.plan(
+                capulet_artifact = self.strategic_planner.plan(
                     user_text=routing_prompt,
                     context_pack_v1=cp,
                     allowed_artifact_ids=allowed_ids,
                     exists_fn=exists_fn,
-                    artifact_type=phase8_type,
+                    artifact_type=capulet_type,
                     original_plan_id=plan_id,
                     option_a=option_a,
                     option_b=option_b,
                 )
                 envelope = {
-                    "contract_name": str(phase8_artifact.get("type") or phase8_type),
-                    "artifact_type": str(phase8_artifact.get("type") or phase8_type),
-                    "content": phase8_artifact,
+                    "contract_name": str(capulet_artifact.get("type") or capulet_type),
+                    "artifact_type": str(capulet_artifact.get("type") or capulet_type),
+                    "content": capulet_artifact,
                     "status": "unknown",
-                    "tags": suggest_tags(user_text=routing_prompt, artifact_type=str(phase8_artifact.get("type") or phase8_type)),
+                    "tags": suggest_tags(user_text=routing_prompt, artifact_type=str(capulet_artifact.get("type") or capulet_type)),
                     "thread_id": derive_thread_id(routing_prompt),
-                    "trigger_reason": {"explicit_request": True, "matched_phrases": ["phase8"], "structural_signals": ["routing_signal"]},
+                    "trigger_reason": {"explicit_request": True, "matched_phrases": ["capulet"], "structural_signals": ["routing_signal"]},
                 }
                 self.artifact_store.append(active_user_id, envelope)
-                payload = json.dumps(phase8_artifact, ensure_ascii=False)
+                payload = json.dumps(capulet_artifact, ensure_ascii=False)
                 if bool(STRATEGIC_HUMAN_SUMMARY_ENABLED):
-                    summary = render_human_summary(phase8_artifact)
+                    summary = render_human_summary(capulet_artifact)
                     display_text = payload + "\n\n" + summary
                 else:
                     display_text = payload
@@ -1421,7 +1422,7 @@ class Agent:
                 self._push_history_for(active_user_id, prompt, payload)
                 return display_text
             except Exception as e:
-                logger.warning(f"Phase8 strategic planning failed; continuing standard path: {type(e).__name__}: {e}")
+                logger.warning(f"Capulet strategic planning failed; continuing standard path: {type(e).__name__}: {e}")
 
         if decision.route == "command":
             cmd = prompt_lower.strip()

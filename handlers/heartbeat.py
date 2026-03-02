@@ -7,11 +7,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from handlers.contracts.base import build_base
+from config import settings
 
 try:
-    from executive.life_modeling import run_phase7_if_enabled
+    from executive.life_modeling import run_montague_context_if_enabled
 except Exception:  # pragma: no cover
-    run_phase7_if_enabled = None
+    run_montague_context_if_enabled = None
 
 PROFILE_PATH = os.path.join("config", "assistant_profile.json")
 PERSONA_PATH = os.path.join("config", "personalC.json")
@@ -269,7 +270,8 @@ class HeartbeatEngine:
         first_interaction_of_day: bool,
     ) -> Optional[Dict[str, Any]]:
         kind = _detect_request_kind(user_text)
-        if kind is None and bool(profile.get("brief_first_interaction_of_day")) and int(profile.get("proactivity_level") or 0) >= 2 and first_interaction_of_day:
+        auto_proactive_allowed = bool(getattr(settings, "PROACTIVITY_ENABLED", True)) and bool(getattr(settings, "PROACTIVITY_ALLOW_AUTOMATIC_MESSAGES", True))
+        if kind is None and auto_proactive_allowed and bool(profile.get("brief_first_interaction_of_day")) and int(profile.get("proactivity_level") or 0) >= 2 and first_interaction_of_day:
             if str(profile.get("last_brief_date") or "") != _today_iso() and str(route or "") in {"llm_only", "local_memory_intent"}:
                 kind = "daily_brief"
 
@@ -377,15 +379,15 @@ class HeartbeatEngine:
                     "suggestions": suggestions[:7],
                     "risk_notes": ["No autonomous execution.", "Phase 5 approval remains required."],
                     "privacy": {"mode": "strict" if strict else "standard", "redactions_applied": bool(redactions_applied)},
-                    "guardrails": {"no_autonomy": True, "phase5_required_for_execution": True},
+                    "guardrails": {"no_autonomy": True, "duel_approval_required": True},
                     "no_autonomy": True,
                 },
             )
 
         if kind == "heartbeat_tick":
-            if run_phase7_if_enabled is not None:
+            if run_montague_context_if_enabled is not None:
                 try:
-                    run_phase7_if_enabled(reason="heartbeat")
+                    run_montague_context_if_enabled(reason="heartbeat")
                 except Exception:
                     pass
             proposals = [
@@ -413,7 +415,7 @@ class HeartbeatEngine:
                     },
                     "propose": proposals[:7],
                     "privacy": {"mode": "strict" if strict else "standard", "redactions_applied": bool(redactions_applied)},
-                    "guardrails": {"no_autonomy": True, "phase5_required_for_execution": True},
+                    "guardrails": {"no_autonomy": True, "duel_approval_required": True},
                     "no_autonomy": True,
                 },
             )

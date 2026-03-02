@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
-from executive.strategic.routing_adapter import detect_phase8_artifact_type, should_bypass_phase8
+from executive.strategic.routing_adapter import detect_capulet_artifact_type, should_bypass_capulet
 from handlers.websearch_tools.conversion import parse_conversion_request
 
 
@@ -197,15 +197,15 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
     if parse_conversion_request(p) is not None:
         return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion", signals={"requires_execution": False, "read_only": True})
 
-    if not should_bypass_phase8(pl):
-        phase8_type = detect_phase8_artifact_type(p)
-        if phase8_type:
+    if not should_bypass_capulet(pl):
+        capulet_type = detect_capulet_artifact_type(p)
+        if capulet_type:
             return RouteDecision(
                 route="llm_only",
                 tool_veto=True,
-                reason="phase8_strategic",
+                reason="capulet_strategic",
                 signals={
-                    "phase8_artifact_type": phase8_type,
+                    "capulet_artifact_type": capulet_type,
                     "requires_execution": False,
                     "read_only": True,
                 },

@@ -130,7 +130,7 @@ def validate_artifact_references(data: dict[str, Any], allowed_ids: set[str], ex
     return errs
 
 
-def validate_phase8_artifact(schema_name: str, data: dict[str, Any], *, allowed_ids: set[str], exists_fn: Callable[[str], bool]) -> tuple[bool, list[str]]:
+def validate_capulet_artifact(schema_name: str, data: dict[str, Any], *, allowed_ids: set[str], exists_fn: Callable[[str], bool]) -> tuple[bool, list[str]]:
     mapping = {
         "strategic_analysis": validate_strategic_analysis,
         "tradeoff_evaluation": validate_tradeoff_evaluation,

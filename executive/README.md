@@ -71,3 +71,23 @@ This folder contains Somi's **execution governance layer**: proposal/approval co
 - Keep one-artifact-per-turn behavior in protocol handlers.
 - Avoid introducing LLM-dependent checks in enforcement or token validation paths.
 - Add tests for each new capability/command pattern (`tests/test_istari_guardrails.py`, `tests/test_istari_protocol.py`).
+
+
+## Naming migration (Romeo & Juliet)
+
+Numbered phase labels were removed from active executive/heartbeat flows:
+
+- `montague_context` replaces old life-modeling phase naming.
+- `capulet_strategy` replaces old strategic routing phase naming.
+- `duel_approval_required` replaces old execution-approval phase guardrail key.
+
+### Manual debugging tips
+
+- For context ingestion issues, inspect `executive/life_modeling/*` and check `MONTAGUE_*` settings values in `config/settings.py`.
+- For strategic routing issues, inspect `executive/strategic/routing_adapter.py` and `handlers/routing.py` for `capulet_artifact_type` signal behavior.
+- For execution guardrails, inspect contract schema normalization in `handlers/contracts/schemas.py` and ensure `duel_approval_required` is present where execution can be proposed.
+
+
+### Proactivity brief accounting hook
+
+When integrating a final brief dispatcher, call `SignalRouter.mark_brief_delivered(now, timezone, consumed_candidates=...)` after a brief is actually sent. This finalizes reserved `include_in_next_brief` candidate slots and keeps daily message accounting consistent.

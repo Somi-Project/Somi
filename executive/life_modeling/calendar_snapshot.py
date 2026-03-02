@@ -120,16 +120,16 @@ class MsGraphCalendarProvider:
 
 
 def get_calendar_provider(settings_module: Any) -> Any:
-    mode = str(getattr(settings_module, "PHASE7_CALENDAR_PROVIDER", "null")).strip().lower()
+    mode = str(getattr(settings_module, "MONTAGUE_CALENDAR_PROVIDER", "null")).strip().lower()
     if mode == "json":
-        return JsonCalendarProvider(path=str(getattr(settings_module, "PHASE7_CALENDAR_JSON_PATH", "sessions/calendar/events.json")))
+        return JsonCalendarProvider(path=str(getattr(settings_module, "MONTAGUE_CALENDAR_JSON_PATH", "sessions/calendar/events.json")))
     if mode == "google":
         return GoogleCalendarProvider(
-            access_token=str(getattr(settings_module, "PHASE7_GOOGLE_CALENDAR_ACCESS_TOKEN", "")),
-            calendar_id=str(getattr(settings_module, "PHASE7_GOOGLE_CALENDAR_ID", "primary")),
+            access_token=str(getattr(settings_module, "MONTAGUE_GOOGLE_CALENDAR_ACCESS_TOKEN", "")),
+            calendar_id=str(getattr(settings_module, "MONTAGUE_GOOGLE_CALENDAR_ID", "primary")),
         )
     if mode in {"msgraph", "microsoft"}:
-        return MsGraphCalendarProvider(access_token=str(getattr(settings_module, "PHASE7_MSGRAPH_ACCESS_TOKEN", "")))
+        return MsGraphCalendarProvider(access_token=str(getattr(settings_module, "MONTAGUE_MSGRAPH_ACCESS_TOKEN", "")))
     return NullCalendarProvider()
 
 
