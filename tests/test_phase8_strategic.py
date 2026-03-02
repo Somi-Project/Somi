@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from executive.strategic.json_contract import extract_json_block
 from executive.strategic.planner import StrategicPlanner
-from executive.strategic.routing_adapter import detect_phase8_artifact_type
-from executive.strategic.validators import validate_phase8_artifact
+from executive.strategic.routing_adapter import detect_capulet_artifact_type
+from executive.strategic.validators import validate_capulet_artifact
 from executive.strategic.human_summary import render_human_summary
 from executive.strategic.tradeoffs import compute_scores
 from handlers.contracts.orchestrator import validate_and_render
@@ -141,14 +141,14 @@ def test_tradeoff_scores_deterministic():
 
 
 def test_routing_does_not_intercept_execution_phrases():
-    assert detect_phase8_artifact_type("Do it") is None
-    assert detect_phase8_artifact_type("Apply this") is None
-    assert detect_phase8_artifact_type("Run now") is None
+    assert detect_capulet_artifact_type("Do it") is None
+    assert detect_capulet_artifact_type("Apply this") is None
+    assert detect_capulet_artifact_type("Run now") is None
 
 
 def test_routing_does_not_false_match_substrings():
-    assert detect_phase8_artifact_type("This appliance strategy is fine") == "strategic_analysis"
-    assert detect_phase8_artifact_type("Please align runtime strategy") == "strategic_analysis"
+    assert detect_capulet_artifact_type("This appliance strategy is fine") == "strategic_analysis"
+    assert detect_capulet_artifact_type("Please align runtime strategy") == "strategic_analysis"
 
 
 def test_extract_json_block_markdown():
@@ -157,14 +157,14 @@ def test_extract_json_block_markdown():
 
 
 def test_unsupported_schema_returns_errors_not_keyerror():
-    ok, errs = validate_phase8_artifact("unknown_schema", {}, allowed_ids=set(), exists_fn=lambda _x: True)
+    ok, errs = validate_capulet_artifact("unknown_schema", {}, allowed_ids=set(), exists_fn=lambda _x: True)
     assert ok is False
     assert any("unsupported_schema" in e for e in errs)
 
 
 def test_routing_bypass_expanded_vocabulary():
-    assert detect_phase8_artifact_type("execute this") is None
-    assert detect_phase8_artifact_type("please proceed now") is None
+    assert detect_capulet_artifact_type("execute this") is None
+    assert detect_capulet_artifact_type("please proceed now") is None
 
 
 def test_plan_revision_missing_original_template():
@@ -183,7 +183,7 @@ def test_plan_revision_missing_original_template():
 
 
 def test_plan_revision_missing_original_validator():
-    ok, errs = validate_phase8_artifact(
+    ok, errs = validate_capulet_artifact(
         "plan_revision_missing_original",
         {
             "type": "plan_revision_missing_original",

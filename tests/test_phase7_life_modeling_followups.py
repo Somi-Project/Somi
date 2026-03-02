@@ -129,10 +129,10 @@ def test_bootstrap_relaxation_mode_switches_min_items(monkeypatch):
     from executive.life_modeling import LifeModelingRunner
     import executive.life_modeling as lm
 
-    monkeypatch.setattr(lm.settings, "PHASE7_BOOTSTRAP_RELAXATION_ENABLED", True, raising=False)
-    monkeypatch.setattr(lm.settings, "PHASE7_BOOTSTRAP_RELAXATION_ITEM_THRESHOLD", 6, raising=False)
-    monkeypatch.setattr(lm.settings, "PHASE7_BOOTSTRAP_RELAXED_MIN_ITEMS_PER_PROJECT", 1, raising=False)
-    monkeypatch.setattr(lm.settings, "PHASE7_MIN_ITEMS_PER_PROJECT", 2, raising=False)
+    monkeypatch.setattr(lm.settings, "MONTAGUE_BOOTSTRAP_RELAXATION_ENABLED", True, raising=False)
+    monkeypatch.setattr(lm.settings, "MONTAGUE_BOOTSTRAP_RELAXATION_ITEM_THRESHOLD", 6, raising=False)
+    monkeypatch.setattr(lm.settings, "MONTAGUE_BOOTSTRAP_RELAXED_MIN_ITEMS_PER_PROJECT", 1, raising=False)
+    monkeypatch.setattr(lm.settings, "MONTAGUE_MIN_ITEMS_PER_PROJECT", 2, raising=False)
 
     runner = LifeModelingRunner(artifacts_dir=str(Path('/tmp/nonexistent')))
     eff_small, used_small = runner._effective_min_items_per_project(3)
@@ -177,7 +177,7 @@ def test_tail_reader_uses_bounded_bytes(tmp_path, monkeypatch):
         rows.append({"artifact_id": f"a{i}", "artifact_type": "task_state", "timestamp": _iso(0), "content": {"tasks": [{"task_id": f"t{i}", "title": f"Task {i}", "status": "open"}]}})
     f.write_text("\n".join(json.dumps(x) for x in rows) + "\n", encoding="utf-8")
 
-    monkeypatch.setattr(lm.settings, "PHASE7_JSONL_TAIL_READ_BYTES", 8192, raising=False)
+    monkeypatch.setattr(lm.settings, "MONTAGUE_JSONL_TAIL_READ_BYTES", 8192, raising=False)
     runner = lm.LifeModelingRunner(artifacts_dir=str(art))
     out = runner._read_recent_jsonl_rows(f, max_rows=10)
     assert len(out) <= 10

@@ -571,7 +571,7 @@ def validate_daily_brief_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     privacy = c.get("privacy") if isinstance(c.get("privacy"), dict) else {}
     c["privacy"] = {"mode": "strict" if str(privacy.get("mode") or "strict") == "strict" else "standard", "redactions_applied": bool(privacy.get("redactions_applied", False))}
     guardrails = c.get("guardrails") if isinstance(c.get("guardrails"), dict) else {}
-    c["guardrails"] = {"no_autonomy": True, "phase5_required_for_execution": bool(guardrails.get("phase5_required_for_execution", True))}
+    c["guardrails"] = {"no_autonomy": True, "duel_approval_required": bool(guardrails.get("duel_approval_required", True))}
     c["no_autonomy"] = True
     return p
 
@@ -597,7 +597,7 @@ def validate_heartbeat_tick_strict(payload: Dict[str, Any]) -> Dict[str, Any]:
     privacy = c.get("privacy") if isinstance(c.get("privacy"), dict) else {}
     c["privacy"] = {"mode": "strict" if str(privacy.get("mode") or "strict") == "strict" else "standard", "redactions_applied": bool(privacy.get("redactions_applied", False))}
     guardrails = c.get("guardrails") if isinstance(c.get("guardrails"), dict) else {}
-    c["guardrails"] = {"no_autonomy": True, "phase5_required_for_execution": bool(guardrails.get("phase5_required_for_execution", True))}
+    c["guardrails"] = {"no_autonomy": True, "duel_approval_required": bool(guardrails.get("duel_approval_required", True))}
     c["no_autonomy"] = True
     return p
 

@@ -22,8 +22,8 @@ def _iso(days: int) -> str:
 
 
 def test_calendar_provider_factory_modes():
-    s1 = SimpleNamespace(PHASE7_CALENDAR_PROVIDER="google", PHASE7_GOOGLE_CALENDAR_ACCESS_TOKEN="", PHASE7_GOOGLE_CALENDAR_ID="primary")
-    s2 = SimpleNamespace(PHASE7_CALENDAR_PROVIDER="msgraph", PHASE7_MSGRAPH_ACCESS_TOKEN="")
+    s1 = SimpleNamespace(MONTAGUE_CALENDAR_PROVIDER="google", MONTAGUE_GOOGLE_CALENDAR_ACCESS_TOKEN="", MONTAGUE_GOOGLE_CALENDAR_ID="primary")
+    s2 = SimpleNamespace(MONTAGUE_CALENDAR_PROVIDER="msgraph", MONTAGUE_MSGRAPH_ACCESS_TOKEN="")
     p1 = get_calendar_provider(s1)
     p2 = get_calendar_provider(s2)
     assert isinstance(p1, GoogleCalendarProvider)
@@ -118,7 +118,7 @@ def test_artifact_store_sharding_mirror_primary(tmp_path, monkeypatch):
 def test_queue_telemetry_records_depth_and_latency(tmp_path, monkeypatch):
     import executive.life_modeling.confirmation_queue as cq
 
-    monkeypatch.setattr(cq.settings, "PHASE7_TELEMETRY_PATH", str(tmp_path / "telemetry.json"), raising=False)
+    monkeypatch.setattr(cq.settings, "MONTAGUE_TELEMETRY_PATH", str(tmp_path / "telemetry.json"), raising=False)
     q = cq.GoalLinkConfirmationQueue(path=str(tmp_path / "queue.json"))
     q.enqueue([{"proposal_id": "glp_tele", "goal_id": "goal_1", "project_id": "proj_1"}])
     assert q.resolve("glp_tele", approved=True) is True
@@ -135,7 +135,7 @@ def test_shard_telemetry_records_file_growth(tmp_path, monkeypatch):
         ARTIFACT_STORE_SHARD_BY_DATE=True,
         ARTIFACT_STORE_SHARD_DIRNAME="shards",
         ARTIFACT_STORE_MIRROR_PRIMARY_WHEN_SHARDED=False,
-        PHASE7_TELEMETRY_PATH=str(tmp_path / "telemetry.json"),
+        MONTAGUE_TELEMETRY_PATH=str(tmp_path / "telemetry.json"),
     ))
 
     st = store_mod.ArtifactStore(root_dir=str(tmp_path / "artifacts"))

@@ -26,8 +26,8 @@ class LifeModelingRunner:
     def __init__(self, artifacts_dir: str = "sessions/artifacts"):
         self.indexer = Indexer(artifacts_dir=artifacts_dir)
         self.store = ArtifactStore()
-        self._debounce_path = Path("executive/index/phase7_debounce.json")
-        self.confirmation_queue = GoalLinkConfirmationQueue(path=str(getattr(settings, "PHASE7_GOAL_LINK_QUEUE_PATH", "executive/index/goal_link_queue.json")))
+        self._debounce_path = Path("executive/index/montague_context_debounce.json")
+        self.confirmation_queue = GoalLinkConfirmationQueue(path=str(getattr(settings, "MONTAGUE_GOAL_LINK_QUEUE_PATH", "executive/index/goal_link_queue.json")))
 
     def should_run(self, *, debounce_seconds: int = 5) -> bool:
         now = datetime.now(timezone.utc)
@@ -45,36 +45,36 @@ class LifeModelingRunner:
         self._debounce_path.write_text(json.dumps({"last_run_at": datetime.now(timezone.utc).isoformat()}), encoding="utf-8")
 
     def _effective_min_items_per_project(self, item_count: int) -> tuple[int, bool]:
-        base = int(getattr(settings, "PHASE7_MIN_ITEMS_PER_PROJECT", 2))
-        enabled = bool(getattr(settings, "PHASE7_BOOTSTRAP_RELAXATION_ENABLED", True))
+        base = int(getattr(settings, "MONTAGUE_MIN_ITEMS_PER_PROJECT", 2))
+        enabled = bool(getattr(settings, "MONTAGUE_BOOTSTRAP_RELAXATION_ENABLED", True))
         if not enabled:
             return base, False
-        threshold = int(getattr(settings, "PHASE7_BOOTSTRAP_RELAXATION_ITEM_THRESHOLD", 6))
-        relaxed = int(getattr(settings, "PHASE7_BOOTSTRAP_RELAXED_MIN_ITEMS_PER_PROJECT", 1))
+        threshold = int(getattr(settings, "MONTAGUE_BOOTSTRAP_RELAXATION_ITEM_THRESHOLD", 6))
+        relaxed = int(getattr(settings, "MONTAGUE_BOOTSTRAP_RELAXED_MIN_ITEMS_PER_PROJECT", 1))
         if item_count <= max(1, threshold):
             return max(1, relaxed), True
         return base, False
 
     def run(self) -> dict[str, Any]:
-        if not bool(getattr(settings, "PHASE7_ENABLED", True)):
-            return {"phase7": "disabled"}
+        if not bool(getattr(settings, "MONTAGUE_ENABLED", True)):
+            return {"montague_context": "disabled"}
 
         try:
             self.indexer.build_or_update_index()
-            items = self._load_normalized_items(days=int(getattr(settings, "PHASE7_FAST_WINDOW_DAYS", 30)))
+            items = self._load_normalized_items(days=int(getattr(settings, "MONTAGUE_FAST_WINDOW_DAYS", 30)))
             prev_clusters = self._latest_clusters()
             min_items_per_project, relaxation_used = self._effective_min_items_per_project(len(items))
             clusters, _state = cluster_projects(
                 items,
                 prev_clusters=prev_clusters,
-                max_active_projects=int(getattr(settings, "PHASE7_MAX_ACTIVE_PROJECTS", 20)),
-                assign_threshold=float(getattr(settings, "PHASE7_CLUSTER_ASSIGN_THRESHOLD", 0.42)),
-                switch_margin=float(getattr(settings, "PHASE7_CLUSTER_SWITCH_MARGIN", 0.12)),
-                switch_cooldown_hours=int(getattr(settings, "PHASE7_CLUSTER_SWITCH_COOLDOWN_HOURS", 72)),
+                max_active_projects=int(getattr(settings, "MONTAGUE_MAX_ACTIVE_PROJECTS", 20)),
+                assign_threshold=float(getattr(settings, "MONTAGUE_CLUSTER_ASSIGN_THRESHOLD", 0.42)),
+                switch_margin=float(getattr(settings, "MONTAGUE_CLUSTER_SWITCH_MARGIN", 0.12)),
+                switch_cooldown_hours=int(getattr(settings, "MONTAGUE_CLUSTER_SWITCH_COOLDOWN_HOURS", 72)),
                 min_items_per_project=min_items_per_project,
-                max_evidence_per_link=int(getattr(settings, "PHASE7_MAX_EVIDENCE_PER_LINK", 5)),
-                weights=dict(getattr(settings, "PHASE7_CLUSTER_WEIGHTS", {"tag": 0.55, "co": 0.3, "recency": 0.15})),
-                recency_decay_days=int(getattr(settings, "PHASE7_RECENCY_DECAY_DAYS", 21)),
+                max_evidence_per_link=int(getattr(settings, "MONTAGUE_MAX_EVIDENCE_PER_LINK", 5)),
+                weights=dict(getattr(settings, "MONTAGUE_CLUSTER_WEIGHTS", {"tag": 0.55, "co": 0.3, "recency": 0.15})),
+                recency_decay_days=int(getattr(settings, "MONTAGUE_RECENCY_DECAY_DAYS", 21)),
             )
             for c in clusters:
                 self.store.write("project_cluster", c)
@@ -96,15 +96,15 @@ class LifeModelingRunner:
             cal_provider = self._calendar_provider()
             cal = get_snapshot(
                 datetime.now(timezone.utc),
-                datetime.now(timezone.utc) + timedelta(days=int(getattr(settings, "PHASE7_CALENDAR_HORIZON_DAYS", 7))),
+                datetime.now(timezone.utc) + timedelta(days=int(getattr(settings, "MONTAGUE_CALENDAR_HORIZON_DAYS", 7))),
                 provider=cal_provider,
-                cache_path=str(getattr(settings, "PHASE7_CALENDAR_CACHE_PATH", "executive/index/calendar_cache.json")),
+                cache_path=str(getattr(settings, "MONTAGUE_CALENDAR_CACHE_PATH", "executive/index/calendar_cache.json")),
             )
             self.store.write("calendar_snapshot", cal)
 
             hb = build_heartbeat_v2(items, clusters, linked_goals, patterns, cal)
-            mode = str(getattr(settings, "PHASE7_ENRICHMENT_MODE", "lite"))
-            if not bool(getattr(settings, "PHASE7_ENRICHMENT_VALIDATE_FACT_LOCK", True)) and mode == "full":
+            mode = str(getattr(settings, "MONTAGUE_ENRICHMENT_MODE", "lite"))
+            if not bool(getattr(settings, "MONTAGUE_ENRICHMENT_VALIDATE_FACT_LOCK", True)) and mode == "full":
                 mode = "lite"
             hb_summary, ok = enrich_summary(hb.get("summary") or "", hb, mode=mode)
             hb["summary"] = hb_summary
@@ -125,7 +125,7 @@ class LifeModelingRunner:
                 "effective_min_items_per_project": int(min_items_per_project),
             }
         except Exception as exc:
-            logger.exception("Phase7 run failed: %s", exc)
+            logger.exception("Montague run failed: %s", exc)
             return {"error": str(exc)}
 
     def _latest_clusters(self) -> list[dict[str, Any]]:
@@ -142,7 +142,7 @@ class LifeModelingRunner:
 
     def _read_recent_jsonl_rows(self, path: Path, *, max_rows: int = 50) -> list[dict[str, Any]]:
         max_rows = max(1, int(max_rows))
-        chunk_size = int(getattr(settings, "PHASE7_JSONL_TAIL_READ_BYTES", 262_144))
+        chunk_size = int(getattr(settings, "MONTAGUE_JSONL_TAIL_READ_BYTES", 262_144))
         chunk_size = max(8_192, chunk_size)
         try:
             with path.open("rb") as f:
@@ -170,13 +170,13 @@ class LifeModelingRunner:
 
     def _load_normalized_items(self, *, days: int) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
-        compat_mode = str(getattr(settings, "PHASE7_INPUT_COMPAT_MODE", "lenient"))
+        compat_mode = str(getattr(settings, "MONTAGUE_INPUT_COMPAT_MODE", "lenient"))
         strict = compat_mode == "strict"
         for meta in self.indexer.iter_recent_artifacts(days, types=None):
             path = Path(str(meta.get("path") or ""))
             if not path.exists():
                 continue
-            for raw in self._read_recent_jsonl_rows(path, max_rows=int(getattr(settings, "PHASE7_MAX_ROWS_PER_FILE", 50))):
+            for raw in self._read_recent_jsonl_rows(path, max_rows=int(getattr(settings, "MONTAGUE_MAX_ROWS_PER_FILE", 50))):
                 try:
                     normalized = normalize_artifact(raw, strict=strict)
                     if normalized is not None:
@@ -190,18 +190,18 @@ class LifeModelingRunner:
 _runner = LifeModelingRunner()
 
 
-def run_phase7_if_enabled(reason: str = "manual") -> dict[str, Any]:
-    if not bool(getattr(settings, "PHASE7_ENABLED", True)):
-        return {"phase7": "disabled", "reason": reason}
+def run_montague_context_if_enabled(reason: str = "manual") -> dict[str, Any]:
+    if not bool(getattr(settings, "MONTAGUE_ENABLED", True)):
+        return {"montague_context": "disabled", "reason": reason}
     if not _runner.should_run():
-        return {"phase7": "debounced", "reason": reason}
+        return {"montague_context": "debounced", "reason": reason}
     return _runner.run()
 
 
 def on_artifact_written(artifact_type: str) -> dict[str, Any] | None:
     at = str(artifact_type or "")
     if "task" in at or "thread" in at:
-        return run_phase7_if_enabled(reason=f"artifact:{at}")
+        return run_montague_context_if_enabled(reason=f"artifact:{at}")
     return None
 
 

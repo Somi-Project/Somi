@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any, Callable
 
-from executive.strategic.validators import validate_phase8_artifact
+from executive.strategic.validators import validate_capulet_artifact
 
 
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
@@ -28,7 +28,7 @@ def extract_json_block(text: str) -> dict[str, Any]:
 
 
 def validate_schema(schema_name: str, data: dict[str, Any], allowed_ids: set[str], exists_fn: Callable[[str], bool]) -> tuple[bool, list[str]]:
-    return validate_phase8_artifact(schema_name, data, allowed_ids=allowed_ids, exists_fn=exists_fn)
+    return validate_capulet_artifact(schema_name, data, allowed_ids=allowed_ids, exists_fn=exists_fn)
 
 
 def retry_with_repair(repair_fn: Callable[[str, str], str], prompt: str, bad_output: str, errors: list[str]) -> dict[str, Any]:
@@ -41,11 +41,11 @@ def retry_with_repair(repair_fn: Callable[[str, str], str], prompt: str, bad_out
 
 
 def validate_artifact_references(data: dict[str, Any], allowed_ids: set[str], exists_fn: Callable[[str], bool]) -> tuple[bool, list[str]]:
-    ok, errs = validate_phase8_artifact(str(data.get("type") or ""), data, allowed_ids=allowed_ids, exists_fn=exists_fn)
+    ok, errs = validate_capulet_artifact(str(data.get("type") or ""), data, allowed_ids=allowed_ids, exists_fn=exists_fn)
     ref_errs = [e for e in errs if e.startswith("artifact_")]
     return (len(ref_errs) == 0, ref_errs)
 
 
 def scan_for_forbidden_keys(data: dict[str, Any]) -> list[str]:
-    ok, errs = validate_phase8_artifact(str(data.get("type") or ""), data, allowed_ids=set(), exists_fn=lambda _x: True)
+    ok, errs = validate_capulet_artifact(str(data.get("type") or ""), data, allowed_ids=set(), exists_fn=lambda _x: True)
     return [e for e in errs if e.startswith("forbidden_")]

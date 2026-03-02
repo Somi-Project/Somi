@@ -145,6 +145,33 @@ def test_first_interaction_of_day_one_shot_behavior():
     assert art2 is None
 
 
+
+
+def test_auto_brief_respects_global_proactivity_toggle(monkeypatch):
+    from handlers import heartbeat as hb
+
+    monkeypatch.setattr(hb.settings, "PROACTIVITY_ENABLED", False)
+    engine = HeartbeatEngine()
+    profile = {
+        "active_persona_key": "Name: Somi",
+        "proactivity_level": 3,
+        "focus_domains": [],
+        "privacy_mode": "strict",
+        "brief_first_interaction_of_day": True,
+        "last_brief_date": None,
+        "last_heartbeat_at": None,
+    }
+    art = engine.choose_artifact(
+        user_text="hello",
+        route="llm_only",
+        idx_snapshot={"recent_open_threads": [], "by_thread_id": {}},
+        profile=profile,
+        active_persona_key="Name: Somi",
+        persona={"role": "virtual companion"},
+        first_interaction_of_day=True,
+    )
+    assert art is None
+
 def test_never_emits_phase5_proposal_action_automatically():
     engine = HeartbeatEngine()
     profile = {
