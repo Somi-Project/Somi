@@ -1387,6 +1387,10 @@ Raw content to clean:
             if hist_res:
                 self.tool_context_store.set(active_user_id, "finance", routing_prompt, hist_res)
                 hist_text = self.websearch.format_results(hist_res)
+
+                # Apply naturalize here too — this is the early path that was bypassing cleanup
+                hist_text = await self._naturalize_search_output(hist_text, prompt)
+
                 self._push_history_for(active_user_id, prompt, hist_text)
                 return hist_text
         should_search = decision.route == "websearch" or force_websearch_for_research or force_followup_search
