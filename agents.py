@@ -39,6 +39,7 @@ from config.settings import (
     ARTIFACT_DEGRADE_NOTICE,
     ARTIFACT_PLAN_REVISION_MAX_AGE_MINUTES,
     STRATEGIC_HUMAN_SUMMARY_ENABLED,
+    ENABLE_SMART_FOLLOWUPS,
 )
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
@@ -180,6 +181,7 @@ class Agent:
         self.wordgame = WordGameHandler(game_file=self.game_file)
         self.tool_context_store = ToolContextStore(ttl_seconds=900)
         self.followup_resolver = FollowUpResolver()
+        self.enable_smart_followups = ENABLE_SMART_FOLLOWUPS
         self.promptforge = PromptForge(workspace=".")
         self.artifact_store = ArtifactStore()
         self.artifact_detector = ArtifactIntentDetector(threshold=float(ARTIFACT_INTENT_THRESHOLD))
@@ -1050,18 +1052,29 @@ class Agent:
         self._set_last_attachments(active_user_id, [])
         correction_note, corrected_intent_text = self._extract_user_correction(prompt)
         routing_prompt = corrected_intent_text or prompt
+        # ==================== SMART CONTEXTUAL FOLLOW-UPS v3.0 ====================
         follow_ctx = self.tool_context_store.get(active_user_id)
-        follow_resolution = self.followup_resolver.resolve(routing_prompt, follow_ctx)
+        follow_resolution = None
+        if getattr(self, "enable_smart_followups", True):
+            follow_resolution = self.followup_resolver.resolve(routing_prompt, follow_ctx)
+
         force_followup_search = False
-        if follow_resolution and follow_resolution.action == "clarify":
-            opts = follow_resolution.clarify_options or []
-            lines = ["I found multiple possible matches. Reply with 1-5."]
-            for o in opts[:5]:
-                lines.append(f"{o.get('rank')}. {o.get('title')}")
-            return "\n".join(lines)
-        if follow_resolution and follow_resolution.action == "open_url_and_summarize" and follow_resolution.rewritten_query:
-            routing_prompt = follow_resolution.rewritten_query
-            force_followup_search = True
+
+        if follow_resolution:
+            if follow_resolution.action == "clarify":
+                opts = follow_resolution.clarify_options or []
+                lines = ["I found multiple possible matches from the last search. Reply with the number:"]
+                for o in opts[:5]:
+                    lines.append(f"{o.get('rank')}. {o.get('title')[:90]}")
+                return "\n".join(lines)
+
+            elif follow_resolution.action in ("open_url_and_summarize", "continue_topic") and follow_resolution.rewritten_query:
+                routing_prompt = follow_resolution.rewritten_query
+                # Force websearch only when opening a URL; for continue_topic, allow router
+                # to choose the fastest suitable path (preserves low-latency internal answers).
+                force_followup_search = follow_resolution.action == "open_url_and_summarize"
+                # Optional: log for debugging
+                # print(f"[FOLLOWUP] {follow_resolution.action} | {follow_resolution.context_note}")
         if correction_note:
             self._enqueue_memory_write(
                 prompt=f"Correction signal: {prompt}",

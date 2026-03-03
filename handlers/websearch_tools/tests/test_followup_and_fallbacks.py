@@ -213,6 +213,24 @@ def test_followup_resolver_clarifies_low_confidence_followup():
     assert r.clarify_options
 
 
+def test_scalar_float_handles_single_value_series_like():
+    from handlers.websearch_tools.finance import _scalar_float
+
+    class _One:
+        def __init__(self, v):
+            self._v = v
+        @property
+        def iloc(self):
+            class _I:
+                def __init__(self, v):
+                    self.v = v
+                def __getitem__(self, idx):
+                    return self.v
+            return _I(self._v)
+
+    assert _scalar_float(_One(123.45)) == 123.45
+
+
 def test_finance_historical_fallback_without_symbol_uses_query(monkeypatch):
     fh = FinanceHandler()
 

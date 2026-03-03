@@ -221,11 +221,19 @@ def test_v_crypto_followup_historical_returns_range_not_refusal(monkeypatch):
 
 def test_contextual_finance_followup_routes_websearch():
     d = decide_route(
-        "what was it in october 2021",
+        "what was bitcoin price in october 2021",
         agent_state={"last_tool_type": "finance", "has_tool_context": True},
     )
     assert d.route == "websearch"
     assert d.reason == "contextual_followup_finance"
+
+
+def test_contextual_finance_followup_ignores_unrelated_time_question():
+    d = decide_route(
+        "what was it in october 2021",
+        agent_state={"last_tool_type": "finance", "has_tool_context": True},
+    )
+    assert d.reason != "contextual_followup_finance"
 
 
 def test_contextual_weather_followup_routes_weather():
