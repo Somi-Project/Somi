@@ -235,6 +235,8 @@ class SomiAIGUI(QMainWindow):
         self.agent_warmup_worker = None
         self.chat_worker = None
         self.chat_panel = None
+        self.chat_card = None
+        self.chat_toggle_btn = None
         self.chat_host_layout = None
         self.chat_embed_parent = None
         self.chat_popout = None
@@ -324,27 +326,27 @@ class SomiAIGUI(QMainWindow):
     def build_center_panel(self):
         row = QHBoxLayout()
 
-        self.build_activity_stream(row)
+        control_panel = QHBoxLayout()
+        self.build_activity_stream(control_panel)
 
         middle = QVBoxLayout()
         self.build_presence_panel(middle)
         self.build_intel_stream(middle)
+        self.build_speech_mini_console(middle)
         middle.setStretch(0, 1)
         middle.setStretch(1, 1)
-        row.addLayout(middle, 2)
+        middle.setStretch(2, 1)
+        control_panel.addLayout(middle, 2)
 
-        right = QVBoxLayout()
-        self.build_embedded_chat(right)
-        self.build_speech_mini_console(right)
-        right.setStretch(0, 5)
-        right.setStretch(1, 1)
-        row.addLayout(right, 2)
+        row.addLayout(control_panel, 3)
+        self.build_embedded_chat(row)
 
         self.main_layout.addLayout(row, 1)
 
     def build_embedded_chat(self, parent_layout):
         card = QFrame()
         card.setObjectName("card")
+        self.chat_card = card
         self.chat_host_layout = QVBoxLayout(card)
         self.chat_panel = ChatPanel(self)
         self.chat_host_layout.addWidget(self.chat_panel)
@@ -502,6 +504,7 @@ class SomiAIGUI(QMainWindow):
         l.addWidget(self.persona_combo)
 
         for label, cb in [
+            ("Chat", self.toggle_chat_panel_visibility),
             ("Talk", self.toggle_speech_process),
             ("Study", lambda: aicoregui.study_material(self)),
             ("Modules", lambda: ModulesDialog(self).exec()),
@@ -511,7 +514,11 @@ class SomiAIGUI(QMainWindow):
             ("HB Resume", self.resume_heartbeat),
             ("Theme", self.open_theme_selector),
         ]:
-            l.addWidget(self._sub_btn(label, cb))
+            btn = self._sub_btn(label, cb)
+            if label == "Chat":
+                self.chat_toggle_btn = btn
+                self.chat_toggle_btn.setText("Hide Chat")
+            l.addWidget(btn)
         l.addWidget(self._sub_btn("Background", self.change_background))
         self.main_layout.addWidget(bar)
 
@@ -1073,8 +1080,23 @@ class SomiAIGUI(QMainWindow):
         self.push_activity("core", "AI model toggled")
 
     def open_chat(self):
-        self.toggle_chat_popout(force_popout=True)
+        self.set_chat_panel_visible(True)
+        if self.chat_is_popped:
+            self.toggle_chat_popout(force_popout=True)
         self.push_activity("core", "User opened chat")
+
+    def set_chat_panel_visible(self, visible: bool):
+        if self.chat_card:
+            self.chat_card.setVisible(visible)
+        if self.chat_toggle_btn:
+            self.chat_toggle_btn.setText("Hide Chat" if visible else "Show Chat")
+
+    def toggle_chat_panel_visibility(self):
+        if not self.chat_card:
+            return
+        next_visible = not self.chat_card.isVisible()
+        self.set_chat_panel_visible(next_visible)
+        self.push_activity("core", "Chat panel opened" if next_visible else "Chat panel hidden")
 
     def ensure_chat_worker_running(self, use_studies: bool = True):
         from gui.aicoregui import ChatWorker
