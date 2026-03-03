@@ -14,10 +14,10 @@ _THEME_LABELS = {
     "light_modern": "Light Modern",
 }
 
-_active_theme = "default_dark"
+_active_theme = "light_modern"
 
 # Mutable dict so imports like `from gui.themes import COLORS` stay updated.
-COLORS = dict(default_dark.COLORS)
+COLORS = dict(light_modern.COLORS)
 
 
 def list_themes() -> list[tuple[str, str]]:
@@ -31,7 +31,7 @@ def get_theme_name() -> str:
 def set_theme(name: str) -> None:
     global _active_theme
     if name not in _THEME_REGISTRY:
-        name = "default_dark"
+        name = "light_modern"
     _active_theme = name
     COLORS.clear()
     COLORS.update(_THEME_REGISTRY[name].COLORS)

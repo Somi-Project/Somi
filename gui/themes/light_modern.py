@@ -1,17 +1,17 @@
-"""Light high-contrast theme for accessibility and daytime use."""
+"""Soft beach-inspired light theme with rounded controls and gentle contrast."""
 
 COLORS = {
-    "bg_main": "#f3f5f7",
-    "bg_card": "#ffffff",
-    "bg_surface": "#f9fbfd",
-    "bg_input": "#ffffff",
-    "text": "#1d2430",
-    "text_muted": "#56637a",
-    "border": "#cfd8e3",
-    "border_soft": "#dbe3ed",
-    "button": "#e8eef7",
-    "button_hover": "#dce7f6",
-    "accent": "#3b82f6",
+    "bg_main": "#e8f4fb",       # sky haze
+    "bg_card": "#f8fbfd",       # cloud white
+    "bg_surface": "#eef7fb",    # sea mist
+    "bg_input": "#fffdfa",      # warm sand white
+    "text": "#1f3442",
+    "text_muted": "#5f7d90",
+    "border": "#c9dde8",
+    "border_soft": "#dbeaf2",
+    "button": "#e6f2f9",
+    "button_hover": "#d8ebf6",
+    "accent": "#4fa3c7",        # lagoon blue
     "accent_ok": "#0f9d58",
 }
 
@@ -23,13 +23,13 @@ def app_stylesheet() -> str:
     QFrame#card {{
         background-color: {COLORS['bg_card']};
         border: 1px solid {COLORS['border_soft']};
-        border-radius: 8px;
+        border-radius: 14px;
     }}
     QPushButton {{
         background:{COLORS['button']};
         border:1px solid {COLORS['border']};
-        border-radius:6px;
-        padding:7px 10px;
+        border-radius:16px;
+        padding:8px 16px;
         color:{COLORS['text']};
     }}
     QPushButton:hover {{ background:{COLORS['button_hover']}; }}
@@ -42,8 +42,8 @@ def app_stylesheet() -> str:
         background:{COLORS['bg_input']};
         color:{COLORS['text']};
         border:1px solid {COLORS['border']};
-        border-radius:6px;
-        padding:4px;
+        border-radius:13px;
+        padding:6px 9px;
     }}
     """
 
@@ -57,8 +57,8 @@ def dialog_stylesheet(accent: str | None = None) -> str:
         background:{COLORS['button']};
         color:{COLORS['text']};
         border:1px solid {COLORS['border']};
-        border-radius:6px;
-        padding:7px 10px;
+        border-radius:16px;
+        padding:8px 16px;
     }}
     QPushButton:hover {{ background:{COLORS['button_hover']}; }}
     QTabBar::tab {{
@@ -68,7 +68,7 @@ def dialog_stylesheet(accent: str | None = None) -> str:
         border:1px solid {COLORS['border']};
         color:{COLORS['text_muted']};
     }}
-    QTabBar::tab:selected {{ background:{accent_color}; color:white; font-weight:bold; }}
+    QTabBar::tab:selected {{ background:{accent_color}; color:white; font-weight:bold; border-radius:10px; }}
     QTextEdit, QTableWidget {{
         background:{COLORS['bg_surface']};
         color:{COLORS['text']};
