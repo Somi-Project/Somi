@@ -576,22 +576,18 @@ class Agent:
             text = re.sub(r"```json\s*\{.*?\}\s*```", "", text, flags=re.DOTALL)
         return text.strip()
     async def _naturalize_search_output(self, raw_content: str, original_prompt: str) -> str:
-        """Use INSTRUCT_MODEL to clean raw websearch / finance historical output.
-        Works on BOTH normal search and the early finance historical path."""
-        if not raw_content:
-            return raw_content
+        """Use the configured INSTRUCT_MODEL to turn raw websearch dumps into natural, friendly answers.
+        This runs AFTER the FollowUpResolver has done its job — resolver abilities are 100% preserved."""
+        if not raw_content or "## Web/Search Context" not in raw_content:
+            return raw_content  # nothing to clean
 
-        # Broader trigger for all raw dumps (including yfinance_history)
-        raw_markers = ["## Web/Search Context", "yfinance_history", "Reply 'expand", "Meta: category="]
-        if not any(marker in raw_content for marker in raw_markers):
-            return raw_content
+        cleanup_prompt = f"""Turn this raw search response into a natural, conversational answer
+as if you are a helpful, friendly assistant.
 
-        cleanup_prompt = f"""Turn this raw search or historical price response into a natural, friendly, conversational answer.
-
-- Remove ALL technical headers, metadata, "Reply 'expand X'", "Meta: ...", etc.
-- Keep every important fact, price range, open/close/average, dates, and source.
-- Write in warm, natural language like a helpful friend.
-- End with a short friendly offer for more help.
+- Remove ALL technical headers like "## Web/Search Context", metadata, 'Reply expand X', etc.
+- Keep every important fact, number, date, range, and source link.
+- Write in warm, natural language.
+- End with a short friendly offer for more help if it fits.
 
 Original user question: {original_prompt}
 
@@ -600,15 +596,15 @@ Raw content to clean:
 
         try:
             resp = await self.ollama_client.chat(
-                model=INSTRUCT_MODEL,
+                model=INSTRUCT_MODEL,   # ← comes from config/settings.py
                 messages=[{"role": "user", "content": cleanup_prompt}],
-                options={"temperature": 0.3, "max_tokens": 1000, "keep_alive": 300},
+                options={"temperature": 0.3, "max_tokens": 1200, "keep_alive": 300},
             )
             cleaned = resp.get("message", {}).get("content", "") or raw_content
             return cleaned.strip()
         except Exception as e:
             logger.warning(f"Search naturalize failed (non-fatal): {e}")
-            return raw_content
+            return raw_content  # safe fallback
     def _compose_identity_block(self) -> str:
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
@@ -1591,9 +1587,9 @@ Raw content to clean:
                 )
             content = resp.get("message", {}).get("content", "") or ""
 
-            # ==================== NATURAL SEARCH OUTPUT CLEANUP v4.2 ====================
-            # Covers normal search + any remaining raw dumps
-            if should_search or any(marker in content for marker in ["## Web/Search Context", "yfinance_history", "Reply 'expand", "Meta: category="]):
+            # ==================== NATURAL SEARCH OUTPUT CLEANUP v4.1 ====================
+            # Runs AFTER FollowUpResolver — does NOT affect resolver logic
+            if should_search or "## Web/Search Context" in content or "Reply 'expand" in content:
                 content = await self._naturalize_search_output(content, prompt)
         except Exception as e:
             logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
