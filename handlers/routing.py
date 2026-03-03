@@ -215,6 +215,8 @@ def _has_time_constraint_markers(prompt_l: str) -> bool:
 
 def _is_contextual_followup(prompt_l: str, agent_state: Optional[Dict[str, Any]]) -> Optional[RouteDecision]:
     st = agent_state or {}
+    if bool(st.get("force_no_followup_binding", False)):
+        return None
     last_tool = str(st.get("last_tool_type") or "").lower().strip()
     has_ctx = bool(st.get("has_tool_context", False))
     if not has_ctx or not last_tool:
