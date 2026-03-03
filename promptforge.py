@@ -92,9 +92,11 @@ class PromptForge:
         history: Optional[List[Dict[str, Any]]],
         mode: str,
         privilege: str,
+        evidence_enabled: bool = True,
+        query_plan_summary: str = "",
     ) -> List[PromptBlock]:
-        evidence_text = search_context.strip() if search_context else ""
-        if getattr(settings, "PROMPT_FIREWALL_ENABLED", False):
+        evidence_text = search_context.strip() if (search_context and evidence_enabled) else ""
+        if evidence_enabled and getattr(settings, "PROMPT_FIREWALL_ENABLED", False):
             evidence_text, _ = apply_evidence_firewall(evidence_text)
 
         routing_summary = ""
@@ -104,6 +106,8 @@ class PromptForge:
             routing_summary = (routing_summary + f"\nMODE={mode.strip().upper()}").strip()
         if privilege and privilege.strip():
             routing_summary = (routing_summary + f"\nPRIVILEGE={privilege.strip().upper()}").strip()
+        if query_plan_summary and query_plan_summary.strip():
+            routing_summary = (routing_summary + "\n" + query_plan_summary.strip()).strip()
 
         tools_summary = identity_block.strip()
         memory_profile = ""
@@ -111,8 +115,11 @@ class PromptForge:
         output_rules = "\n".join(
             [
                 "- Use Memory Context when relevant.",
-                "- Prefer evidence-backed claims when EVIDENCE exists.",
-                "- Be direct and practical.",
+                "- If TIME_ANCHOR is present, keep claims anchored to that period.",
+                "- Only use EVIDENCE when EVIDENCE_ENABLED is true.",
+                "- If EVIDENCE lacks matching time anchors for a time-anchored question, do not treat it as authoritative.",
+                "- Do not use today/current/latest unless NEEDS_RECENCY is true.",
+                "- If uncertain, say uncertain; do not invent numbers.",
             ]
         )
         if extra_blocks:
@@ -128,7 +135,7 @@ class PromptForge:
                     chunks.append(f"[{role}] {content}")
             history_text = "\n".join(chunks)
 
-        return [
+        blocks = [
             PromptBlock("KERNEL", "KERNEL", 0, int(getattr(settings, "PROMPT_BUDGET_KERNEL", 700)), build_kernel_v1_1(settings), "truncate_tail"),
             PromptBlock("POLICIES", "POLICIES", 1, int(getattr(settings, "PROMPT_BUDGET_POLICIES", 320)), build_policy_pack(settings), "truncate_tail"),
             PromptBlock("PERSONA", "PERSONA", 2, int(getattr(settings, "PROMPT_BUDGET_PERSONA", 700)), load_persona_text(settings), "truncate_tail"),
@@ -137,10 +144,14 @@ class PromptForge:
             PromptBlock("TOOLS", "TOOLS", 5, int(getattr(settings, "PROMPT_BUDGET_TOOLS", 450)), tools_summary, "truncate_tail"),
             PromptBlock("MEMORY_PROFILE", "MEMORY_PROFILE", 6, int(getattr(settings, "PROMPT_BUDGET_MEMORY_PROFILE", 500)), memory_profile, "truncate_tail"),
             PromptBlock("MEMORY_WORKING", "MEMORY_WORKING", 7, int(getattr(settings, "PROMPT_BUDGET_MEMORY_WORKING", 700)), memory_working, "truncate_tail"),
-            PromptBlock("EVIDENCE", "EVIDENCE", 8, int(getattr(settings, "PROMPT_BUDGET_EVIDENCE", 1200)), evidence_text, "truncate_tail"),
+        ]
+        if evidence_enabled and evidence_text.strip():
+            blocks.append(PromptBlock("EVIDENCE", "EVIDENCE", 8, int(getattr(settings, "PROMPT_BUDGET_EVIDENCE", 1200)), evidence_text, "truncate_tail"))
+        blocks.extend([
             PromptBlock("OUTPUT_RULES", "OUTPUT_RULES", 9, 1200, output_rules, "truncate_tail"),
             PromptBlock("HISTORY", "HISTORY", 10, int(getattr(settings, "PROMPT_BUDGET_HISTORY", 2200)), history_text, "truncate_head"),
-        ]
+        ])
+        return blocks
 
     def build_system_prompt(
         self,
@@ -154,6 +165,8 @@ class PromptForge:
         mode: str = "EXECUTE",
         privilege: str = "SAFE",
         max_context_tokens: Optional[int] = None,
+        evidence_enabled: bool = True,
+        query_plan_summary: str = "",
     ) -> str:
         if getattr(settings, "PROMPT_FORCE_LEGACY", False):
             return self._assemble_legacy_system_prompt(identity_block, current_time, memory_context, search_context, mode_context, extra_blocks)
@@ -174,6 +187,8 @@ class PromptForge:
             history=history,
             mode=mode,
             privilege=privilege,
+            evidence_enabled=evidence_enabled,
+            query_plan_summary=query_plan_summary,
         )
 
         flags = {

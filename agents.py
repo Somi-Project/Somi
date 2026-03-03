@@ -46,6 +46,9 @@ from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
 from handlers.routing import decide_route
+from routing.planner import build_query_plan
+from handlers.search_bundle import render_search_bundle
+from synthesis.answer_mixer import mix_answer
 from handlers.time_handler import TimeHandler
 from handlers.tool_context import ToolContextStore
 from handlers.followup_resolver import FollowUpResolver
@@ -1452,8 +1455,22 @@ class Agent:
 
                 self._push_history_for(active_user_id, prompt, hist_text)
                 return hist_text
-        should_search = decision.route == "websearch" or force_websearch_for_research or force_followup_search
-        search_context = "Not required for this query. Use internal knowledge."
+        plan = build_query_plan(routing_prompt)
+        logger.info(
+            "QUERY_PLAN MODE=%s NEEDS_RECENCY=%s TIME_ANCHOR=%s EVIDENCE_ENABLED=%s REASON=%s",
+            plan.mode,
+            plan.needs_recency,
+            plan.time_anchor,
+            plan.evidence_enabled,
+            plan.reason,
+        )
+        # Pipeline: user_text -> decide_route/build_query_plan -> websearch.search -> SearchBundle render -> PromptForge.build_system_prompt.
+        should_search = (
+            plan.mode in {"SEARCH_ONLY", "DUAL"}
+            or force_websearch_for_research
+            or force_followup_search
+        )
+        search_context = ""
         memory_context = "No relevant memories found"
         results: List[Dict[str, Any]] = []
         volatile_search = False
@@ -1461,27 +1478,29 @@ class Agent:
         if should_search:
             try:
                 # === PATCH: forward router metadata (reason/signals) into WebSearchHandler ===
+                planned_query = plan.rewritten_search_query or routing_prompt
                 results = await self.websearch.search(
-                    routing_prompt,
+                    planned_query,
                     tool_veto=decision.tool_veto,
                     reason=decision.reason,
                     signals=decision.signals,
                     route_hint=decision.route,
                 )
                 volatile_search, volatile_category = self._is_volatile_results(results)
-                formatted = self.websearch.format_results(results)
+                bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled)
+                formatted = render_search_bundle(bundle, max_results=5, max_snippet_chars=320)
                 tool_type = str(decision.signals.get("intent") or volatile_category or "general")
                 if tool_type in {"crypto", "forex", "stock/commodity"}:
                     tool_type = "finance"
                 self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results)
                 if formatted and "Error" not in formatted:
                     search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
-                    search_context = formatted[:search_cap]
+                    search_context = formatted[:search_cap] if plan.evidence_enabled else ""
                 else:
-                    search_context = "Web search returned no results."
+                    search_context = ""
             except Exception as e:
                 logger.info(f"Web search failed (non-fatal): {e}")
-                search_context = "Web search unavailable."
+                search_context = ""
         else:
             mem = await self.memory.build_injected_context(routing_prompt, user_id=active_user_id)
             due_block = ""
@@ -1571,7 +1590,7 @@ class Agent:
                     extra_blocks.append("## Active Goals\n" + goal_ctx)
             except Exception:
                 pass
-        if should_search:
+        if should_search and plan.evidence_enabled and search_context.strip():
             sources = self._extract_urls_from_results(results, limit=4)
             sources_text = "\n".join([f"- {u}" for u in sources]) if sources else "(No URLs available in results.)"
             evidence_rules = (
@@ -1610,6 +1629,8 @@ class Agent:
             history=history_for_system,
             mode="EXECUTE",
             privilege="SAFE",
+            evidence_enabled=plan.evidence_enabled,
+            query_plan_summary=plan.summary(),
         )
         system_prompt += (
             "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): "
@@ -1650,6 +1671,9 @@ class Agent:
             # Runs AFTER FollowUpResolver — does NOT affect resolver logic
             if self._looks_like_tool_dump(content):
                 content = await self._naturalize_search_output(content, prompt)
+
+            evidence_bundle = locals().get("bundle") if "bundle" in locals() else None
+            content = mix_answer(routing_prompt, plan=plan, llm_draft=content, evidence=evidence_bundle)
         except Exception as e:
             logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
             content = "Sorry — generation failed. Try again."
