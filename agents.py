@@ -46,7 +46,7 @@ from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
 from handlers.routing import decide_route
-from routing.planner import build_query_plan
+from routing import PrevTurnState, build_query_plan, can_reuse_evidence, extract_signals
 from handlers.search_bundle import render_search_bundle
 from synthesis.answer_mixer import mix_answer
 from handlers.time_handler import TimeHandler
@@ -579,6 +579,12 @@ class Agent:
         if self.current_mode != "game":
             text = re.sub(r"```json\s*\{.*?\}\s*```", "", text, flags=re.DOTALL)
         return text.strip()
+    def _is_internal_artifact_leak(self, text: str) -> bool:
+        t = str(text or "").strip().lower()
+        if not (t.startswith("{") and t.endswith("}")):
+            return False
+        internal_types = ("tradeoff_evaluation", "routing_artifact", "router_decision", "internal_action")
+        return any(f'"type": "{k}"' in t or f'"type":"{k}"' in t for k in internal_types)
     def _looks_like_tool_dump(self, text: str) -> bool:
         """Heuristic gate: only naturalize clear tool/search dumps."""
         if not text:
@@ -1455,12 +1461,21 @@ class Agent:
 
                 self._push_history_for(active_user_id, prompt, hist_text)
                 return hist_text
-        plan = build_query_plan(routing_prompt)
+        prev_state = None
+        if follow_ctx:
+            prev_state = PrevTurnState(
+                domain=str(follow_ctx.last_tool_type or "general"),
+                query=str(follow_ctx.last_query or ""),
+                timestamp=float(follow_ctx.timestamp or 0.0),
+            )
+        signals = extract_signals(routing_prompt)
+        plan = build_query_plan(routing_prompt, prev_state)
         logger.info(
-            "QUERY_PLAN MODE=%s NEEDS_RECENCY=%s TIME_ANCHOR=%s EVIDENCE_ENABLED=%s REASON=%s",
+            "QUERY_PLAN MODE=%s DOMAIN=%s NEEDS_RECENCY=%s TIME_ANCHOR=%s EVIDENCE_ENABLED=%s REASON=%s",
             plan.mode,
+            plan.domain,
             plan.needs_recency,
-            plan.time_anchor,
+            (plan.time_anchor.label if plan.time_anchor else None),
             plan.evidence_enabled,
             plan.reason,
         )
@@ -1470,6 +1485,10 @@ class Agent:
             or force_websearch_for_research
             or force_followup_search
         )
+        reuse_evidence = can_reuse_evidence(routing_prompt, prev_state)
+        if should_search and not reuse_evidence and follow_ctx:
+            follow_ctx.last_results = []
+        logger.info("route.plan=%s reuse_evidence=%s search_ran=%s", plan.mode, reuse_evidence, should_search)
         search_context = ""
         memory_context = "No relevant memories found"
         results: List[Dict[str, Any]] = []
@@ -1478,7 +1497,7 @@ class Agent:
         if should_search:
             try:
                 # === PATCH: forward router metadata (reason/signals) into WebSearchHandler ===
-                planned_query = plan.rewritten_search_query or routing_prompt
+                planned_query = plan.search_query or routing_prompt
                 results = await self.websearch.search(
                     planned_query,
                     tool_veto=decision.tool_veto,
@@ -1487,8 +1506,8 @@ class Agent:
                     route_hint=decision.route,
                 )
                 volatile_search, volatile_category = self._is_volatile_results(results)
-                bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled)
-                formatted = render_search_bundle(bundle, max_results=5, max_snippet_chars=320)
+                bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled, domain=plan.domain, needs_recency=plan.needs_recency)
+                formatted = render_search_bundle(bundle, max_results=6, max_snippet_chars=350)
                 tool_type = str(decision.signals.get("intent") or volatile_category or "general")
                 if tool_type in {"crypto", "forex", "stock/commodity"}:
                     tool_type = "finance"
@@ -1679,6 +1698,41 @@ class Agent:
             content = "Sorry — generation failed. Try again."
         content = self._clean_think_tags(content)
         content = self._strip_unwanted_json(content)
+        if self._is_internal_artifact_leak(content):
+            fallback_messages = self.promptforge.build_messages(
+                system_prompt=self.promptforge.build_system_prompt(
+                    identity_block=identity_block,
+                    current_time=current_time,
+                    memory_context=memory_context,
+                    search_context="",
+                    mode_context=mode_context,
+                    extra_blocks=extra_blocks if extra_blocks else None,
+                    history=history_for_system,
+                    mode="EXECUTE",
+                    privilege="SAFE",
+                    evidence_enabled=False,
+                    query_plan_summary=(
+                        "QUERY_PLAN:\n"
+                        "MODE=LLM_ONLY\n"
+                        "DOMAIN=general\n"
+                        "NEEDS_RECENCY=false\n"
+                        "TIME_ANCHOR=none\n"
+                        "EVIDENCE_ENABLED=false\n"
+                        "REASON=internal_artifact_leak_fallback"
+                    ),
+                ),
+                history=[] if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else history_msgs,
+                user_prompt=routing_prompt,
+            )
+            try:
+                resp2 = await self.ollama_client.chat(
+                    model=self._select_response_model(routing_prompt),
+                    messages=fallback_messages,
+                    options={"temperature": self._safe_temperature_value(active_persona_for_turn.get("temperature", self.temperature), float(self.temperature)), "max_tokens": int(max_tokens), "keep_alive": 300},
+                )
+                content = str(resp2.get("message", {}).get("content", "") or "").strip()
+            except Exception:
+                content = "Sorry — I hit an internal formatting error. Please try again."
         if self.get_last_attachments(active_user_id):
             content = (content or "").strip()
             addon = f"\n\nSaved chart/image to {SESSION_MEDIA_DIR} and attached it above."
