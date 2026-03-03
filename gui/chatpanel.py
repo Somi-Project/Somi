@@ -86,6 +86,10 @@ class ChatPanel(QWidget):
         controls.addWidget(self.use_studies_check)
         self.apply_agent_button = QPushButton("Apply Agent")
         controls.addWidget(self.apply_agent_button)
+        self.new_chat_button = QPushButton("New Chat")
+        self.old_chat_button = QPushButton("Old Chat")
+        controls.addWidget(self.new_chat_button)
+        controls.addWidget(self.old_chat_button)
         root.addLayout(controls)
 
         self.chat_area = QTextEdit()
@@ -130,6 +134,8 @@ class ChatPanel(QWidget):
         self.ocr_settings_button.clicked.connect(self.open_ocr_settings)
         self.schema_editor_button.clicked.connect(self.open_schema_editor)
         self.apply_agent_button.clicked.connect(self._apply_agent)
+        self.new_chat_button.clicked.connect(self.start_new_chat)
+        self.old_chat_button.clicked.connect(self.open_old_chat)
 
     def _set_connected_state(self, connected: bool):
         self.connected = connected
@@ -235,6 +241,15 @@ class ChatPanel(QWidget):
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
         except Exception:
             pass
+
+    def start_new_chat(self):
+        self.chat_area.clear()
+        self.history_loaded = True
+        self.on_status("New chat started")
+
+    def open_old_chat(self):
+        self.load_history(force=True)
+        self.on_status("History loaded")
 
     def on_send(self):
         prompt = self.prompt_entry.text().strip()
