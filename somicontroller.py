@@ -36,6 +36,8 @@ from PyQt6.QtWidgets import (
 )
 
 from gui import aicoregui, executivegui, speechgui, telegramgui, toolboxgui, twittergui
+from gui.chatpanel import ChatPanel
+from gui.chatpopout import ChatPopoutWindow
 from gui.themes import app_stylesheet, dialog_stylesheet, get_theme_name, list_themes, set_theme
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
 from heartbeat.service import HeartbeatService
@@ -232,6 +234,13 @@ class SomiAIGUI(QMainWindow):
         self.preloaded_agent = None
         self.agent_warmup_worker = None
         self.chat_worker = None
+        self.chat_panel = None
+        self.chat_host_layout = None
+        self.chat_embed_parent = None
+        self.chat_popout = None
+        self.chat_is_popped = False
+        self._chat_docking_in_progress = False
+        self._startup_chat_message_sent = False
         self.ai_model_start_button = QPushButton("AI Model Start/Stop")
         self.ai_model_start_button.setVisible(False)
 
@@ -319,11 +328,26 @@ class SomiAIGUI(QMainWindow):
 
         middle = QVBoxLayout()
         self.build_presence_panel(middle)
+        self.build_embedded_chat(middle)
         self.build_intel_stream(middle)
         row.addLayout(middle, 2)
 
         self.build_speech_mini_console(row)
         self.main_layout.addLayout(row, 1)
+
+    def build_embedded_chat(self, parent_layout):
+        card = QFrame()
+        card.setObjectName("card")
+        self.chat_host_layout = QVBoxLayout(card)
+        self.chat_panel = ChatPanel(self)
+        self.chat_host_layout.addWidget(self.chat_panel)
+        self.chat_embed_parent = self.chat_host_layout
+        self.chat_panel.popout_requested.connect(lambda: self.toggle_chat_popout(force_popout=True))
+        self.chat_panel.dock_requested.connect(self.dock_chat_panel)
+        self.chat_panel.expand_requested.connect(self.toggle_chat_expand)
+        self.chat_panel.restore_requested.connect(self.toggle_chat_expand)
+        self.chat_panel.stop_chat_requested.connect(self.stop_chat_worker)
+        parent_layout.addWidget(card, 2)
 
     def build_presence_panel(self, parent_layout):
         card = QFrame()
@@ -470,7 +494,6 @@ class SomiAIGUI(QMainWindow):
         l.addWidget(self.persona_combo)
 
         for label, cb in [
-            ("Chat", self.open_chat),
             ("Talk", self.toggle_speech_process),
             ("Study", lambda: aicoregui.study_material(self)),
             ("Modules", lambda: ModulesDialog(self).exec()),
@@ -992,6 +1015,19 @@ class SomiAIGUI(QMainWindow):
                 self.persona_combo.setCurrentText(previous)
             self.persona_combo.blockSignals(False)
 
+        if getattr(self, "chat_panel", None) and getattr(self.chat_panel, "name_combo", None):
+            combo = self.chat_panel.name_combo
+            current = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItems(self.agent_names)
+            target = self.selected_agent_key.replace("Name: ", "")
+            if target in self.agent_names:
+                combo.setCurrentText(target)
+            elif current in self.agent_names:
+                combo.setCurrentText(current)
+            combo.blockSignals(False)
+
     def _default_agent_key(self):
         if self.agent_keys:
             return self.agent_keys[0]
@@ -1014,18 +1050,9 @@ class SomiAIGUI(QMainWindow):
                 self.preloaded_agent = self.agent_warmup_worker.agent
             self.push_activity("core", f"Agent warmup ready: {detail}")
             try:
-                from gui.aicoregui import ChatWorker
-
-                if self.chat_worker and self.chat_worker.isRunning():
-                    return
-
-                agent_key = str(getattr(self, "selected_agent_key", "") or self._default_agent_key())
-                if agent_key not in self.agent_keys:
-                    agent_key = self._default_agent_key()
-                self.chat_worker = ChatWorker(self, agent_key, True, preloaded_agent=self.preloaded_agent)
-                self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
-                self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
-                self.chat_worker.start()
+                if self.chat_panel:
+                    self.chat_panel.load_history()
+                self.ensure_chat_worker_running()
                 self.push_activity("core", "Chat worker pre-initialized")
             except Exception as exc:
                 logger.exception("Failed to pre-initialize chat worker")
@@ -1038,13 +1065,105 @@ class SomiAIGUI(QMainWindow):
         self.push_activity("core", "AI model toggled")
 
     def open_chat(self):
-        self.refresh_agent_names()
-        if getattr(self, "persona_combo", None):
-            idx = self.persona_combo.currentIndex()
-            if 0 <= idx < len(self.agent_keys):
-                self.selected_agent_key = self.agent_keys[idx]
-        aicoregui.ai_chat(self)
+        self.toggle_chat_popout(force_popout=True)
         self.push_activity("core", "User opened chat")
+
+    def ensure_chat_worker_running(self, use_studies: bool = True):
+        from gui.aicoregui import ChatWorker
+
+        if self.chat_worker and self.chat_worker.isRunning():
+            if self.chat_worker.is_busy():
+                if self.chat_panel:
+                    self.chat_panel.attach_worker(self.chat_worker)
+                return
+            try:
+                self.chat_worker.update_agent(str(getattr(self, "selected_agent_key", "") or self._default_agent_key()), use_studies)
+            except Exception:
+                pass
+            if self.chat_panel:
+                self.chat_panel.attach_worker(self.chat_worker)
+            return
+
+        agent_key = str(getattr(self, "selected_agent_key", "") or self._default_agent_key())
+        if agent_key not in self.agent_keys:
+            agent_key = self._default_agent_key()
+
+        self.chat_worker = ChatWorker(self, agent_key, use_studies, preloaded_agent=self.preloaded_agent)
+        self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
+        self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
+        self.chat_worker.start()
+        if self.chat_panel:
+            self.chat_panel.attach_worker(self.chat_worker)
+            if not self._startup_chat_message_sent:
+                startup_msg = "Chat worker online — how can I help you today?"
+                self.chat_panel.chat_area.append(f"Somi: {startup_msg}\n")
+                self.chat_panel.append_history("system", startup_msg, str(getattr(self, "selected_agent_key", "")))
+                self._startup_chat_message_sent = True
+
+    def stop_chat_worker(self):
+        if self.chat_panel:
+            self.chat_panel.cancel_ocr_if_running()
+        had_running_worker = bool(self.chat_worker and self.chat_worker.isRunning())
+        if had_running_worker:
+            self.chat_worker.stop()
+            self.chat_worker.wait(1500)
+        self.chat_worker = None
+        if self.chat_panel:
+            self.chat_panel.detach_worker()
+        if had_running_worker:
+            self.push_activity("core", "Chat worker stopped")
+
+    def toggle_chat_popout(self, force_popout: bool = False):
+        if not self.chat_panel:
+            return
+        if self.chat_is_popped and force_popout:
+            if self.chat_popout:
+                self.chat_popout.show()
+                self.chat_popout.raise_()
+                self.chat_popout.activateWindow()
+            self.chat_panel.set_popout_state(True, is_maximized=bool(self.chat_popout and self.chat_popout.isMaximized()))
+            return
+        if not self.chat_is_popped:
+            if self.chat_panel.parent() and self.chat_host_layout:
+                self.chat_host_layout.removeWidget(self.chat_panel)
+            if not self.chat_popout:
+                self.chat_popout = ChatPopoutWindow(self, self.chat_panel)
+            self.chat_popout.show()
+            self.chat_popout.raise_()
+            self.chat_popout.activateWindow()
+            self.chat_is_popped = True
+            self.chat_panel.set_popout_state(True, is_maximized=self.chat_popout.isMaximized())
+            return
+        self.dock_chat_panel()
+
+    def dock_chat_panel(self):
+        if self._chat_docking_in_progress:
+            return
+        self._chat_docking_in_progress = True
+        if not self.chat_panel or not self.chat_embed_parent:
+            self._chat_docking_in_progress = False
+            return
+        try:
+            if self.chat_popout:
+                pop_layout = self.chat_popout.layout()
+                if pop_layout:
+                    pop_layout.removeWidget(self.chat_panel)
+                self.chat_popout.deleteLater()
+                self.chat_popout = None
+            self.chat_embed_parent.addWidget(self.chat_panel)
+            self.chat_is_popped = False
+            self.chat_panel.set_popout_state(False, False)
+        finally:
+            self._chat_docking_in_progress = False
+
+    def toggle_chat_expand(self):
+        if not self.chat_is_popped or not self.chat_popout:
+            return
+        if self.chat_popout.isMaximized():
+            self.chat_popout.showNormal()
+        else:
+            self.chat_popout.showMaximized()
+        self.chat_panel.set_popout_state(True, self.chat_popout.isMaximized())
 
     def open_data_agent(self):
         from gui import dataagentgui
@@ -1222,9 +1341,7 @@ class SomiAIGUI(QMainWindow):
 
     def closeEvent(self, event):
         self.heartbeat_service.stop()
-        if self.chat_worker and self.chat_worker.isRunning():
-            self.chat_worker.stop()
-            self.chat_worker.wait(1500)
+        self.stop_chat_worker()
         if self.agent_warmup_worker and self.agent_warmup_worker.isRunning():
             self.agent_warmup_worker.quit()
             self.agent_warmup_worker.wait(1000)
