@@ -13,6 +13,17 @@ _ORDINALS = {
     "fourth": 4, "4th": 4, "fifth": 5, "5th": 5,
 }
 
+_FINANCE_SUBJECT = re.compile(
+    r"\b(bitcoin|btc|ethereum|eth|solana|sol|oil|wti|brent|gold|silver|eurusd|gbpusd|usdjpy|forex|fx)\b",
+    re.IGNORECASE,
+)
+_TEMPORAL = re.compile(
+    r"\b((?:19|20)\d{2}|(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)\w*\s+(?:19|20)\d{2}|(?:19|20)\d{2}-\d{2}-\d{2})\b",
+    re.IGNORECASE,
+)
+_STORY_REF = re.compile(r"\b(that story|this story|second one|third one|first one|link\s*#?\d+|result\s*#?\d+)\b", re.IGNORECASE)
+_WHAT_ABOUT = re.compile(r"\b(?:what about|and)\s+([a-z0-9\-/ ]{2,80})\??$", re.IGNORECASE)
+
 
 @dataclass
 class FollowUpResolution:
@@ -51,7 +62,6 @@ class FollowUpResolver:
         return ""
 
     def _looks_like_followup(self, text: str) -> bool:
-        """Broad but simple — catches natural follow-ups and pronoun references."""
         tl = (text or "").lower()
         return bool(
             re.search(
@@ -62,7 +72,7 @@ class FollowUpResolver:
                 r"how about|any updates|updates on|more info|what's next|"
                 r"compare|versus|vs|how does|will it|is it|which one|"
                 r"what was|how much was|what was it|how much was it|it was|the price in|"
-                r"previously?|back in|historically?|at that time|then|earlier|before|again)\b",
+                r"previously?|back in|historically?|at that time|then|earlier|before|again|in\s+\d{4})\b",
                 tl,
             )
         )
@@ -73,7 +83,7 @@ class FollowUpResolver:
             re.search(
                 r"\b(in (jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|20[0-2]\d)|"
                 r"previously?|back in|historically?|at that time|then|earlier|before|"
-                r"tomorrow|yesterday|last year|this year)\b",
+                r"tomorrow|yesterday|last year|this year|\d{4}-\d{2}-\d{2}|in\s+\d{4})\b",
                 tl,
             )
         )
@@ -148,14 +158,57 @@ class FollowUpResolver:
             })
         return opts
 
-    def _build_rewrite_query(self, msg: str, last_query: str) -> str:
+    def _extract_subject(self, text: str) -> str:
+        m = _FINANCE_SUBJECT.search(text or "")
+        if m:
+            v = m.group(1).lower()
+            if v == "btc":
+                return "bitcoin"
+            if v == "eth":
+                return "ethereum"
+            return v
+        return ""
+
+    def _extract_temporal_constraint(self, text: str) -> str:
+        m = _TEMPORAL.search(text or "")
+        return (m.group(1) if m else "").strip()
+
+    def _rewrite_followup_query(self, msg: str, ctx: ToolContext) -> str:
         raw = (msg or "").strip()
-        if not last_query:
-            return raw
-        # Keep rewrite explicit and user-facing (no internal instructions or decision scaffolding).
-        if self._has_temporal_continuation(raw) or re.search(r"\b(what about|how about|and in|then|same asset|same coin|that one|it)\b", raw.lower()):
-            return f"{last_query} {raw}".strip()
-        return raw
+        msg_l = raw.lower()
+        last_query = str(ctx.last_query or "").strip()
+
+        subject_from_ctx = self._extract_subject(last_query)
+        subject_from_msg = self._extract_subject(raw)
+        temporal = self._extract_temporal_constraint(raw)
+
+        wm = _WHAT_ABOUT.search(raw)
+        if wm:
+            candidate = (wm.group(1) or "").strip(" ?.,")
+            if candidate and len(candidate.split()) <= 5 and not re.search(r"\b(it|that|this|one)\b", candidate, re.I):
+                if temporal:
+                    return f"{candidate} price {temporal}".strip()
+                return f"{candidate} price".strip()
+
+        subject = subject_from_msg or subject_from_ctx
+
+        if temporal:
+            if subject:
+                if "price" in msg_l or "price" in last_query.lower() or ctx.last_tool_type == "finance":
+                    return f"{subject} price {temporal}".strip()
+                return f"{subject} {temporal}".strip()
+            return f"{last_query} {temporal}".strip()
+
+        if subject and ("price" in msg_l or ctx.last_tool_type == "finance"):
+            return f"{subject} price".strip()
+
+        if subject:
+            return subject
+
+        if _STORY_REF.search(raw) and ctx.last_selected_title:
+            return str(ctx.last_selected_title).strip()
+
+        return raw or last_query
 
     def resolve(self, user_text: str, ctx: Optional[ToolContext]) -> Optional[FollowUpResolution]:
         if not user_text:
@@ -164,7 +217,6 @@ class FollowUpResolver:
         if not msg:
             return None
 
-        # 1. Explicit URL
         explicit = self._extract_url(msg)
         if explicit:
             return FollowUpResolution(
@@ -176,7 +228,6 @@ class FollowUpResolver:
         if not ctx or not ctx.last_results:
             return None
 
-        # 2. Explicit ordinal
         rank = self._ordinal_rank(msg)
         if rank is not None and rank > 0:
             for item in ctx.last_results:
@@ -187,33 +238,28 @@ class FollowUpResolver:
                         rewritten_query=f"summarize this URL: {item.get('url')}",
                     )
 
-        # 3. Quoted-title reference first (e.g. expand on 'X')
         quoted_ref = self._extract_quoted_reference(msg)
         if quoted_ref:
             quoted_match = self._find_best_title_match(quoted_ref, ctx.last_results)
             if quoted_match and quoted_match.get("url"):
-                qtitle = quoted_match.get("title", "")[:120]
                 return FollowUpResolution(
                     action="open_url_and_summarize",
                     url=str(quoted_match.get("url")),
                     rewritten_query=f"summarize this URL: {quoted_match.get('url')}",
                     previous_query=ctx.last_query,
-                    context_note=f"news elaboration on quoted title: {qtitle}",
+                    context_note="quoted_title_match",
                 )
 
-        # 4. Strong title match (news elaboration)
         title_match = self._find_best_title_match(msg, ctx.last_results)
         if title_match and title_match.get("url"):
-            title = title_match.get("title", "")[:120]
             return FollowUpResolution(
                 action="open_url_and_summarize",
                 url=str(title_match.get("url")),
                 rewritten_query=f"summarize this URL: {title_match.get('url')}",
                 previous_query=ctx.last_query,
-                context_note=f"news elaboration on: {title}",
+                context_note="title_match",
             )
 
-        # 5. Strong fuzzy match to a single result
         scored: List[tuple[float, Dict[str, str]]] = []
         for item in ctx.last_results:
             s = self._score(msg, item)
@@ -231,28 +277,22 @@ class FollowUpResolver:
                     rewritten_query=f"summarize this URL: {best.get('url')}",
                 )
 
-        # 6. SIMPLE CONTINUATION — this is the repair
+        if _STORY_REF.search(msg) and len(ctx.last_results) > 1:
+            return FollowUpResolution(
+                action="clarify",
+                clarify_options=self._build_options([x[1] for x in scored] or list(ctx.last_results)),
+            )
+
         looks_followup = self._looks_like_followup(msg)
         temporal = self._has_temporal_continuation(msg)
         topic_score = self._topic_overlap(msg, ctx.last_query) if ctx.last_query else 0.0
-
-        is_strong_continuation = temporal or (topic_score >= self.continuation_threshold)
-
-        if is_strong_continuation:
-            rewritten = self._build_rewrite_query(msg, ctx.last_query)
+        if looks_followup or temporal or (topic_score >= self.continuation_threshold):
+            rewritten = self._rewrite_followup_query(msg, ctx)
             return FollowUpResolution(
                 action="rewrite_query",
                 rewritten_query=rewritten,
                 previous_query=ctx.last_query,
-                context_note="deterministic_rewrite_query",
-            )
-
-
-        # 7. Only clarify on weak explicit follow-up language
-        if looks_followup:
-            return FollowUpResolution(
-                action="clarify",
-                clarify_options=self._build_options([x[1] for x in scored] or list(ctx.last_results)),
+                context_note="rewrite_query_from_context",
             )
 
         return None

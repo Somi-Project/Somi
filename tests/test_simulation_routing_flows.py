@@ -239,12 +239,13 @@ def test_contextual_finance_followup_infers_non_crypto_subtype():
     assert d.signals.get("intent") == "stock/commodity"
 
 
-def test_contextual_finance_followup_ignores_unrelated_time_question():
+def test_contextual_finance_followup_pronoun_defaults_stock_commodity_when_subtype_missing():
     d = decide_route(
         "what was it in october 2021",
         agent_state={"last_tool_type": "finance", "has_tool_context": True},
     )
-    assert d.reason != "contextual_followup_finance"
+    assert d.reason == "contextual_followup_finance"
+    assert d.signals.get("intent") == "stock/commodity"
 
 
 def test_contextual_weather_followup_routes_weather():
@@ -310,3 +311,13 @@ def test_followup_resolver_rewrite_query_has_no_internal_scaffolding():
     assert r.action == "rewrite_query"
     assert "Previous query:" not in r.rewritten_query
     assert "Decide whether to" not in r.rewritten_query
+
+
+def test_contextual_finance_followup_uses_context_subtype_when_pronoun_only():
+    d = decide_route(
+        "what was it in 2021",
+        agent_state={"last_tool_type": "finance", "has_tool_context": True, "last_finance_intent": "crypto"},
+    )
+    assert d.route == "websearch"
+    assert d.reason == "contextual_followup_finance"
+    assert d.signals.get("intent") == "crypto"

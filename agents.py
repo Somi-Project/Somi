@@ -1123,8 +1123,9 @@ class Agent:
 
             elif follow_resolution.action in ("open_url_and_summarize", "rewrite_query") and follow_resolution.rewritten_query:
                 routing_prompt = str(follow_resolution.rewritten_query).strip()
-                # Only URL-opening follow-ups are forced to websearch.
-                force_followup_search = follow_resolution.action == "open_url_and_summarize"
+                force_followup_search = True
+                if follow_resolution.action == "open_url_and_summarize":
+                    self.tool_context_store.mark_selected(active_user_id, url=str(follow_resolution.url or ""))
         if correction_note:
             self._enqueue_memory_write(
                 prompt=f"Correction signal: {prompt}",
@@ -1149,7 +1150,15 @@ class Agent:
                 controller_context["proposed_ticket"] = proposed_ticket
             except Exception as e:
                 return f"Unable to prepare tool proposal safely: {e}"
-        decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode, "last_tool_type": (follow_ctx.last_tool_type if follow_ctx else ""), "has_tool_context": bool(follow_ctx and follow_ctx.last_results)})
+        decision = decide_route(
+            routing_prompt,
+            agent_state={
+                "mode": self.current_mode,
+                "last_tool_type": (follow_ctx.last_tool_type if follow_ctx else ""),
+                "has_tool_context": bool(follow_ctx and follow_ctx.last_results),
+                "last_finance_intent": (follow_ctx.last_finance_intent if follow_ctx else ""),
+            },
+        )
         self._log_route_snapshot(user_id=active_user_id, prompt=routing_prompt, decision=decision, last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""))
         capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
@@ -1461,9 +1470,11 @@ class Agent:
                 bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled, domain=plan.domain, needs_recency=plan.needs_recency)
                 formatted = render_search_bundle(bundle, max_results=6, max_snippet_chars=350)
                 tool_type = str(decision.signals.get("intent") or volatile_category or "general")
+                finance_intent = ""
                 if tool_type in {"crypto", "forex", "stock/commodity"}:
+                    finance_intent = tool_type
                     tool_type = "finance"
-                self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results)
+                self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results, finance_intent=finance_intent)
                 if formatted and "Error" not in formatted:
                     search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
                     search_context = formatted[:search_cap] if plan.evidence_enabled else ""
