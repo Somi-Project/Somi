@@ -1254,7 +1254,7 @@ Query: {query}
         debug_mode = bool(ROUTING_DEBUG or WEBSEARCH_DEBUG_RESULTS)
 
         lines = []
-        for r in results[:10]:
+        for idx, r in enumerate(results[:10], start=1):
             if not isinstance(r, dict):
                 continue
 
@@ -1264,6 +1264,8 @@ Query: {query}
             content = (r.get("content") or "").strip()
             category = (r.get("category") or "").strip()
             volatile = bool(r.get("volatile", False))
+            source = (r.get("source") or r.get("provider") or "").strip()
+            published = (r.get("published_at") or r.get("published") or "").strip()
 
             # Include deroute fields if present (for debugging)
             deroute = bool(r.get("deroute", False))
@@ -1271,11 +1273,13 @@ Query: {query}
             deroute_handler = (r.get("handler") or "").strip()
             fullpage_fetch = bool(r.get("fullpage_fetch", False))
 
+            source_parts = [p for p in [source, published] if p]
+            source_line = f" ({' — '.join(source_parts)})" if source_parts else ""
             block = (
-                f"- Title: {title}\n"
-                f"  URL: {url}\n"
-                f"  Snippet: {_safe_trim(desc, 280)}\n"
-                f"  Meta: category={category}, volatile={volatile}"
+                f"{idx}. {title}{source_line}\n"
+                f"   URL: {url}\n"
+                f"   Snippet: {_safe_trim(desc, 280)}\n"
+                f"   Meta: category={category}, volatile={volatile}"
             )
             if debug_mode:
                 block += f", deroute={deroute}"
@@ -1291,4 +1295,5 @@ Query: {query}
             lines.append(block)
 
         formatted = "## Web/Search Context (results)\n" + "\n".join(lines)
+        formatted += "\n\nReply 'expand 2' to open and summarize a story."
         return formatted[: max(500, int(WEBSEARCH_MAX_FORMAT_CHARS))]
