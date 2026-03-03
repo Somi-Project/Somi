@@ -107,6 +107,14 @@ from handlers.routing import RouteDecision
 from runtime.ticketing import ExecutionTicket
 
 
+class _AsyncNoopTimeout:
+    async def __aenter__(self):
+        return None
+
+    async def __aexit__(self, exc_type, exc, tb):
+        return False
+
+
 class _DummyLLM:
     async def chat(self, *args, **kwargs):
         return {"message": {"content": "- Ship docs\n- Run tests"}}
@@ -234,3 +242,108 @@ def test_refresh_profile_persists_corrected_active_persona(monkeypatch, patched_
     assert saved["n"] == 1
     assert saved["profile"]["active_persona_key"] == "Name: Somi"
     assert isinstance(persona, dict)
+
+
+def test_naturalize_search_output_handles_finance_markers(monkeypatch, patched_agent):
+    ag = patched_agent
+
+    class _CleanupLLM:
+        async def chat(self, *args, **kwargs):
+            return {"message": {"content": "Cleaned friendly answer."}}
+
+    ag.ollama_client = _CleanupLLM()
+    monkeypatch.setattr(agents_mod, "INSTRUCT_MODEL", "stub-instruct", raising=False)
+
+    raw = "Meta: category=finance\nyfinance_history\nReply 'expand 1'"
+    out = asyncio.run(ag._naturalize_search_output(raw, "what was btc in nov 2022"))
+    assert out == "Cleaned friendly answer."
+
+
+def test_generate_response_finance_followup_early_path_is_naturalized(monkeypatch, patched_agent):
+    ag = patched_agent
+
+    monkeypatch.setattr(agents_mod, "maybe_emit_continuity_artifact", lambda *a, **k: ContinuityResult(artifact=None, confidence=0.0))
+    monkeypatch.setattr(
+        ag.artifact_detector,
+        "detect",
+        lambda *a, **k: ArtifactIntentDecision(artifact_intent=None, confidence=0.0, reason="none", trigger_reason={}),
+    )
+
+    class _FinanceHandler:
+        async def search_historical_price(self, *args, **kwargs):
+            return [{"symbol": "BTC", "source": "yfinance_history"}]
+
+    ag.websearch.finance_handler = _FinanceHandler()
+    ag.websearch.format_results = lambda *_a, **_k: "Meta: category=finance\nyfinance_history\nraw historical dump"
+
+    class _Ctx:
+        last_tool_type = "finance"
+        last_results = [{"dummy": True}]
+        last_query = "whats the price of bitcoin"
+
+    ag.tool_context_store.get = lambda *_a, **_k: _Ctx()
+
+    async def _naturalize(raw_content, original_prompt):
+        assert "yfinance_history" in raw_content
+        return "Naturalized finance follow-up answer"
+
+    monkeypatch.setattr(ag, "_naturalize_search_output", _naturalize)
+    monkeypatch.setattr(agents_mod.asyncio, "timeout", lambda *_a, **_k: _AsyncNoopTimeout(), raising=False)
+
+    out = asyncio.run(ag.generate_response("what was the price in nov 2022", user_id="u_async_test"))
+    assert out == "Naturalized finance follow-up answer"
+
+
+def test_generate_response_news_expand_then_opinion_flow(monkeypatch, patched_agent):
+    ag = patched_agent
+
+    monkeypatch.setattr(agents_mod, "maybe_emit_continuity_artifact", lambda *a, **k: ContinuityResult(artifact=None, confidence=0.0))
+    monkeypatch.setattr(
+        ag.artifact_detector,
+        "detect",
+        lambda *a, **k: ArtifactIntentDecision(artifact_intent=None, confidence=0.0, reason="none", trigger_reason={}),
+    )
+
+    routes = [
+        RouteDecision(route="websearch", tool_veto=False, reason="news", signals={}),
+        RouteDecision(route="websearch", tool_veto=False, reason="expand", signals={}),
+        RouteDecision(route="llm_only", tool_veto=False, reason="opinion", signals={}),
+    ]
+
+    def _decide_route(*args, **kwargs):
+        return routes.pop(0)
+
+    monkeypatch.setattr(agents_mod, "decide_route", _decide_route)
+    monkeypatch.setattr(agents_mod, "INSTRUCT_MODEL", "stub-instruct", raising=False)
+    monkeypatch.setattr(agents_mod.asyncio, "timeout", lambda *_a, **_k: _AsyncNoopTimeout(), raising=False)
+
+    class _SeqLLM:
+        def __init__(self):
+            self.calls = 0
+
+        async def chat(self, *args, **kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                return {"message": {"content": "## Web/Search Context\nItem 1: Headline"}}
+            if self.calls == 2:
+                return {"message": {"content": "Naturalized news summary"}}
+            if self.calls == 3:
+                return {"message": {"content": "Reply 'expand 1'\nMeta: category=news"}}
+            if self.calls == 4:
+                return {"message": {"content": "Naturalized expanded item one"}}
+            return {"message": {"content": "My opinion: this is significant because ..."}}
+
+    ag.ollama_client = _SeqLLM()
+    async def _search(*a, **k):
+        return [{"title": "news"}]
+
+    ag.websearch.search = _search
+    ag.websearch.format_results = lambda *a, **k: "## Web/Search Context\nsource"
+
+    out1 = asyncio.run(ag.generate_response("news today", user_id="u_async_test"))
+    out2 = asyncio.run(ag.generate_response("expand on news item one", user_id="u_async_test"))
+    out3 = asyncio.run(ag.generate_response("what is your opinion of that news", user_id="u_async_test"))
+
+    assert out1 == "Naturalized news summary"
+    assert out2 == "Naturalized expanded item one"
+    assert "opinion" in out3.lower()

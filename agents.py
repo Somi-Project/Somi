@@ -575,6 +575,40 @@ class Agent:
         if self.current_mode != "game":
             text = re.sub(r"```json\s*\{.*?\}\s*```", "", text, flags=re.DOTALL)
         return text.strip()
+    async def _naturalize_search_output(self, raw_content: str, original_prompt: str) -> str:
+        """Use INSTRUCT_MODEL to clean raw websearch / finance historical output.
+        Works on BOTH normal search and the early finance historical path."""
+        if not raw_content:
+            return raw_content
+
+        # Broader trigger for all raw dumps (including yfinance_history)
+        raw_markers = ["## Web/Search Context", "yfinance_history", "Reply 'expand", "Meta: category="]
+        if not any(marker in raw_content for marker in raw_markers):
+            return raw_content
+
+        cleanup_prompt = f"""Turn this raw search or historical price response into a natural, friendly, conversational answer.
+
+- Remove ALL technical headers, metadata, "Reply 'expand X'", "Meta: ...", etc.
+- Keep every important fact, price range, open/close/average, dates, and source.
+- Write in warm, natural language like a helpful friend.
+- End with a short friendly offer for more help.
+
+Original user question: {original_prompt}
+
+Raw content to clean:
+{raw_content}"""
+
+        try:
+            resp = await self.ollama_client.chat(
+                model=INSTRUCT_MODEL,
+                messages=[{"role": "user", "content": cleanup_prompt}],
+                options={"temperature": 0.3, "max_tokens": 1000, "keep_alive": 300},
+            )
+            cleaned = resp.get("message", {}).get("content", "") or raw_content
+            return cleaned.strip()
+        except Exception as e:
+            logger.warning(f"Search naturalize failed (non-fatal): {e}")
+            return raw_content
     def _compose_identity_block(self) -> str:
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
@@ -1357,6 +1391,10 @@ class Agent:
             if hist_res:
                 self.tool_context_store.set(active_user_id, "finance", routing_prompt, hist_res)
                 hist_text = self.websearch.format_results(hist_res)
+
+                # Apply naturalize here too — this is the early path that was bypassing cleanup
+                hist_text = await self._naturalize_search_output(hist_text, prompt)
+
                 self._push_history_for(active_user_id, prompt, hist_text)
                 return hist_text
         should_search = decision.route == "websearch" or force_websearch_for_research or force_followup_search
@@ -1552,6 +1590,11 @@ class Agent:
                     },
                 )
             content = resp.get("message", {}).get("content", "") or ""
+
+            # ==================== NATURAL SEARCH OUTPUT CLEANUP v4.2 ====================
+            # Covers normal search + any remaining raw dumps
+            if should_search or any(marker in content for marker in ["## Web/Search Context", "yfinance_history", "Reply 'expand", "Meta: category="]):
+                content = await self._naturalize_search_output(content, prompt)
         except Exception as e:
             logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
             content = "Sorry — generation failed. Try again."
