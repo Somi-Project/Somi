@@ -260,6 +260,23 @@ def test_ii_news_followup_variant_result_number():
     assert r is not None and r.url.endswith("/two")
 
 
+
+
+def test_ii_news_followup_variant_quoted_title():
+    store = ToolContextStore(ttl_seconds=300)
+    store.set(
+        "s3",
+        "news",
+        "latest news in trinidad and tobago",
+        [
+            {"title": "PM announces flood relief package", "url": "https://news.example.com/pm-flood", "description": "..."},
+            {"title": "Tourism growth beats forecast", "url": "https://news.example.com/tourism", "description": "..."},
+        ],
+    )
+    r = FollowUpResolver().resolve("can u expand on 'PM announces flood relief package'?", store.get("s3"))
+    assert r is not None
+    assert r.action == "open_url_and_summarize"
+    assert r.url.endswith("/pm-flood")
 def test_contextual_news_followup_routes_websearch():
     d = decide_route(
         "expand on that story",

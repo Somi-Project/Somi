@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Dict, List, Optional
@@ -37,6 +38,16 @@ from .session_summary import build_summary_from_recent_turns, should_update_summ
 from .store import SQLiteMemoryStore, utcnow_iso
 
 logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _compat_asyncio_timeout(seconds: float):
+    if hasattr(asyncio, "timeout"):
+        async with asyncio.timeout(seconds):
+            yield
+    else:
+        yield
+
 PINNED_KEYS = {"output_format", "timezone", "preferred_name", "default_location", "name", "favorite_color", "dog_name", "favorite_drink", "coding_style"}
 VALID_SCOPES = {"global", "profile", "task", "conversation", "vision"}
 IDENTITY_KEYS = {"name", "preferred_name", "timezone", "default_location", "favorite_color"}
@@ -376,7 +387,7 @@ class Memory3Manager:
                     "Focus on stable user goals/preferences and open tasks."
                     f"\n\nTurns:\n{raw_turns}"
                 )
-                async with asyncio.timeout(25.0):
+                async with _compat_asyncio_timeout(25.0):
                     resp = await self.client.chat(
                         model=SUMMARY_MODEL,
                         messages=[{"role": "user", "content": prompt}],

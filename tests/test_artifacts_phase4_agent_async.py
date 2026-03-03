@@ -136,6 +136,11 @@ def patched_agent(monkeypatch, tmp_path):
     monkeypatch.setattr(ag, "_memory_ingest_nonblocking", lambda *a, **k: None)
     monkeypatch.setattr(ag, "_should_inject_due_context", lambda *a, **k: False)
 
+    async def _no_route_override(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(ag, "_llm_decide_freshness_route", _no_route_override)
+
     async def _mem_ctx(*args, **kwargs):
         return ""
 
@@ -347,3 +352,123 @@ def test_generate_response_news_expand_then_opinion_flow(monkeypatch, patched_ag
     assert out1 == "Naturalized news summary"
     assert out2 == "Naturalized expanded item one"
     assert "opinion" in out3.lower()
+
+
+def test_async_agent_instruct_route_override_to_websearch(monkeypatch, patched_agent):
+    ag = patched_agent
+    calls = {"n": 0}
+
+    async def _search(*args, **kwargs):
+        calls["n"] += 1
+        return [{"title": "stub", "url": "https://example.com", "description": "ok"}]
+
+    monkeypatch.setattr(ag, "_llm_decide_freshness_route", lambda *a, **k: asyncio.sleep(0, result="websearch"))
+    ag.websearch.search = _search
+    ag.websearch.format_results = lambda *a, **k: "## Web/Search Context\nStub result"
+
+    out = asyncio.run(ag.generate_response("tell me latest market move", user_id="u_async_test"))
+    assert isinstance(out, str)
+    assert calls["n"] == 1
+
+
+def test_end_to_end_simulation_matrix(monkeypatch, patched_agent):
+    """Simulate key user journeys across routing, follow-up resolution, and response paths."""
+    ag = patched_agent
+
+    monkeypatch.setattr(agents_mod, "maybe_emit_continuity_artifact", lambda *a, **k: ContinuityResult(artifact=None, confidence=0.0))
+    monkeypatch.setattr(
+        ag.artifact_detector,
+        "detect",
+        lambda *a, **k: ArtifactIntentDecision(artifact_intent=None, confidence=0.0, reason="none", trigger_reason={}),
+    )
+
+    async def _freshness_route(query: str, current_route: str):
+        q = (query or "").lower()
+        if "hypertension guidelines 2023" in q:
+            return "llm_only"
+        if "compare and contrast" in q:
+            return "llm_only"
+        return current_route
+
+    monkeypatch.setattr(ag, "_llm_decide_freshness_route", _freshness_route)
+
+    def _decide_route(prompt, agent_state=None):
+        pl = (prompt or "").lower()
+        if any(k in pl for k in ("news", "price", "weather", "hypertension guidelines 2026")):
+            return RouteDecision(route="websearch", tool_veto=False, reason="sim", signals={"intent": "general"})
+        return RouteDecision(route="llm_only", tool_veto=False, reason="sim", signals={})
+
+    monkeypatch.setattr(agents_mod, "decide_route", _decide_route)
+
+    class _SeqLLM:
+        async def chat(self, *args, **kwargs):
+            content = ((kwargs.get("messages") or [{}])[-1].get("content") or "")
+            if "Raw content to clean" in content:
+                return {"message": {"content": "Naturalized summary."}}
+            if "compare and contrast" in content.lower():
+                return {"message": {"content": "2026 guideline is newer and broader; 2023 is older and narrower."}}
+            return {"message": {"content": "General LLM response."}}
+
+    search_queries = []
+
+    class _Finance:
+        async def search_historical_price(self, q, context_symbol=None):
+            ql = (q or "").lower()
+            if "2021" in ql or "historical" in ql:
+                return [{"title": "Historical BTC range", "url": "https://fin/hist", "description": "range", "source": "yfinance_history"}]
+            return []
+
+    async def _search(q, **kwargs):
+        search_queries.append(q)
+        ql = (q or "").lower()
+        if "summarize this url" in ql and "news/tt1" in ql:
+            return [{"title": "Expanded TT news", "url": "https://news/tt1", "description": "details"}]
+        if "summarize this url" in ql and "finance/btc" in ql:
+            return [{"title": "Expanded BTC quote", "url": "https://finance/btc", "description": "details"}]
+        if "news" in ql:
+            return [
+                {"title": "Flood alert in Trinidad", "url": "https://news/tt1", "description": "headline", "rank": 1},
+                {"title": "Energy summit in Tobago", "url": "https://news/tt2", "description": "headline", "rank": 2},
+            ]
+        if "current price" in ql or "btc" in ql:
+            return [{"title": "BTC quote", "url": "https://finance/btc", "description": "BTC 65,000", "rank": 1}]
+        if "weather" in ql:
+            return [{"title": "POS weather", "url": "https://weather/pos", "description": "rain chance"}]
+        if "hypertension guidelines 2026" in ql:
+            return [{"title": "Hypertension guidelines 2026", "url": "https://research/htn-2026", "description": "updated guidance"}]
+        return [{"title": "Generic", "url": "https://generic", "description": "fallback"}]
+
+    ag.ollama_client = _SeqLLM()
+    ag.websearch.search = _search
+    ag.websearch.finance_handler = _Finance()
+    ag.websearch.format_results = lambda rows: "## Web/Search Context\n" + "\n".join(
+        [f"{i+1}. {r.get('title')} - {r.get('url')}" for i, r in enumerate(rows)]
+    )
+
+    prompts = [
+        "Give me a general response about blood pressure.",
+        "what's the current news in trinidad and tobago",
+        "Can u expand on 'Flood alert in Trinidad'?",
+        "what is the current price of BTC?",
+        "Can u expand on 'BTC quote'?",
+        "what was btc price in october 2021",
+        "weather in port of spain tomorrow",
+        "hypertension guidelines 2026",
+        "Hypertension guidelines 2023",
+        "compare and contrast the two guidelines",
+    ]
+
+    outs = []
+    for p in prompts:
+        outs.append(asyncio.run(ag.generate_response(p, user_id="u_async_test")))
+
+    # broad stability checks
+    assert len(outs) == 10
+    assert all(isinstance(x, str) and len(x) > 0 for x in outs)
+
+    # follow-up expansion for quoted news and finance result titles
+    assert any("summarize this URL: https://news/tt1" in q for q in search_queries)
+    assert any("summarize this URL: https://finance/btc" in q for q in search_queries)
+
+    # 2023 + compare should stay in llm-only path under freshness override in this simulation
+    assert not any("hypertension guidelines 2023" == q.lower().strip() for q in search_queries)
