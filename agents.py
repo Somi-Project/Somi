@@ -1453,7 +1453,8 @@ class Agent:
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
-        if follow_ctx and follow_ctx.last_tool_type == "finance":
+        no_websearch_override = bool(decision.signals.get("no_websearch_override", False))
+        if follow_ctx and follow_ctx.last_tool_type == "finance" and not no_websearch_override:
             hist_res = await self.websearch.finance_handler.search_historical_price(routing_prompt)
             if hist_res:
                 self.tool_context_store.set(active_user_id, "finance", routing_prompt, hist_res)
@@ -1488,6 +1489,9 @@ class Agent:
             or force_websearch_for_research
             or force_followup_search
         )
+        if no_websearch_override:
+            should_search = False
+            logger.info("no_websearch_override: true")
         reuse_evidence = can_reuse_evidence(routing_prompt, prev_state)
         if should_search and not reuse_evidence and follow_ctx:
             follow_ctx.last_results = []

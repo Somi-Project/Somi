@@ -58,6 +58,21 @@ def _is_explicit_websearch(prompt_l: str) -> bool:
     )
 
 
+def _has_no_websearch_override(prompt_l: str) -> bool:
+    blocked_phrases = (
+        "no websearch",
+        "no web search",
+        "do not browse",
+        "don't browse",
+        "no browsing",
+        "internal knowledge only",
+        "use internal knowledge only",
+        "no internet",
+        "offline only",
+    )
+    return any(phrase in prompt_l for phrase in blocked_phrases)
+
+
 def _is_url_summarize_request(prompt: str) -> bool:
     p = str(prompt or "")
     pl = p.lower()
@@ -288,6 +303,18 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
 
     if parse_conversion_request(p) is not None:
         return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion", signals={"requires_execution": False, "read_only": True})
+
+    if _has_no_websearch_override(pl):
+        return RouteDecision(
+            route="llm_only",
+            tool_veto=True,
+            reason="user_requested_no_websearch",
+            signals={
+                "no_websearch_override": True,
+                "requires_execution": False,
+                "read_only": True,
+            },
+        )
 
     if _is_url_summarize_request(p):
         return RouteDecision(

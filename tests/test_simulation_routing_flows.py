@@ -321,3 +321,30 @@ def test_contextual_finance_followup_uses_context_subtype_when_pronoun_only():
     assert d.route == "websearch"
     assert d.reason == "contextual_followup_finance"
     assert d.signals.get("intent") == "crypto"
+
+
+def test_no_websearch_override_forces_llm_only_on_price_query():
+    d = decide_route("no websearch whats the price of bitcoin now")
+    assert d.route == "llm_only"
+    assert d.reason == "user_requested_no_websearch"
+    assert d.signals.get("no_websearch_override") is True
+
+
+def test_no_websearch_override_phrase_variants():
+    d = decide_route("Using internal knowledge only no websearch what was oil price Oct 2019")
+    assert d.route == "llm_only"
+    assert d.reason == "user_requested_no_websearch"
+    assert d.signals.get("no_websearch_override") is True
+
+
+def test_price_query_without_override_still_routes_websearch():
+    d = decide_route("whats the price of bitcoin now")
+    assert d.route == "websearch"
+    assert d.signals.get("intent") == "crypto"
+
+
+def test_no_websearch_override_historical_query_routes_llm_only():
+    d = decide_route("no websearch what was bitcoin price in october 2021")
+    assert d.route == "llm_only"
+    assert d.reason == "user_requested_no_websearch"
+    assert d.signals.get("no_websearch_override") is True
