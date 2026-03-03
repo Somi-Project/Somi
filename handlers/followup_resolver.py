@@ -61,6 +61,40 @@ class FollowUpResolver:
             return ""
         return ""
 
+    def is_explicit_reference(self, text: str) -> bool:
+        tl = (text or "").lower().strip()
+        if not tl:
+            return False
+        if self._extract_url(tl):
+            return True
+        return bool(
+            re.search(
+                r"\b("
+                r"result\s*#?\d+|link\s*#?\d+|headline\s*#?\d+|article\s*#?\d+|story\s*#?\d+|item\s*#?\d+|"
+                r"the\s+(first|second|third|fourth|fifth|\d+(?:st|nd|rd|th)?)\s+(result|link|headline|article|story|item)|"
+                r"expand\s+(?:on\s+)?(?:headline|article|story|result|link)\s*#?\d+|"
+                r"summari(?:ze|se)\s+(?:the\s+)?(?:\d+(?:st|nd|rd|th)?|first|second|third|fourth|fifth)\s+(?:result|link|headline|article|story|item)"
+                r")\b",
+                tl,
+            )
+        )
+
+    def is_mode_switch_explanation(self, text: str) -> bool:
+        tl = (text or "").lower().strip()
+        if not tl:
+            return False
+        return bool(
+            re.search(
+                r"\b("
+                r"teach me about|explain|give me an overview|give me a primer|"
+                r"what is|how does|help me understand|walk me through|"
+                r"break down|intro to|introduction to|basics of|"
+                r"tell me about|describe"
+                r")\b",
+                tl,
+            )
+        )
+
     def _looks_like_followup(self, text: str) -> bool:
         tl = (text or "").lower()
         return bool(
@@ -137,11 +171,11 @@ class FollowUpResolver:
 
     def _ordinal_rank(self, text: str) -> Optional[int]:
         tl = (text or "").lower()
-        m = re.search(r"(?:result|link|story|item|number|paper|#)\s*(\d{1,2})\b", tl)
+        m = re.search(r"(?:result|link|story|item|headline|article|number|paper|#)\s*(\d{1,2})\b", tl)
         if m:
             return int(m.group(1))
         m2 = re.search(r"\b(\d{1,2})(?:st|nd|rd|th)?\b", tl)
-        if m2 and any(k in tl for k in ("result", "link", "story", "item", "paper", "that", "the")):
+        if m2 and any(k in tl for k in ("result", "link", "story", "item", "headline", "article", "paper", "that", "the")):
             return int(m2.group(1))
         for k, v in _ORDINALS.items():
             if re.search(rf"\b{k}\b", tl):
@@ -226,6 +260,9 @@ class FollowUpResolver:
             )
 
         if not ctx or not ctx.last_results:
+            return None
+
+        if self.is_mode_switch_explanation(msg) and not self.is_explicit_reference(msg):
             return None
 
         rank = self._ordinal_rank(msg)

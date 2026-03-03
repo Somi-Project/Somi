@@ -362,3 +362,51 @@ def test_tool_context_finance_intent_and_selection_tracking():
     assert ctx.last_finance_intent == "crypto"
     assert ctx.last_selected_rank == 2
     assert ctx.last_selected_url.endswith("b.example.com")
+
+
+def test_followup_mode_switch_explanation_does_not_bind_to_last_result():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set("u_mode", "news", "latest climate news", [
+        {"title": "Climate policy update", "url": "https://a.example.com", "description": "A"},
+        {"title": "Energy market outlook", "url": "https://b.example.com", "description": "B"},
+    ])
+    ctx = store.get("u_mode")
+    resolver = FollowUpResolver()
+
+    assert resolver.is_mode_switch_explanation("teach me about diffusion models") is True
+    assert resolver.is_explicit_reference("teach me about diffusion models") is False
+
+    r = resolver.resolve("teach me about diffusion models", ctx)
+    assert r is None
+
+
+def test_followup_explicit_reference_summarize_second_result_binds():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set("u_bind_1", "news", "latest ai news", [
+        {"title": "Story A", "url": "https://a.example.com", "description": "A"},
+        {"title": "Story B", "url": "https://b.example.com", "description": "B"},
+    ])
+    ctx = store.get("u_bind_1")
+    resolver = FollowUpResolver()
+
+    assert resolver.is_explicit_reference("summarize the 2nd result") is True
+    r = resolver.resolve("summarize the 2nd result", ctx)
+    assert r is not None
+    assert r.action == "open_url_and_summarize"
+    assert r.url.endswith("b.example.com")
+
+
+def test_followup_explicit_reference_expand_headline_two_binds():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set("u_bind_2", "news", "latest ai headlines", [
+        {"title": "Story A", "url": "https://a.example.com", "description": "A"},
+        {"title": "Story B", "url": "https://b.example.com", "description": "B"},
+    ])
+    ctx = store.get("u_bind_2")
+    resolver = FollowUpResolver()
+
+    assert resolver.is_explicit_reference("expand headline 2") is True
+    r = resolver.resolve("expand headline 2", ctx)
+    assert r is not None
+    assert r.action == "open_url_and_summarize"
+    assert r.url.endswith("b.example.com")

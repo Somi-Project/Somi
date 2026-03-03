@@ -298,6 +298,18 @@ def test_contextual_news_followup_routes_websearch():
     assert d.reason == "contextual_followup_news_web"
 
 
+def test_contextual_followup_skipped_when_binding_is_forced_off():
+    d = decide_route(
+        "expand on that story",
+        agent_state={
+            "last_tool_type": "news",
+            "has_tool_context": True,
+            "force_no_followup_binding": True,
+        },
+    )
+    assert d.reason != "contextual_followup_news_web"
+
+
 def test_followup_resolver_rewrite_query_has_no_internal_scaffolding():
     store = ToolContextStore(ttl_seconds=300)
     store.set(

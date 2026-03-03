@@ -248,7 +248,18 @@ class Agent:
     def _heartbeat_first_interaction_of_day(self, active_user_id: str, profile: dict) -> bool:
         today = datetime.now(timezone.utc).date().isoformat()
         return str(profile.get("last_brief_date") or "") != today
-    def _log_route_snapshot(self, *, user_id: str, prompt: str, raw_user_text: str, routing_text_used: str, decision: Any, last_tool_type: str = "") -> None:
+    def _log_route_snapshot(
+        self,
+        *,
+        user_id: str,
+        prompt: str,
+        raw_user_text: str,
+        routing_text_used: str,
+        decision: Any,
+        last_tool_type: str = "",
+        mode_switch_explanation: bool = False,
+        ignore_last_results: bool = False,
+    ) -> None:
         try:
             path = os.path.join("sessions", "logs", "routing_decisions.log")
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -262,6 +273,8 @@ class Agent:
                 "reason": str(getattr(decision, "reason", "")),
                 "intent": str((getattr(decision, "signals", {}) or {}).get("intent", "")),
                 "last_tool_type": str(last_tool_type or ""),
+                "mode_switch_explanation": bool(mode_switch_explanation),
+                "ignore_last_results": bool(ignore_last_results),
             }
             with open(path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -1137,9 +1150,20 @@ class Agent:
         routing_prompt = sanitize_user_visible_prompt(corrected_intent_text or raw_user_text)
         # ==================== SMART CONTEXTUAL FOLLOW-UPS v3.0 ====================
         follow_ctx = self.tool_context_store.get(active_user_id)
+        mode_switch_explanation = bool(self.followup_resolver.is_mode_switch_explanation(routing_prompt))
+        explicit_reference = bool(self.followup_resolver.is_explicit_reference(routing_prompt))
+        ignore_last_results = bool(mode_switch_explanation and not explicit_reference)
+        force_no_followup_binding = bool(ignore_last_results)
         follow_resolution = None
-        if getattr(self, "enable_smart_followups", True):
+        if getattr(self, "enable_smart_followups", True) and not force_no_followup_binding:
             follow_resolution = self.followup_resolver.resolve(routing_prompt, follow_ctx)
+
+        logger.info(
+            "followup_mode_guard mode_switch_explanation=%s ignore_last_results=%s force_no_followup_binding=%s",
+            mode_switch_explanation,
+            ignore_last_results,
+            force_no_followup_binding,
+        )
 
         force_followup_search = False
 
@@ -1190,8 +1214,10 @@ class Agent:
             agent_state={
                 "mode": self.current_mode,
                 "last_tool_type": (follow_ctx.last_tool_type if follow_ctx else ""),
-                "has_tool_context": bool(follow_ctx and follow_ctx.last_results),
+                "has_tool_context": bool(follow_ctx and follow_ctx.last_results and not ignore_last_results),
                 "last_finance_intent": (follow_ctx.last_finance_intent if follow_ctx else ""),
+                "ignore_last_results": ignore_last_results,
+                "force_no_followup_binding": force_no_followup_binding,
             },
         )
         self._log_route_snapshot(
@@ -1201,6 +1227,8 @@ class Agent:
             routing_text_used=routing_prompt,
             decision=decision,
             last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""),
+            mode_switch_explanation=mode_switch_explanation,
+            ignore_last_results=ignore_last_results,
         )
         capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
