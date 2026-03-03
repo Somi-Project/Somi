@@ -14,4 +14,4 @@ class ChatPopoutWindow(QDialog):
 
     def closeEvent(self, event):
         self.app.dock_chat_panel()
-        event.ignore()
+        event.accept()

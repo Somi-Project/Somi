@@ -42,14 +42,9 @@ class ChatPanel(QWidget):
         self.selected_image_path = ""
         self.ocr_worker = None
         self.pending_ocr_prompt = ""
-        self.sessions_dir = Path("sessions/chat")
-        self.sessions_index_path = self.sessions_dir / "index.json"
-        self.max_sessions = 20
-        self.current_session_id = ""
-        self.history_path = self.sessions_dir / "default_user.jsonl"
+        self.history_path = Path("sessions/chat/default_user.jsonl")
         self.max_history_lines_to_load = 200
         self.history_loaded = False
-        self.sessions = []
 
         self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.spinner_index = 0
@@ -59,7 +54,6 @@ class ChatPanel(QWidget):
         self.spinner_timer.timeout.connect(self._tick_spinner)
 
         self._build_ui()
-        self._init_sessions()
         self._set_connected_state(False)
         self.set_popout_state(False, False)
 
@@ -93,14 +87,6 @@ class ChatPanel(QWidget):
         self.apply_agent_button = QPushButton("Apply Agent")
         controls.addWidget(self.apply_agent_button)
         root.addLayout(controls)
-
-        sessions_row = QHBoxLayout()
-        sessions_row.addWidget(QLabel("Session:"))
-        self.session_combo = QComboBox()
-        sessions_row.addWidget(self.session_combo, 1)
-        self.new_session_button = QPushButton("New Session")
-        sessions_row.addWidget(self.new_session_button)
-        root.addLayout(sessions_row)
 
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
@@ -144,133 +130,14 @@ class ChatPanel(QWidget):
         self.ocr_settings_button.clicked.connect(self.open_ocr_settings)
         self.schema_editor_button.clicked.connect(self.open_schema_editor)
         self.apply_agent_button.clicked.connect(self._apply_agent)
-        self.new_session_button.clicked.connect(self.start_new_session)
-        self.session_combo.currentIndexChanged.connect(self._on_session_changed)
 
     def _set_connected_state(self, connected: bool):
         self.connected = connected
+        # Keep prompt/send available even when disconnected so users can send to auto-restart worker.
         self.prompt_entry.setEnabled(True)
         self.send_button.setEnabled(True)
         self.btn_stop_gen.setEnabled(False)
         self.status_label.setText("Status: Idle" if connected else "Status: Stopped")
-
-    def _session_file_for(self, session_id: str) -> Path:
-        return self.sessions_dir / f"{session_id}.jsonl"
-
-    def _load_sessions_index(self):
-        if not self.sessions_index_path.exists():
-            return []
-        try:
-            data = json.loads(self.sessions_index_path.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return [d for d in data if isinstance(d, dict) and d.get("id")]
-        except Exception:
-            pass
-        return []
-
-    def _normalize_sessions(self):
-        normalized = []
-        for sess in self.sessions:
-            sid = str(sess.get("id", "")).strip()
-            if not sid:
-                continue
-            path = self._session_file_for(sid)
-            if not path.exists():
-                continue
-            normalized.append({
-                "id": sid,
-                "title": str(sess.get("title") or f"Session {sid}"),
-                "updated_at": str(sess.get("updated_at") or datetime.now().isoformat()),
-            })
-        self.sessions = normalized
-
-    def _save_sessions_index(self):
-        try:
-            self.sessions_dir.mkdir(parents=True, exist_ok=True)
-            self.sessions_index_path.write_text(json.dumps(self.sessions, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-
-    def _prune_sessions(self):
-        if len(self.sessions) <= self.max_sessions:
-            return
-        self.sessions.sort(key=lambda s: str(s.get("updated_at", "")))
-        while len(self.sessions) > self.max_sessions:
-            oldest = self.sessions.pop(0)
-            try:
-                self._session_file_for(str(oldest.get("id", ""))).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def _refresh_session_combo(self):
-        self.session_combo.blockSignals(True)
-        self.session_combo.clear()
-        self.sessions.sort(key=lambda s: str(s.get("updated_at", "")), reverse=True)
-        for sess in self.sessions:
-            self.session_combo.addItem(str(sess.get("title", sess.get("id", "session"))), str(sess.get("id", "")))
-        idx = self.session_combo.findData(self.current_session_id)
-        if idx >= 0:
-            self.session_combo.setCurrentIndex(idx)
-        self.session_combo.blockSignals(False)
-
-    def _create_session(self, title: str | None = None) -> str:
-        sid = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        record = {
-            "id": sid,
-            "title": title or f"Session {datetime.now().strftime('%b %d %H:%M')}",
-            "updated_at": datetime.now().isoformat(),
-        }
-        self.sessions.append(record)
-        try:
-            self._session_file_for(sid).touch(exist_ok=True)
-        except Exception:
-            pass
-        self._prune_sessions()
-        self._save_sessions_index()
-        return sid
-
-    def _touch_session(self, session_id: str):
-        for sess in self.sessions:
-            if str(sess.get("id")) == str(session_id):
-                sess["updated_at"] = datetime.now().isoformat()
-                break
-        self._save_sessions_index()
-
-    def _init_sessions(self):
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self.sessions = self._load_sessions_index()
-        before_count = len(self.sessions)
-        self._normalize_sessions()
-        if len(self.sessions) != before_count:
-            self._save_sessions_index()
-        if not self.sessions:
-            first = self._create_session("Current Session")
-            self.current_session_id = first
-            self.history_path = self._session_file_for(first)
-        else:
-            self.sessions.sort(key=lambda s: str(s.get("updated_at", "")), reverse=True)
-            self.current_session_id = str(self.sessions[0]["id"])
-            self.history_path = self._session_file_for(self.current_session_id)
-        self._refresh_session_combo()
-
-    def start_new_session(self):
-        sid = self._create_session()
-        self.current_session_id = sid
-        self.history_path = self._session_file_for(sid)
-        self.history_loaded = False
-        self._refresh_session_combo()
-        self.load_history(force=True)
-
-    def _on_session_changed(self, index: int):
-        if index < 0:
-            return
-        sid = str(self.session_combo.itemData(index) or "")
-        if not sid or sid == self.current_session_id:
-            return
-        self.current_session_id = sid
-        self.history_path = self._session_file_for(sid)
-        self.history_loaded = False
-        self.load_history(force=True)
 
     def _apply_agent(self):
         selected = self.name_combo.currentText()
@@ -361,14 +228,11 @@ class ChatPanel(QWidget):
             "text": text,
             "agent_key": agent_key,
             "attachments": attachments or [],
-            "session_id": self.current_session_id,
         }
         try:
             self.history_path.parent.mkdir(parents=True, exist_ok=True)
             with self.history_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            self._touch_session(self.current_session_id)
-            self._refresh_session_combo()
         except Exception:
             pass
 
@@ -382,6 +246,7 @@ class ChatPanel(QWidget):
                 self.on_error("Chat worker is not available.")
                 return
         else:
+            # Keep active worker settings aligned with current panel toggle.
             self.worker.use_studies = self.use_studies_check.isChecked()
             try:
                 if self.worker.is_busy():
