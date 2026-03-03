@@ -330,6 +330,9 @@ class SomiAIGUI(QMainWindow):
         self.build_presence_panel(middle)
         self.build_embedded_chat(middle)
         self.build_intel_stream(middle)
+        middle.setStretch(0, 1)
+        middle.setStretch(1, 5)
+        middle.setStretch(2, 1)
         row.addLayout(middle, 2)
 
         self.build_speech_mini_console(row)
@@ -570,7 +573,7 @@ class SomiAIGUI(QMainWindow):
 
     def load_gui_theme_preference(self):
         data = self.read_gui_settings()
-        set_theme(str(data.get("theme", "default_dark")))
+        set_theme(str(data.get("theme", "light_modern")))
 
 
     def open_theme_selector(self):
