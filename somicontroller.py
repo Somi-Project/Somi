@@ -373,6 +373,7 @@ class SomiAIGUI(QMainWindow):
     def build_intel_stream(self, parent_layout):
         self.intel_card = HoverIntelCard()
         self.intel_card.setObjectName("card")
+        self.intel_card.setMaximumHeight(120)
         self.intel_card.hovered.connect(lambda v: setattr(self, "intel_paused", v))
         il = QVBoxLayout(self.intel_card)
         self.intel_title = QLabel("Intelligence Stream")
