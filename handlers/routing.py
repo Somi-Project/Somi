@@ -210,7 +210,18 @@ def _is_contextual_followup(prompt_l: str, agent_state: Optional[Dict[str, Any]]
 
     # Finance follow-up refinements with history/time constraints
     if last_tool == "finance":
-        if _has_time_constraint_markers(prompt_l) or re.search(r"\b(ath|all time high|history|historical|high|low|range|close)\b", prompt_l):
+        finance_followup_signal = bool(
+            _has_price_query(prompt_l)
+            or _has_crypto_markers(prompt_l)
+            or _has_stock_commodity_markers(prompt_l)
+            or _has_forex_markers(prompt_l)
+            or re.search(r"\b(what about|how about|and in|then|same asset|same coin|that one)\b", prompt_l)
+        )
+        history_signal = bool(
+            _has_time_constraint_markers(prompt_l)
+            or re.search(r"\b(ath|all time high|history|historical|high|low|range|close|open)\b", prompt_l)
+        )
+        if history_signal and finance_followup_signal:
             return RouteDecision(
                 route="websearch",
                 tool_veto=False,

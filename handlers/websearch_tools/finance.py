@@ -19,6 +19,18 @@ from .generalsearch import search_general
 logger = logging.getLogger(__name__)
 
 
+
+
+def _scalar_float(value, default: float = 0.0) -> float:
+    """Convert pandas/numpy scalars or 1-item Series/arrays to float safely."""
+    try:
+        if hasattr(value, "iloc"):
+            value = value.iloc[0]
+        elif hasattr(value, "item"):
+            value = value.item()
+        return float(value)
+    except Exception:
+        return float(default)
 class FinanceHandler:
     def __init__(self):
         self.timezone = pytz.timezone(SYSTEM_TIMEZONE)
@@ -659,11 +671,11 @@ class FinanceHandler:
             hist = await asyncio.to_thread(yf.download, symbol, start=start.isoformat(), end=end.isoformat(), interval="1d", progress=False)
             if hist is None or getattr(hist, "empty", True):
                 raise ValueError("empty_history")
-            h = float(hist["High"].max())
-            l = float(hist["Low"].min())
-            c = float(hist["Close"].iloc[-1])
-            o = float(hist["Open"].iloc[0])
-            avg = float(hist["Close"].mean())
+            h = _scalar_float(hist["High"].max())
+            l = _scalar_float(hist["Low"].min())
+            c = _scalar_float(hist["Close"].iloc[-1])
+            o = _scalar_float(hist["Open"].iloc[0])
+            avg = _scalar_float(hist["Close"].mean())
             desc = (
                 f"Historical {symbol} for {tc['start']} to {tc['end']}: "
                 f"range {l:,.2f} to {h:,.2f} USD; open {o:,.2f}; close {c:,.2f}; average close {avg:,.2f}."
