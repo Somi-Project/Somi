@@ -17,12 +17,13 @@ def test_current_bitcoin_price_is_search_only():
     assert plan.needs_recency is True
 
 
-def test_closing_price_with_sources_uses_search_and_date_anchor():
+def test_closing_price_with_sources_prefers_internal_knowledge_when_historical():
     plan = build_query_plan("bitcoin closing price on 2022-06-18 with sources")
-    assert plan.mode == "SEARCH_ONLY"
-    assert plan.evidence_enabled is True
+    assert plan.mode == "LLM_ONLY"
+    assert plan.evidence_enabled is False
     assert plan.time_anchor is not None
     assert plan.time_anchor.kind == "date"
+    assert plan.reason == "historical_exactness_internal"
 
 
 def test_personal_query_hardblock_stays_llm_only():
