@@ -1,4 +1,3 @@
-from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QDialog, QVBoxLayout
 
 
@@ -7,7 +6,6 @@ class ChatPopoutWindow(QDialog):
         super().__init__(app)
         self.app = app
         self.chat_panel = chat_panel
-        self.setWindowFlag(Qt.WindowType.WindowCloseButtonHint, False)
         self.setWindowTitle("SOMI — Chat")
         self.resize(860, 620)
         layout = QVBoxLayout(self)
@@ -16,4 +14,4 @@ class ChatPopoutWindow(QDialog):
 
     def closeEvent(self, event):
         self.app.dock_chat_panel()
-        event.ignore()
+        event.accept()
