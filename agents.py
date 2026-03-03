@@ -97,6 +97,33 @@ logger = logging.getLogger(__name__)
 logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+
+_FOLLOWUP_INJECTION_MARKERS = (
+    "previous query:",
+    "previous top result:",
+    "now answer this follow-up:",
+    "decide whether to:",
+    "build directly on the previous context",
+    "you have the previous search results available",
+)
+
+
+def sanitize_user_visible_prompt(text: str) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return ""
+    lower = raw.lower()
+    if lower.startswith("previous query:") or "now answer this follow-up:" in lower:
+        m = re.search(r"now\s+answer\s+this\s+follow-up\s*:\s*(.+)", raw, flags=re.IGNORECASE | re.DOTALL)
+        if m:
+            return (m.group(1) or "").strip().splitlines()[0].strip()
+    return raw
+
+
+def has_followup_injection_markers(text: str) -> bool:
+    tl = str(text or "").lower()
+    return any(marker in tl for marker in _FOLLOWUP_INJECTION_MARKERS)
+
 class Agent:
     def __init__(self, name: str, use_studies: bool = False, use_flow: bool = False, user_id: str = "default_user"):
         self.personality_config = "config/personalC.json"
@@ -221,7 +248,7 @@ class Agent:
     def _heartbeat_first_interaction_of_day(self, active_user_id: str, profile: dict) -> bool:
         today = datetime.now(timezone.utc).date().isoformat()
         return str(profile.get("last_brief_date") or "") != today
-    def _log_route_snapshot(self, *, user_id: str, prompt: str, decision: Any, last_tool_type: str = "") -> None:
+    def _log_route_snapshot(self, *, user_id: str, prompt: str, raw_user_text: str, routing_text_used: str, decision: Any, last_tool_type: str = "") -> None:
         try:
             path = os.path.join("sessions", "logs", "routing_decisions.log")
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -229,6 +256,8 @@ class Agent:
                 "ts": datetime.now(timezone.utc).isoformat(),
                 "user_id": str(user_id or "default_user"),
                 "prompt": str(prompt or "")[:260],
+                "raw_user_text": str(raw_user_text or "")[:260],
+                "routing_text_used": str(routing_text_used or "")[:260],
                 "route": str(getattr(decision, "route", "")),
                 "reason": str(getattr(decision, "reason", "")),
                 "intent": str((getattr(decision, "signals", {}) or {}).get("intent", "")),
@@ -1096,15 +1125,16 @@ class Agent:
     ) -> str:
         start_total = time.time()
         self.turn_counter += 1
-        prompt = (prompt or "").strip()
-        if not prompt:
+        raw_user_text = (prompt or "").strip()
+        if not raw_user_text:
             return "Hey, give me something to work with!"
+        prompt = raw_user_text
         # Call-level user_id override (Telegram/WhatsApp multi-chat)
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
         self._set_last_attachments(active_user_id, [])
         correction_note, corrected_intent_text = self._extract_user_correction(prompt)
-        routing_prompt = corrected_intent_text or prompt
+        routing_prompt = sanitize_user_visible_prompt(corrected_intent_text or raw_user_text)
         # ==================== SMART CONTEXTUAL FOLLOW-UPS v3.0 ====================
         follow_ctx = self.tool_context_store.get(active_user_id)
         follow_resolution = None
@@ -1122,10 +1152,15 @@ class Agent:
                 return "\n".join(lines)
 
             elif follow_resolution.action in ("open_url_and_summarize", "rewrite_query") and follow_resolution.rewritten_query:
-                routing_prompt = str(follow_resolution.rewritten_query).strip()
+                routing_prompt = sanitize_user_visible_prompt(str(follow_resolution.rewritten_query).strip())
                 force_followup_search = True
                 if follow_resolution.action == "open_url_and_summarize":
                     self.tool_context_store.mark_selected(active_user_id, url=str(follow_resolution.url or ""))
+        if has_followup_injection_markers(routing_prompt):
+            fallback_rewrite = ""
+            if follow_resolution and follow_resolution.action == "rewrite_query":
+                fallback_rewrite = sanitize_user_visible_prompt(str(follow_resolution.rewritten_query or "").strip())
+            routing_prompt = fallback_rewrite or sanitize_user_visible_prompt(raw_user_text)
         if correction_note:
             self._enqueue_memory_write(
                 prompt=f"Correction signal: {prompt}",
@@ -1159,7 +1194,14 @@ class Agent:
                 "last_finance_intent": (follow_ctx.last_finance_intent if follow_ctx else ""),
             },
         )
-        self._log_route_snapshot(user_id=active_user_id, prompt=routing_prompt, decision=decision, last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""))
+        self._log_route_snapshot(
+            user_id=active_user_id,
+            prompt=routing_prompt,
+            raw_user_text=raw_user_text,
+            routing_text_used=routing_prompt,
+            decision=decision,
+            last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""),
+        )
         capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
         read_only_fast_path = bool(decision.signals.get("read_only", False) and not toolbox_run)
