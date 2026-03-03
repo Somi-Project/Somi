@@ -574,7 +574,7 @@ class SomiAIGUI(QMainWindow):
 
     def load_gui_theme_preference(self):
         data = self.read_gui_settings()
-        set_theme(str(data.get("theme", "default_dark")))
+        set_theme(str(data.get("theme", "light_modern")))
 
 
     def open_theme_selector(self):
