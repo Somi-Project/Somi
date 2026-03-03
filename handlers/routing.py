@@ -222,11 +222,14 @@ def _is_contextual_followup(prompt_l: str, agent_state: Optional[Dict[str, Any]]
             or re.search(r"\b(ath|all time high|history|historical|high|low|range|close|open)\b", prompt_l)
         )
         if history_signal and finance_followup_signal:
+            inferred_intent = _detect_intent(prompt_l)
+            if inferred_intent not in {"crypto", "forex", "stock/commodity"}:
+                inferred_intent = "stock/commodity"
             return RouteDecision(
                 route="websearch",
                 tool_veto=False,
                 reason="contextual_followup_finance",
-                signals={"explicit": False, "volatile": True, "intent": "crypto", "followup": True, "requires_execution": False, "read_only": True},
+                signals={"explicit": False, "volatile": True, "intent": inferred_intent, "followup": True, "requires_execution": False, "read_only": True},
             )
 
     # Weather terse follow-up refinements

@@ -226,6 +226,17 @@ def test_contextual_finance_followup_routes_websearch():
     )
     assert d.route == "websearch"
     assert d.reason == "contextual_followup_finance"
+    assert d.signals.get("intent") == "crypto"
+
+
+def test_contextual_finance_followup_infers_non_crypto_subtype():
+    d = decide_route(
+        "what was the oil price in 2020",
+        agent_state={"last_tool_type": "finance", "has_tool_context": True},
+    )
+    assert d.route == "websearch"
+    assert d.reason == "contextual_followup_finance"
+    assert d.signals.get("intent") == "stock/commodity"
 
 
 def test_contextual_finance_followup_ignores_unrelated_time_question():
@@ -284,3 +295,18 @@ def test_contextual_news_followup_routes_websearch():
     )
     assert d.route == "websearch"
     assert d.reason == "contextual_followup_news_web"
+
+
+def test_followup_resolver_rewrite_query_has_no_internal_scaffolding():
+    store = ToolContextStore(ttl_seconds=300)
+    store.set(
+        "s3",
+        "finance",
+        "price of bitcoin",
+        [{"title": "BTC", "url": "https://example.com/btc", "description": "..."}],
+    )
+    r = FollowUpResolver().resolve("what about in nov 2022", store.get("s3"))
+    assert r is not None
+    assert r.action == "rewrite_query"
+    assert "Previous query:" not in r.rewritten_query
+    assert "Decide whether to" not in r.rewritten_query

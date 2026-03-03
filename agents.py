@@ -970,51 +970,6 @@ class Agent:
                 pass
             return "Done — I’ll stop using that." if removed_any else "I couldn’t find anything matching that to remove, but I’ll avoid bringing it up."
         return None
-    def _should_websearch(self, prompt: str) -> bool:
-        """
-        Network decision gate (natural-language-first):
-        - Default to LLM-only.
-        - Search only when user intent requires freshness/volatility/citations or research.
-        """
-        pl = (prompt or "").strip().lower()
-        if not pl:
-            return False
-        # Hard block: internal state / memory/goals/reminders must never websearch
-        if self._is_personal_memory_query(pl) or re.search(r"\bwhat'?s\s+my\b", pl):
-            return False
-        explicit = any(k in pl for k in (
-            "search", "look up", "google", "find online", "check online",
-            "source", "sources", "cite", "citation", "link", "verify", "confirm online",
-        ))
-        recency = any(k in pl for k in (
-            "latest", "current", "today", "now", "right now", "this week", "updated", "newest",
-            "breaking", "live", "recent",
-        ))
-        volatile = any(k in pl for k in (
-            "price", "quote", "market", "stock", "shares",
-            "bitcoin", "btc", "ethereum", "eth", "crypto", "coin",
-            "exchange rate", "fx", "forex",
-            "weather", "forecast", "temperature", "rain",
-            "news", "headline", "current events",
-        ))
-        research_keywords = (
-            "evidence", "paper", "papers", "study", "studies", "literature", "review",
-            "systematic review", "meta-analysis", "metaanalysis",
-            "rct", "randomized", "randomised", "trial", "clinical trial",
-            "guideline", "practice guideline", "consensus", "position statement",
-            "pmid", "pubmed", "doi", "arxiv", "openalex", "semantic scholar", "crossref",
-            "clinicaltrials", "clinicaltrials.gov", "nct",
-        )
-        research = any(k in pl for k in research_keywords) or bool(
-            re.search(r"\b(10\.\d{4,9}/\S+|pmid\s*\d{6,9}|nct\s*\d{8}|arxiv\s*:\s*\d{4}\.\d{4,5})\b", pl)
-        )
-        years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", pl)]
-        has_year = bool(years)
-        near_present = any(y >= 2023 for y in years)
-        historical_only = has_year and not (explicit or recency or volatile or research) and not near_present
-        if historical_only:
-            return False
-        return bool(explicit or recency or volatile or research or (has_year and near_present))
     def _build_rag_block(self, prompt: str, k: int = 2) -> str:
         if not self.use_studies:
             return ""
@@ -1166,13 +1121,10 @@ class Agent:
                     lines.append(f"{o.get('rank')}. {o.get('title')[:90]}")
                 return "\n".join(lines)
 
-            elif follow_resolution.action in ("open_url_and_summarize", "continue_topic") and follow_resolution.rewritten_query:
-                routing_prompt = follow_resolution.rewritten_query
-                # Force websearch only when opening a URL; for continue_topic, allow router
-                # to choose the fastest suitable path (preserves low-latency internal answers).
+            elif follow_resolution.action in ("open_url_and_summarize", "rewrite_query") and follow_resolution.rewritten_query:
+                routing_prompt = str(follow_resolution.rewritten_query).strip()
+                # Only URL-opening follow-ups are forced to websearch.
                 force_followup_search = follow_resolution.action == "open_url_and_summarize"
-                # Optional: log for debugging
-                # print(f"[FOLLOWUP] {follow_resolution.action} | {follow_resolution.context_note}")
         if correction_note:
             self._enqueue_memory_write(
                 prompt=f"Correction signal: {prompt}",

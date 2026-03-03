@@ -148,6 +148,15 @@ class FollowUpResolver:
             })
         return opts
 
+    def _build_rewrite_query(self, msg: str, last_query: str) -> str:
+        raw = (msg or "").strip()
+        if not last_query:
+            return raw
+        # Keep rewrite explicit and user-facing (no internal instructions or decision scaffolding).
+        if self._has_temporal_continuation(raw) or re.search(r"\b(what about|how about|and in|then|same asset|same coin|that one|it)\b", raw.lower()):
+            return f"{last_query} {raw}".strip()
+        return raw
+
     def resolve(self, user_text: str, ctx: Optional[ToolContext]) -> Optional[FollowUpResolution]:
         if not user_text:
             return None
@@ -227,31 +236,17 @@ class FollowUpResolver:
         temporal = self._has_temporal_continuation(msg)
         topic_score = self._topic_overlap(msg, ctx.last_query) if ctx.last_query else 0.0
 
-        is_strong_continuation = looks_followup or temporal or (topic_score >= self.continuation_threshold)
+        is_strong_continuation = temporal or (topic_score >= self.continuation_threshold)
 
         if is_strong_continuation:
-            context_prefix = f'Previous query: "{ctx.last_query}"\n'
-            if ctx.last_results:
-                top = ctx.last_results[0].get("title", "")[:150]
-                context_prefix += f"Previous top result: {top}\n"
-
-            # Let the router/LLM decide what to do with the context
-            enriched = (
-                f"{context_prefix}"
-                f"Now answer this follow-up: {msg}\n"
-                f"You have the previous search results available. Decide whether to:\n"
-                f"- Use internal knowledge\n"
-                f"- Perform a new targeted search (especially for historical data)\n"
-                f"- Summarize or expand one of the previous results\n"
-                f"Be natural and direct."
-            )
-
+            rewritten = self._build_rewrite_query(msg, ctx.last_query)
             return FollowUpResolution(
-                action="continue_topic",
-                rewritten_query=enriched,
+                action="rewrite_query",
+                rewritten_query=rewritten,
                 previous_query=ctx.last_query,
-                context_note="context-enriched continuation",
+                context_note="deterministic_rewrite_query",
             )
+
 
         # 7. Only clarify on weak explicit follow-up language
         if looks_followup:
