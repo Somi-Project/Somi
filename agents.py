@@ -45,6 +45,7 @@ from config.settings import (
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
+from handlers.websearch_tools.historical_search import maybe_enrich_historical_answer
 from handlers.routing import decide_route
 from routing import PrevTurnState, build_query_plan, can_reuse_evidence, extract_signals
 from handlers.search_bundle import render_search_bundle
@@ -1735,6 +1736,11 @@ class Agent:
             content = "Sorry — generation failed. Try again."
         content = self._clean_think_tags(content)
         content = self._strip_unwanted_json(content)
+        if not should_search:
+            try:
+                content = await maybe_enrich_historical_answer(routing_prompt, content)
+            except Exception as e:
+                logger.debug(f"Historical fallback skipped: {e}")
         if self._is_internal_artifact_leak(content):
             fallback_messages = self.promptforge.build_messages(
                 system_prompt=self.promptforge.build_system_prompt(
