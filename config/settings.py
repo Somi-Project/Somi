@@ -67,6 +67,7 @@ SUMMARY_LAST_TURNS_TO_SUMMARIZE = 12
 SUMMARY_USE_LLM = False
 SUMMARY_MODEL = MEMORY_MODEL
 ROUTING_DEBUG = True
+ENABLE_SMART_FOLLOWUPS = True   # Set False to completely disable the new resolver logic
 
 # Deterministic context budgets (approx-token budgets)
 BUDGET_MEMORY_TOKENS = 420
