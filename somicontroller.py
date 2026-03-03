@@ -331,8 +331,8 @@ class SomiAIGUI(QMainWindow):
         self.build_embedded_chat(middle)
         self.build_intel_stream(middle)
         middle.setStretch(0, 1)
-        middle.setStretch(1, 7)
-        middle.setStretch(2, 0)
+        middle.setStretch(1, 5)
+        middle.setStretch(2, 1)
         row.addLayout(middle, 2)
 
         self.build_speech_mini_console(row)
@@ -341,7 +341,6 @@ class SomiAIGUI(QMainWindow):
     def build_embedded_chat(self, parent_layout):
         card = QFrame()
         card.setObjectName("card")
-        card.setMinimumHeight(520)
         self.chat_host_layout = QVBoxLayout(card)
         self.chat_panel = ChatPanel(self)
         self.chat_host_layout.addWidget(self.chat_panel)
@@ -1121,43 +1120,25 @@ class SomiAIGUI(QMainWindow):
     def toggle_chat_popout(self, force_popout: bool = False):
         if not self.chat_panel:
             return
-        if force_popout:
-            if self.chat_is_popped:
-                if self.chat_popout:
-                    self.chat_popout.show()
-                    self.chat_popout.raise_()
-                    self.chat_popout.activateWindow()
-                self.chat_panel.set_popout_state(True, is_maximized=bool(self.chat_popout and self.chat_popout.isMaximized()))
-                return
-            self._popout_chat_panel()
+        if self.chat_is_popped and force_popout:
+            if self.chat_popout:
+                self.chat_popout.show()
+                self.chat_popout.raise_()
+                self.chat_popout.activateWindow()
+            self.chat_panel.set_popout_state(True, is_maximized=bool(self.chat_popout and self.chat_popout.isMaximized()))
             return
-
-        if self.chat_is_popped:
-            self.dock_chat_panel()
-        else:
-            self._popout_chat_panel()
-
-    def _popout_chat_panel(self):
-        if not self.chat_panel:
+        if not self.chat_is_popped:
+            if self.chat_panel.parent() and self.chat_host_layout:
+                self.chat_host_layout.removeWidget(self.chat_panel)
+            if not self.chat_popout:
+                self.chat_popout = ChatPopoutWindow(self, self.chat_panel)
+            self.chat_popout.show()
+            self.chat_popout.raise_()
+            self.chat_popout.activateWindow()
+            self.chat_is_popped = True
+            self.chat_panel.set_popout_state(True, is_maximized=self.chat_popout.isMaximized())
             return
-        parent_widget = self.chat_panel.parentWidget()
-        if parent_widget:
-            parent_layout = parent_widget.layout()
-            if parent_layout:
-                parent_layout.removeWidget(self.chat_panel)
-        elif self.chat_host_layout:
-            self.chat_host_layout.removeWidget(self.chat_panel)
-        if not self.chat_popout:
-            self.chat_popout = ChatPopoutWindow(self, self.chat_panel)
-        else:
-            pop_layout = self.chat_popout.layout()
-            if pop_layout and self.chat_panel.parent() is not self.chat_popout:
-                pop_layout.addWidget(self.chat_panel)
-        self.chat_popout.show()
-        self.chat_popout.raise_()
-        self.chat_popout.activateWindow()
-        self.chat_is_popped = True
-        self.chat_panel.set_popout_state(True, is_maximized=self.chat_popout.isMaximized())
+        self.dock_chat_panel()
 
     def dock_chat_panel(self):
         if self._chat_docking_in_progress:
@@ -1169,9 +1150,10 @@ class SomiAIGUI(QMainWindow):
         try:
             if self.chat_popout:
                 pop_layout = self.chat_popout.layout()
-                if pop_layout and self.chat_panel.parent() is self.chat_popout:
+                if pop_layout:
                     pop_layout.removeWidget(self.chat_panel)
-                self.chat_popout.hide()
+                self.chat_popout.deleteLater()
+                self.chat_popout = None
             self.chat_embed_parent.addWidget(self.chat_panel)
             self.chat_is_popped = False
             self.chat_panel.set_popout_state(False, False)

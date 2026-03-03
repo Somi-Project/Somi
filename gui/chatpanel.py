@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -26,7 +25,6 @@ from PyQt6.QtWidgets import (
 from config import settings
 from gui.aicoregui import OcrWorker, _themed_input_style, _themed_text_style
 from handlers.ocr.contracts import OcrRequest
-import ollama
 
 
 class ChatPanel(QWidget):
@@ -44,16 +42,9 @@ class ChatPanel(QWidget):
         self.selected_image_path = ""
         self.ocr_worker = None
         self.pending_ocr_prompt = ""
-        self.sessions_dir = Path("sessions/chat")
-        self.archive_dir = self.sessions_dir / "archive"
-        self.sessions_index_path = self.sessions_dir / "index.json"
-        self.max_sessions = 20
-        self.current_session_id = ""
-        self.history_path = self.sessions_dir / "default_user.jsonl"
+        self.history_path = Path("sessions/chat/default_user.jsonl")
         self.max_history_lines_to_load = 200
         self.history_loaded = False
-        self.sessions = []
-        self.pending_reload_context = ""
 
         self.spinner_frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
         self.spinner_index = 0
@@ -63,7 +54,6 @@ class ChatPanel(QWidget):
         self.spinner_timer.timeout.connect(self._tick_spinner)
 
         self._build_ui()
-        self._init_sessions()
         self._set_connected_state(False)
         self.set_popout_state(False, False)
 
@@ -97,17 +87,6 @@ class ChatPanel(QWidget):
         self.apply_agent_button = QPushButton("Apply Agent")
         controls.addWidget(self.apply_agent_button)
         root.addLayout(controls)
-
-        sessions_row = QHBoxLayout()
-        sessions_row.addWidget(QLabel("Chats:"))
-        self.session_combo = QComboBox()
-        self.session_combo.setMinimumWidth(280)
-        sessions_row.addWidget(self.session_combo, 1)
-        self.new_session_button = QPushButton("+ New Chat")
-        sessions_row.addWidget(self.new_session_button)
-        self.old_chats_button = QPushButton("Old Chats")
-        sessions_row.addWidget(self.old_chats_button)
-        root.addLayout(sessions_row)
 
         self.chat_area = QTextEdit()
         self.chat_area.setReadOnly(True)
@@ -151,248 +130,14 @@ class ChatPanel(QWidget):
         self.ocr_settings_button.clicked.connect(self.open_ocr_settings)
         self.schema_editor_button.clicked.connect(self.open_schema_editor)
         self.apply_agent_button.clicked.connect(self._apply_agent)
-        self.new_session_button.clicked.connect(self.start_new_session)
-        self.old_chats_button.clicked.connect(self.open_old_chats_picker)
-        self.session_combo.currentIndexChanged.connect(self._on_session_changed)
 
     def _set_connected_state(self, connected: bool):
         self.connected = connected
+        # Keep prompt/send available even when disconnected so users can send to auto-restart worker.
         self.prompt_entry.setEnabled(True)
         self.send_button.setEnabled(True)
         self.btn_stop_gen.setEnabled(False)
         self.status_label.setText("Status: Idle" if connected else "Status: Stopped")
-
-    def _session_file_for(self, session_id: str) -> Path:
-        return self.sessions_dir / f"{session_id}.jsonl"
-
-    def _load_sessions_index(self):
-        if not self.sessions_index_path.exists():
-            return []
-        try:
-            data = json.loads(self.sessions_index_path.read_text(encoding="utf-8"))
-            if isinstance(data, list):
-                return [d for d in data if isinstance(d, dict) and d.get("id")]
-        except Exception:
-            pass
-        return []
-
-    def _normalize_sessions(self):
-        normalized = []
-        for sess in self.sessions:
-            sid = str(sess.get("id", "")).strip()
-            if not sid:
-                continue
-            path = self._session_file_for(sid)
-            if not path.exists():
-                continue
-            normalized.append({
-                "id": sid,
-                "title": str(sess.get("title") or f"Session {sid}"),
-                "updated_at": str(sess.get("updated_at") or datetime.now().isoformat()),
-            })
-        self.sessions = normalized
-
-    def _save_sessions_index(self):
-        try:
-            self.sessions_dir.mkdir(parents=True, exist_ok=True)
-            self.sessions_index_path.write_text(json.dumps(self.sessions, indent=2), encoding="utf-8")
-        except Exception:
-            pass
-
-    def _prune_sessions(self):
-        if len(self.sessions) <= self.max_sessions:
-            return
-        self.sessions.sort(key=lambda s: str(s.get("updated_at", "")))
-        while len(self.sessions) > self.max_sessions:
-            oldest = self.sessions.pop(0)
-            try:
-                self._session_file_for(str(oldest.get("id", ""))).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-    def _refresh_session_combo(self):
-        self.session_combo.blockSignals(True)
-        self.session_combo.clear()
-        self.sessions.sort(key=lambda s: str(s.get("updated_at", "")), reverse=True)
-        for sess in self.sessions:
-            self.session_combo.addItem(str(sess.get("title", sess.get("id", "session"))), str(sess.get("id", "")))
-        idx = self.session_combo.findData(self.current_session_id)
-        if idx >= 0:
-            self.session_combo.setCurrentIndex(idx)
-        self.session_combo.blockSignals(False)
-
-    def _create_session(self, title: str | None = None) -> str:
-        sid = f"session_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
-        record = {
-            "id": sid,
-            "title": title or f"Chat {datetime.now().strftime('%b %d %H:%M')}",
-            "updated_at": datetime.now().isoformat(),
-        }
-        self.sessions.append(record)
-        try:
-            self._session_file_for(sid).touch(exist_ok=True)
-        except Exception:
-            pass
-        self._prune_sessions()
-        self._save_sessions_index()
-        return sid
-
-    def _safe_slug(self, text: str) -> str:
-        slug = re.sub(r"[^a-zA-Z0-9]+", "-", (text or "").strip().lower()).strip("-")
-        return slug[:60] or "chat-session"
-
-    def _generate_chat_title(self, transcript_text: str) -> str:
-        default = f"Chat {datetime.now().strftime('%b %d %H:%M')}"
-        text = (transcript_text or "").strip()
-        if not text:
-            return default
-        try:
-            resp = ollama.chat(
-                model=getattr(settings, "INSTRUCT_MODEL", ""),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Generate a short chat title (max 6 words). Return only the title text.",
-                    },
-                    {
-                        "role": "user",
-                        "content": text[-3000:],
-                    },
-                ],
-            )
-            title = str(((resp or {}).get("message") or {}).get("content") or "").strip().splitlines()[0]
-            return title[:80] or default
-        except Exception:
-            first = text.splitlines()[0][:60].strip()
-            return first or default
-
-    def _session_transcript_text(self, session_id: str) -> str:
-        path = self._session_file_for(session_id)
-        if not path.exists():
-            return ""
-        lines = []
-        for raw in path.read_text(encoding="utf-8").splitlines():
-            if not raw.strip():
-                continue
-            try:
-                item = json.loads(raw)
-            except Exception:
-                continue
-            role = str(item.get("role", "system"))
-            text = str(item.get("text", ""))
-            lines.append(f"{role.title()}: {text}")
-        return "\n".join(lines)
-
-    def _archive_current_session_markdown(self):
-        if not self.current_session_id:
-            return
-        transcript = self._session_transcript_text(self.current_session_id)
-        if not transcript.strip():
-            return
-        title = self._generate_chat_title(transcript)
-        file_name = f"{datetime.now().strftime('%Y%m%d_%H%M%S')}_{self._safe_slug(title)}.md"
-        self.archive_dir.mkdir(parents=True, exist_ok=True)
-        md_path = self.archive_dir / file_name
-        md_path.write_text(f"# {title}\n\n{transcript}\n", encoding="utf-8")
-        for sess in self.sessions:
-            if str(sess.get("id")) == str(self.current_session_id):
-                sess["title"] = title
-                sess["markdown_path"] = str(md_path)
-                sess["updated_at"] = datetime.now().isoformat()
-                break
-        self._save_sessions_index()
-
-    def _build_reload_summary(self, md_path: Path) -> str:
-        if not md_path.exists():
-            return ""
-        txt = md_path.read_text(encoding="utf-8")[-8000:]
-        try:
-            resp = ollama.chat(
-                model=getattr(settings, "GENERAL_MODEL", ""),
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "Summarize this conversation in a detailed continuation brief with context, decisions, preferences and open threads.",
-                    },
-                    {"role": "user", "content": txt},
-                ],
-            )
-            return str(((resp or {}).get("message") or {}).get("content") or "").strip()
-        except Exception:
-            return ""
-
-    def _touch_session(self, session_id: str):
-        for sess in self.sessions:
-            if str(sess.get("id")) == str(session_id):
-                sess["updated_at"] = datetime.now().isoformat()
-                break
-        self._save_sessions_index()
-
-    def _init_sessions(self):
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self.sessions = self._load_sessions_index()
-        before_count = len(self.sessions)
-        self._normalize_sessions()
-        if len(self.sessions) != before_count:
-            self._save_sessions_index()
-        if not self.sessions:
-            first = self._create_session("Current Session")
-            self.current_session_id = first
-            self.history_path = self._session_file_for(first)
-        else:
-            self.sessions.sort(key=lambda s: str(s.get("updated_at", "")), reverse=True)
-            self.current_session_id = str(self.sessions[0]["id"])
-            self.history_path = self._session_file_for(self.current_session_id)
-        self._refresh_session_combo()
-
-    def start_new_session(self):
-        self._archive_current_session_markdown()
-        sid = self._create_session()
-        self.current_session_id = sid
-        self.history_path = self._session_file_for(sid)
-        self.history_loaded = False
-        self._refresh_session_combo()
-        self.load_history(force=True)
-
-    def open_old_chats_picker(self):
-        items = []
-        for sess in self.sessions:
-            md = str(sess.get("markdown_path", "")).strip()
-            if md:
-                items.append((str(sess.get("title", sess.get("id", "Chat"))), str(sess.get("id", "")), md))
-        if not items:
-            QMessageBox.information(self, "Old Chats", "No archived chats available yet.")
-            return
-        labels = [f"{title} ({Path(md).name})" for title, _sid, md in items]
-        selected, ok = QInputDialog.getItem(self, "Old Chats", "Select chat:", labels, 0, False)
-        if not ok or not selected:
-            return
-        idx = labels.index(selected)
-        sid = items[idx][1]
-        combo_index = self.session_combo.findData(sid)
-        if combo_index >= 0:
-            self.session_combo.setCurrentIndex(combo_index)
-
-    def _on_session_changed(self, index: int):
-        if index < 0:
-            return
-        sid = str(self.session_combo.itemData(index) or "")
-        if not sid or sid == self.current_session_id:
-            return
-        self.current_session_id = sid
-        self.history_path = self._session_file_for(sid)
-        self.history_loaded = False
-        self.load_history(force=True)
-        md_path = ""
-        for sess in self.sessions:
-            if str(sess.get("id")) == sid:
-                md_path = str(sess.get("markdown_path", ""))
-                break
-        if md_path:
-            summary = self._build_reload_summary(Path(md_path))
-            if summary:
-                self.pending_reload_context = summary
-                self.chat_area.append(f"System: Reload context prepared for this chat.\n")
 
     def _apply_agent(self):
         selected = self.name_combo.currentText()
@@ -483,14 +228,11 @@ class ChatPanel(QWidget):
             "text": text,
             "agent_key": agent_key,
             "attachments": attachments or [],
-            "session_id": self.current_session_id,
         }
         try:
             self.history_path.parent.mkdir(parents=True, exist_ok=True)
             with self.history_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            self._touch_session(self.current_session_id)
-            self._refresh_session_combo()
         except Exception:
             pass
 
@@ -498,19 +240,13 @@ class ChatPanel(QWidget):
         prompt = self.prompt_entry.text().strip()
         if not prompt:
             return
-        if self.pending_reload_context:
-            prompt = (
-                "Reload context summary from prior chat:\n"
-                f"{self.pending_reload_context}\n\n"
-                f"User message:\n{prompt}"
-            )
-            self.pending_reload_context = ""
         if not self.worker or not self.worker.isRunning():
             self.app.ensure_chat_worker_running(use_studies=self.use_studies_check.isChecked())
             if not self.worker or not self.worker.isRunning():
                 self.on_error("Chat worker is not available.")
                 return
         else:
+            # Keep active worker settings aligned with current panel toggle.
             self.worker.use_studies = self.use_studies_check.isChecked()
             try:
                 if self.worker.is_busy():
