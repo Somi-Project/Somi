@@ -215,18 +215,28 @@ def _is_contextual_followup(prompt_l: str, agent_state: Optional[Dict[str, Any]]
             or _has_crypto_markers(prompt_l)
             or _has_stock_commodity_markers(prompt_l)
             or _has_forex_markers(prompt_l)
-            or re.search(r"\b(what about|how about|and in|then|same asset|same coin|that one)\b", prompt_l)
+            or re.search(r"\b(what about|how about|and in|then|same asset|same coin|that one|it|its)\b", prompt_l)
+            or re.search(r"\bwhat\s+was\s+it\b", prompt_l)
         )
         history_signal = bool(
             _has_time_constraint_markers(prompt_l)
             or re.search(r"\b(ath|all time high|history|historical|high|low|range|close|open)\b", prompt_l)
         )
         if history_signal and finance_followup_signal:
+            subtype_ctx = str(st.get("last_finance_intent") or "").strip().lower()
+            if _has_crypto_markers(prompt_l):
+                inferred_intent = "crypto"
+            elif _has_forex_markers(prompt_l):
+                inferred_intent = "forex"
+            elif _has_stock_commodity_markers(prompt_l) or _has_price_query(prompt_l):
+                inferred_intent = "stock/commodity"
+            else:
+                inferred_intent = subtype_ctx if subtype_ctx in {"crypto", "forex", "stock/commodity"} else "stock/commodity"
             return RouteDecision(
                 route="websearch",
                 tool_veto=False,
                 reason="contextual_followup_finance",
-                signals={"explicit": False, "volatile": True, "intent": "crypto", "followup": True, "requires_execution": False, "read_only": True},
+                signals={"explicit": False, "volatile": True, "intent": inferred_intent, "followup": True, "requires_execution": False, "read_only": True},
             )
 
     # Weather terse follow-up refinements

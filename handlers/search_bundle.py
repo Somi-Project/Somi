@@ -29,7 +29,7 @@ def strip_tracking_params(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(kept), parts.fragment))
 
 
-def render_search_bundle(bundle: SearchBundle, max_results: int = 5, max_snippet_chars: int = 320) -> str:
+def render_search_bundle(bundle: SearchBundle, max_results: int = 6, max_snippet_chars: int = 350) -> str:
     lines = [f"EVIDENCE (top N={max_results}):"]
     for idx, item in enumerate(bundle.results[:max_results], start=1):
         snippet = (item.snippet or "").strip()

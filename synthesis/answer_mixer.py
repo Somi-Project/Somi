@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 
 from handlers.search_bundle import SearchBundle
-from routing.query_plan import QueryPlan
+from routing.types import QueryPlan, TimeAnchor
 
 
 _RECENCY_WORDS = re.compile(r"\b(today|current|latest|now)\b", re.IGNORECASE)
@@ -30,9 +30,9 @@ def mix_answer(user_text, plan: QueryPlan, llm_draft: str | None, evidence: Sear
 
     if plan.mode == "LLM_ONLY":
         out = draft
-        if plan.time_anchor and not plan.needs_recency and isinstance(plan.time_anchor, dict):
-            if "year" in plan.time_anchor and str(plan.time_anchor["year"]) not in out:
-                out = f"In {plan.time_anchor['year']}, {out}" if out else f"In {plan.time_anchor['year']}, I don't have enough detail."
+        if plan.time_anchor and not plan.needs_recency:
+            if isinstance(plan.time_anchor, TimeAnchor) and plan.time_anchor.year and str(plan.time_anchor.year) not in out:
+                out = f"In {plan.time_anchor.year}, {out}" if out else f"In {plan.time_anchor.year}, I don't have enough detail."
             out = _strip_recency_words(out)
         return out
 

@@ -14,6 +14,11 @@ class ToolContext:
     last_query: str
     last_results: List[Dict[str, Any]] = field(default_factory=list)
     timestamp: float = field(default_factory=lambda: time.time())
+    last_selected_rid: str = ""
+    last_selected_rank: int = 0
+    last_selected_url: str = ""
+    last_selected_title: str = ""
+    last_finance_intent: str = ""
 
 
 class ToolContextStore:
@@ -44,7 +49,14 @@ class ToolContextStore:
             "timestamp": time.time(),
         }
 
-    def set(self, session_id: str, tool_type: str, query: str, results: List[Dict[str, Any]]) -> None:
+    def set(
+        self,
+        session_id: str,
+        tool_type: str,
+        query: str,
+        results: List[Dict[str, Any]],
+        finance_intent: str = "",
+    ) -> None:
         sid = str(session_id or "default_user")
         normalized = [
             self._normalize_result(r, idx, tool_type)
@@ -52,16 +64,51 @@ class ToolContextStore:
             if isinstance(r, dict)
         ]
         with self._lock:
+            prev = self._store.get(sid)
             self._store[sid] = ToolContext(
                 session_id=sid,
                 last_tool_type=str(tool_type or "general"),
                 last_query=str(query or ""),
                 last_results=normalized,
+                last_selected_rid=str(prev.last_selected_rid) if prev else "",
+                last_selected_rank=int(prev.last_selected_rank) if prev else 0,
+                last_selected_url=str(prev.last_selected_url) if prev else "",
+                last_selected_title=str(prev.last_selected_title) if prev else "",
+                last_finance_intent=str(finance_intent or (prev.last_finance_intent if prev else "")),
             )
             if len(self._store) > self.max_sessions:
                 oldest = sorted(self._store.items(), key=lambda kv: kv[1].timestamp)
                 for k, _ in oldest[: len(self._store) - self.max_sessions]:
                     self._store.pop(k, None)
+
+    def mark_selected(
+        self,
+        session_id: str,
+        *,
+        rank: int = 0,
+        url: str = "",
+        rid: str = "",
+    ) -> None:
+        sid = str(session_id or "default_user")
+        with self._lock:
+            ctx = self._store.get(sid)
+            if not ctx:
+                return
+            chosen = None
+            if rid:
+                chosen = next((r for r in ctx.last_results if str(r.get("rid") or "") == str(rid)), None)
+            if chosen is None and rank > 0:
+                chosen = next((r for r in ctx.last_results if int(r.get("rank", 0)) == int(rank)), None)
+            if chosen is None and url:
+                chosen = next((r for r in ctx.last_results if str(r.get("url") or "") == str(url)), None)
+            if chosen is None and url:
+                ctx.last_selected_url = str(url)
+                return
+            if chosen:
+                ctx.last_selected_rid = str(chosen.get("rid") or "")
+                ctx.last_selected_rank = int(chosen.get("rank") or 0)
+                ctx.last_selected_url = str(chosen.get("url") or "")
+                ctx.last_selected_title = str(chosen.get("title") or "")
 
     def get(self, session_id: str) -> Optional[ToolContext]:
         sid = str(session_id or "default_user")

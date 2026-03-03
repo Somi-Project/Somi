@@ -200,7 +200,7 @@ def test_followup_resolver_variant_result_number_and_link_number():
     assert r2 and r2.url.endswith("b.example.com")
 
 
-def test_followup_resolver_clarifies_low_confidence_followup():
+def test_followup_resolver_rewrites_low_confidence_followup_without_meta():
     store = ToolContextStore(ttl_seconds=60)
     store.set("u3", "news", "latest news", [
         {"title": "Economy update", "url": "https://a.example.com", "description": "A"},
@@ -209,8 +209,9 @@ def test_followup_resolver_clarifies_low_confidence_followup():
     ctx = store.get("u3")
     r = FollowUpResolver().resolve("tell me more about that one", ctx)
     assert r is not None
-    assert r.action == "clarify"
-    assert r.clarify_options
+    assert r.action == "rewrite_query"
+    assert "Previous query:" not in r.rewritten_query
+    assert "decide whether" not in r.rewritten_query.lower()
 
 
 def test_scalar_float_handles_single_value_series_like():
@@ -331,3 +332,33 @@ def test_gold_sentence_maps_to_gc_f_ticker(monkeypatch):
     out = asyncio.run(fh.search_stocks_commodities("what's the price of gold"))
     assert out
     assert captured["ticker"] == "GC=F"
+
+
+def test_followup_resolver_finance_temporal_rewrite_uses_subject():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set("u4", "finance", "what's the price of bitcoin", [{"title": "BTC", "url": "https://btc.example", "description": "A"}], finance_intent="crypto")
+    ctx = store.get("u4")
+    r = FollowUpResolver().resolve("what was its price in 2021", ctx)
+    assert r is not None
+    assert r.action == "rewrite_query"
+    assert r.rewritten_query.lower() == "bitcoin price 2021"
+
+
+def test_tool_context_finance_intent_and_selection_tracking():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set(
+        "u5",
+        "finance",
+        "price of bitcoin",
+        [
+            {"title": "Story A", "url": "https://a.example.com", "description": "A"},
+            {"title": "Story B", "url": "https://b.example.com", "description": "B"},
+        ],
+        finance_intent="crypto",
+    )
+    store.mark_selected("u5", rank=2)
+    ctx = store.get("u5")
+    assert ctx is not None
+    assert ctx.last_finance_intent == "crypto"
+    assert ctx.last_selected_rank == 2
+    assert ctx.last_selected_url.endswith("b.example.com")

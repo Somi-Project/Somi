@@ -1249,7 +1249,7 @@ Query: {query}
         return []
 
 
-    def to_search_bundle(self, query: str, results: list, time_anchor=None, exactness_requested: bool = False) -> SearchBundle:
+    def to_search_bundle(self, query: str, results: list, time_anchor=None, exactness_requested: bool = False, domain: str = "general", needs_recency: bool = False) -> SearchBundle:
         bundle = SearchBundle(query=(query or "").strip(), results=[], warnings=[])
         for r in (results or []):
             if not isinstance(r, dict):
@@ -1259,8 +1259,8 @@ Query: {query}
             snippet = str(r.get("description") or r.get("content") or "").strip()
             source_domain = str(r.get("source") or r.get("provider") or "").strip()
             published = str(r.get("published_at") or r.get("published") or "").strip() or None
-            if len(snippet) > 400:
-                snippet = snippet[:397].rstrip() + "..."
+            if len(snippet) > 350:
+                snippet = snippet[:347].rstrip() + "..."
             if title and url:
                 bundle.results.append(SearchResult(
                     title=title,
@@ -1272,13 +1272,25 @@ Query: {query}
 
         bundle.results = bundle.results[:6]
         if exactness_requested and time_anchor:
-            target = str(time_anchor.get("year") or time_anchor.get("date") or "") if isinstance(time_anchor, dict) else ""
+            target = ""
+            if hasattr(time_anchor, "year") and getattr(time_anchor, "year", None):
+                target = str(getattr(time_anchor, "year"))
+            if hasattr(time_anchor, "date") and getattr(time_anchor, "date", None):
+                target = str(getattr(time_anchor, "date"))
             if target:
                 matched = [r for r in bundle.results if target in (r.published_date or "") or target in r.snippet or target in r.title]
                 if matched:
                     bundle.results = matched + [r for r in bundle.results if r not in matched]
                 else:
                     bundle.warnings.append("No clearly time-anchored sources found.")
+
+        if str(domain or "").lower() == "news" and needs_recency:
+            with_date = [r for r in bundle.results if (r.published_date or "").strip()]
+            without_date = [r for r in bundle.results if not (r.published_date or "").strip()]
+            with_date.sort(key=lambda r: str(r.published_date or ""), reverse=True)
+            bundle.results = (with_date + without_date)[:6]
+            if not with_date:
+                bundle.warnings.append("Unable to verify reasonably recent publication times for latest-news request.")
         return bundle
 
     def format_results(self, results: list) -> str:
