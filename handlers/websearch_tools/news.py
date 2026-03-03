@@ -20,6 +20,7 @@ import ollama
 from duckduckgo_search import DDGS
 
 from config.settings import WEBSEARCH_MODEL, SYSTEM_TIMEZONE
+from handlers.research.searxng import search_searxng
 import pytz
 from datetime import datetime
 
@@ -114,6 +115,25 @@ def _contains_any(text: str, needles: List[str]) -> bool:
     return any(n.lower() in tl for n in needles)
 
 
+def _tokenize_for_relevance(text: str) -> set[str]:
+    return {t for t in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(t) > 2}
+
+
+def _estimate_query_relevance(query: str, results: List[Dict[str, Any]], top_n: int = 3) -> float:
+    q = _tokenize_for_relevance(query)
+    if not q or not results:
+        return 0.0
+    scores: List[float] = []
+    for r in results[:max(1, int(top_n))]:
+        blob = f"{r.get('title','')} {r.get('description','')}"
+        t = _tokenize_for_relevance(blob)
+        if not t:
+            scores.append(0.0)
+            continue
+        scores.append(len(q & t) / max(1, len(q)))
+    return sum(scores) / max(1, len(scores))
+
+
 _GENERIC_NEWS_TRIGGERS = (
     "current news",
     "latest news",
@@ -155,19 +175,7 @@ class AmbiguityRule:
     user_override_keywords: List[str]
 
 
-AMBIGUITY_RULES: List[AmbiguityRule] = [
-    AmbiguityRule(
-        term="trinidad",
-        place_rewrite="trinidad and tobago",
-        wrong_sense_keywords=[
-            "chambliss", "ncaa", "ole miss", "qb", "quarterback", "rebels",
-            "touchdown", "sec", "injunction", "eligibility", "lawsuit",
-        ],
-        user_override_keywords=[
-            "chambliss", "ncaa", "ole miss", "qb", "quarterback",
-        ],
-    ),
-]
+AMBIGUITY_RULES: List[AmbiguityRule] = []
 
 
 def _apply_ambiguity_hygiene(user_query: str) -> Tuple[str, Optional[str]]:
@@ -212,15 +220,10 @@ def _results_look_wrong_for_rule(results: List[Dict[str, Any]], rule: AmbiguityR
 
 
 def _build_clarification(rule: AmbiguityRule) -> Dict[str, Any]:
-    if rule.term == "trinidad":
-        msg = (
-            "I’m not sure what you mean by “Trinidad”.\n"
-            "- Do you mean **Trinidad & Tobago (local news)**?\n"
-            "- Or **Trinidad (a person/name/topic)**?\n"
-            "Reply with either **“Trinidad & Tobago”** or **“Trinidad (person)”** and I’ll rerun the search."
-        )
-    else:
-        msg = f"I’m not sure what you mean by “{rule.term}”. Can you clarify the place/meaning you intend?"
+    msg = (
+        f"I’m not sure what you mean by '{rule.term}'. "
+        "Please clarify the exact topic/entity you want and I’ll rerun the search."
+    )
 
     return {
         "title": "Clarification needed",
@@ -283,6 +286,35 @@ class NewsHandler:
         except Exception:
             return fallback
 
+
+    async def _searx_news(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                rows = await search_searxng(
+                    client,
+                    query,
+                    max_results=max_results,
+                    category="news",
+                    source_name="searxng_news",
+                    domain="news",
+                )
+            out: List[Dict[str, Any]] = []
+            for r in rows or []:
+                if not isinstance(r, dict):
+                    continue
+                out.append({
+                    "title": (r.get("title") or "").strip(),
+                    "url": (r.get("url") or "").strip(),
+                    "description": (r.get("description") or "").strip(),
+                    "source": "searxng_news",
+                    "provider": "searxng",
+                    "published_at": (r.get("published") or r.get("published_at") or "").strip(),
+                })
+            return [x for x in out if x.get("url")]
+        except Exception as e:
+            logger.warning(f"SearXNG news failed: {e}")
+            return []
+
     async def _ddg_news(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
         def _run():
             with DDGS() as ddgs:
@@ -309,6 +341,7 @@ class NewsHandler:
                     "url": url,
                     "description": (r.get("snippet") or "").strip(),
                     "source": "ddg_news",
+                    "provider": "ddg",
                     "published_at": published,
                 }
             )
@@ -396,22 +429,45 @@ Query: {raw_q}
 
         return refined, fallback_refined
 
-    async def _search_once(self, refined_query: str, retries: int, backoff_factor: float) -> List[Dict[str, Any]]:
+    async def _search_once(self, original_query: str, refined_query: str, retries: int, backoff_factor: float) -> List[Dict[str, Any]]:
         last_err: Optional[Exception] = None
+        searx_results: List[Dict[str, Any]] = []
+        try:
+            searx_results = await self._searx_news(original_query, max_results=15)
+        except Exception as e:
+            last_err = e
+
+        searx_relevance = _estimate_query_relevance(original_query, searx_results, top_n=3)
+        searx_is_strong = len(searx_results) >= 3 and searx_relevance >= 0.12
+        if searx_is_strong:
+            return await self._enrich_top_pages(searx_results, top_n=2)
+
+        ddg_results: List[Dict[str, Any]] = []
         for attempt in range(retries):
             try:
                 raw = await self._ddg_news(refined_query, max_results=15)
-                base = self._normalize_ddg_news(raw)
-                enriched = await self._enrich_top_pages(base, top_n=2)
-                return enriched
+                ddg_results = self._normalize_ddg_news(raw)
+                if ddg_results:
+                    break
             except Exception as e:
                 last_err = e
                 logger.error(f"DDG news error (attempt {attempt+1}/{retries}): {e}\n{traceback.format_exc()}")
                 if attempt < retries - 1:
                     await asyncio.sleep(backoff_factor * (2 ** attempt))
-        if last_err:
+
+        merged = list(searx_results)
+        # If searx is weakly relevant, prefer DDG ordering for UX while still preserving searx links.
+        if searx_results and searx_relevance < 0.12 and ddg_results:
+            merged = list(ddg_results)
+        seen = {str(r.get("url")) for r in merged if isinstance(r, dict)}
+        for r in ddg_results:
+            if str(r.get("url")) in seen:
+                continue
+            merged.append(r)
+
+        if last_err and not merged:
             logger.warning(f"News search failed: {last_err}")
-        return []
+        return await self._enrich_top_pages(merged, top_n=2)
 
     async def search_news(self, query: str, retries: int = 3, backoff_factor: float = 0.5) -> list:
         q = _normalize_space(query)
@@ -429,7 +485,7 @@ Query: {raw_q}
 
         refined_query, _ = await asyncio.to_thread(self._refine_query_llm, q_hyg)
 
-        results = await self._search_once(refined_query, retries=retries, backoff_factor=backoff_factor)
+        results = await self._search_once(q_hyg, refined_query, retries=retries, backoff_factor=backoff_factor)
 
         if applied_term:
             rule = next((r for r in AMBIGUITY_RULES if r.term == applied_term), None)
@@ -441,7 +497,7 @@ Query: {raw_q}
                 if "today" not in forced.lower() and "news" not in forced.lower():
                     forced = forced + " news today"
 
-                forced_results = await self._search_once(forced, retries=2, backoff_factor=backoff_factor)
+                forced_results = await self._search_once(forced, forced, retries=2, backoff_factor=backoff_factor)
 
                 if forced_results and not _results_look_wrong_for_rule(forced_results, rule, top_n=5):
                     results = forced_results
@@ -450,7 +506,7 @@ Query: {raw_q}
 
         if not results:
             broader = q.replace("today", "").strip() + " news"
-            results = await self._search_once(broader, retries=2, backoff_factor=backoff_factor)
+            results = await self._search_once(broader, broader, retries=2, backoff_factor=backoff_factor)
 
         self._cache_set(cache_key, results)
         return results

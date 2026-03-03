@@ -6,7 +6,7 @@ from yahooquery import Ticker as YahooQueryTicker
 import traceback
 from config.settings import SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL
 import pytz
-from datetime import datetime
+from datetime import datetime, date, timedelta
 import re
 
 from .stickers import get_stock_ticker_suggestions
@@ -14,6 +14,7 @@ from .ftickers import get_forex_ticker_suggestions
 from .itickers import get_index_ticker_suggestions
 from .ctickers import get_commodity_ticker_suggestions
 from .bcrypto import get_crypto_price
+from .generalsearch import search_general
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,15 @@ class FinanceHandler:
         q = (q or "").strip()
         q = re.sub(r"\s+", " ", q)
         return q
+
+    def _normalize_asset_phrase(self, q: str) -> str:
+        t = self._clean_query(q).lower()
+        t = re.sub(r"^[\s\W]*(what'?s|what is|tell me|give me|show me)\s+", "", t)
+        t = re.sub(r"^the\s+", "", t)
+        t = re.sub(r"\b(current\s+)?(price|quote|rate|value|market\s+price)\b", "", t)
+        t = re.sub(r"\b(of|for|on|now|today|please)\b", "", t)
+        t = re.sub(r"\s+", " ", t).strip(" ?!.,")
+        return t or self._clean_query(q)
 
     def _normalize_for_match(self, q: str) -> str:
         q = self._clean_query(q).lower()
@@ -332,7 +342,9 @@ class FinanceHandler:
 
         # 1) Stocks/ETFs via dictionary suggestions
         if not ticker:
-            for cand in self._candidate_queries(query):
+            norm_asset = self._normalize_asset_phrase(query)
+            candidates = [norm_asset] + [c for c in self._candidate_queries(query) if c != norm_asset]
+            for cand in candidates:
                 ticker_list = get_stock_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
@@ -348,7 +360,7 @@ class FinanceHandler:
 
         # 3) Indices
         if not ticker:
-            for cand in self._candidate_queries(query):
+            for cand in candidates:
                 ticker_list = get_index_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
@@ -447,9 +459,10 @@ class FinanceHandler:
             try:
                 explicit = self._extract_explicit_ticker(query)
                 if explicit and explicit.upper().endswith("USDT"):
-                    crypto_response = get_crypto_price(explicit)
+                    crypto_input = explicit
                 else:
-                    crypto_response = get_crypto_price(query)
+                    crypto_input = self._normalize_asset_phrase(query)
+                crypto_response = get_crypto_price(crypto_input)
 
                 result = self._format_crypto_result(crypto_response, query)
                 return [result]
@@ -582,3 +595,109 @@ class FinanceHandler:
             "url": "",
             "description": "Rate could not be retrieved at this time.",
         }]
+
+
+    def _extract_time_constraint(self, query: str) -> dict | None:
+        q = (query or "").lower()
+        month_map = {
+            "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+            "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+            "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+            "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+        }
+        mm = re.search(r"\b(" + "|".join(month_map.keys()) + r")\s+(20\d{2}|19\d{2})\b", q)
+        if mm:
+            m = month_map[mm.group(1)]
+            y = int(mm.group(2))
+            start = date(y, m, 1)
+            end = date(y + (1 if m == 12 else 0), 1 if m == 12 else m + 1, 1) - timedelta(days=1)
+            return {"kind": "month", "year": y, "month": m, "start": start, "end": end}
+
+        mr = re.search(r"\bbetween\s+(\d{4}-\d{2}-\d{2})\s+and\s+(\d{4}-\d{2}-\d{2})\b", q)
+        if mr:
+            return {"kind": "range", "start": date.fromisoformat(mr.group(1)), "end": date.fromisoformat(mr.group(2))}
+
+        md = re.search(r"\bon\s+(\d{4}-\d{2}-\d{2})\b", q)
+        if md:
+            d = date.fromisoformat(md.group(1))
+            return {"kind": "date", "start": d, "end": d}
+
+        y = re.search(r"\bin\s+(20\d{2}|19\d{2})\b", q)
+        if y:
+            yy = int(y.group(1))
+            return {"kind": "year", "year": yy, "start": date(yy, 1, 1), "end": date(yy, 12, 31)}
+
+        if "last year" in q:
+            yy = datetime.utcnow().year - 1
+            return {"kind": "year", "year": yy, "start": date(yy, 1, 1), "end": date(yy, 12, 31)}
+
+        return None
+
+    def _resolve_history_symbol(self, query: str, context_symbol: str | None = None) -> str | None:
+        q = (query or "").upper()
+        if context_symbol:
+            return context_symbol
+        if "BTCUSDT" in q or "BTC" in q or "BITCOIN" in q:
+            return "BTC-USD"
+        if "ETHUSDT" in q or "ETH" in q or "ETHEREUM" in q:
+            return "ETH-USD"
+        explicit = self._extract_explicit_ticker(query)
+        if explicit and explicit.endswith("USDT"):
+            return explicit.replace("USDT", "-USD")
+        return explicit or None
+
+    async def search_historical_price(self, query: str, *, context_symbol: str | None = None) -> list:
+        tc = self._extract_time_constraint(query)
+        if not tc:
+            return []
+        symbol = self._resolve_history_symbol(query, context_symbol=context_symbol)
+        try:
+            if not symbol:
+                raise ValueError("symbol_unresolved")
+            start = tc["start"]
+            end = tc["end"] + timedelta(days=1)
+            hist = await asyncio.to_thread(yf.download, symbol, start=start.isoformat(), end=end.isoformat(), interval="1d", progress=False)
+            if hist is None or getattr(hist, "empty", True):
+                raise ValueError("empty_history")
+            h = float(hist["High"].max())
+            l = float(hist["Low"].min())
+            c = float(hist["Close"].iloc[-1])
+            o = float(hist["Open"].iloc[0])
+            avg = float(hist["Close"].mean())
+            desc = (
+                f"Historical {symbol} for {tc['start']} to {tc['end']}: "
+                f"range {l:,.2f} to {h:,.2f} USD; open {o:,.2f}; close {c:,.2f}; average close {avg:,.2f}."
+            )
+            return [{
+                "title": f"{symbol} historical price ({tc['start']} to {tc['end']})",
+                "url": f"https://finance.yahoo.com/quote/{symbol}/history",
+                "description": desc,
+                "high": h,
+                "low": l,
+                "close": c,
+                "open": o,
+                "avg_close": avg,
+                "source": "yfinance_history",
+            }]
+        except Exception:
+            symbol_hint = symbol or ""
+            # Keep fallback broad when symbol inference is incomplete.
+            fallback_q = f"{query} price {tc['start']} {tc['end']} high low".strip()
+            if symbol_hint:
+                fallback_q = f"{symbol_hint} price {tc['start']} {tc['end']} high low"
+            web = await search_general(fallback_q, min_results=3)
+            if web:
+                head = web[0]
+                label = symbol_hint or "asset"
+                return [{
+                    "title": f"{label} historical context (web fallback)",
+                    "url": head.get("url", ""),
+                    "description": f"Used web fallback for historical query {tc['start']} to {tc['end']}. Top source: {head.get('title','')}",
+                    "source": "general_search_fallback",
+                }] + web[:3]
+            return [{
+                "title": "Historical price unavailable",
+                "url": "",
+                "description": f"Could not retrieve historical data for {(symbol_hint or 'requested asset')} {tc['start']} to {tc['end']}.",
+                "source": "history_error",
+            }]

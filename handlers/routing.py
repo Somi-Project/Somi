@@ -96,12 +96,25 @@ def _has_news_markers(prompt_l: str) -> bool:
     return bool(re.search(r"\b(news|latest news|breaking news|headlines|current events|news about)\b", prompt_l))
 
 
+_FX_CODES = {
+    "usd", "eur", "gbp", "jpy", "cad", "aud", "nzd", "chf", "cny", "hkd", "sgd", "sek", "nok", "dkk",
+    "mxn", "brl", "zar", "try", "inr", "krw", "twd", "thb", "myr", "idr", "php", "vnd", "rub", "pln",
+    "czk", "huf", "ron", "ils", "aed", "sar", "qar", "kwd", "bhd", "omr", "jod", "egp", "pkr", "bdt",
+    "lkr", "ngn", "ghs", "kes", "ugx", "tzs", "etb", "mad", "dzd", "ttd",
+}
+
+
 def _has_forex_markers(prompt_l: str) -> bool:
-    # forex intent words + common "USD to EUR" style pairs
-    if re.search(r"\b(exchange rate|fx|forex|convert|conversion)\b", prompt_l):
+    # forex intent words + verified ISO-like currency pairs (avoid false positives like "you to day")
+    if re.search(r"\b(exchange rate|fx|forex|convert|conversion|currency pair)\b", prompt_l):
         return True
-    if re.search(r"\b([a-z]{3})\s*(?:/|to)\s*([a-z]{3})\b", prompt_l):
-        return True
+
+    for m in re.finditer(r"\b([a-z]{3})\s*(?:/|to)\s*([a-z]{3})\b", prompt_l):
+        a = (m.group(1) or "").lower()
+        b = (m.group(2) or "").lower()
+        if a in _FX_CODES and b in _FX_CODES:
+            return True
+
     return False
 
 
@@ -167,6 +180,56 @@ def _detect_intent(prompt_l: str) -> str:
     return "general"
 
 
+
+def _has_time_constraint_markers(prompt_l: str) -> bool:
+    return bool(
+        re.search(r"\b(20\d{2}|19\d{2})\b", prompt_l)
+        or re.search(r"\b(january|jan|february|feb|march|mar|april|apr|may|june|jun|july|jul|august|aug|september|sep|sept|october|oct|november|nov|december|dec)\b", prompt_l)
+        or re.search(r"\b(on|between|from)\s+\d{4}-\d{2}-\d{2}\b", prompt_l)
+        or "last year" in prompt_l
+    )
+
+
+def _is_contextual_followup(prompt_l: str, agent_state: Optional[Dict[str, Any]]) -> Optional[RouteDecision]:
+    st = agent_state or {}
+    last_tool = str(st.get("last_tool_type") or "").lower().strip()
+    has_ctx = bool(st.get("has_tool_context", False))
+    if not has_ctx or not last_tool:
+        return None
+
+    # News/web follow-ups like: "expand second one", "that story", "link 2"
+    if last_tool in {"news", "general", "science"}:
+        if re.search(r"\b(expand|tell me more|more details|open|summarize|summarise|that story|this story|second|third|first|link\s*#?\d+|result\s*#?\d+)\b", prompt_l):
+            inferred = "news" if last_tool == "news" else "general"
+            return RouteDecision(
+                route="websearch",
+                tool_veto=False,
+                reason="contextual_followup_news_web",
+                signals={"explicit": False, "volatile": True, "intent": inferred, "followup": True, "requires_execution": False, "read_only": True},
+            )
+
+    # Finance follow-up refinements with history/time constraints
+    if last_tool == "finance":
+        if _has_time_constraint_markers(prompt_l) or re.search(r"\b(ath|all time high|history|historical|high|low|range|close)\b", prompt_l):
+            return RouteDecision(
+                route="websearch",
+                tool_veto=False,
+                reason="contextual_followup_finance",
+                signals={"explicit": False, "volatile": True, "intent": "crypto", "followup": True, "requires_execution": False, "read_only": True},
+            )
+
+    # Weather terse follow-up refinements
+    if last_tool == "weather":
+        if re.search(r"\b(tomorrow|hourly|wind|rain|humidity|uv|sunrise|sunset|more details|what about)\b", prompt_l):
+            return RouteDecision(
+                route="websearch",
+                tool_veto=False,
+                reason="contextual_followup_weather",
+                signals={"explicit": False, "volatile": True, "intent": "weather", "followup": True, "requires_execution": False, "read_only": True},
+            )
+
+    return None
+
 def _is_volatile_with_strong_signal(prompt_l: str) -> bool:
     # anything time-sensitive / evidence-bound should use tools
     return bool(
@@ -196,6 +259,10 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
 
     if parse_conversion_request(p) is not None:
         return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion", signals={"requires_execution": False, "read_only": True})
+
+    contextual = _is_contextual_followup(pl, agent_state)
+    if contextual is not None:
+        return contextual
 
     if not should_bypass_capulet(pl):
         capulet_type = detect_capulet_artifact_type(p)
