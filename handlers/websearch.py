@@ -22,6 +22,7 @@ from handlers.websearch_tools.news import NewsHandler
 from handlers.websearch_tools.weather import WeatherHandler
 
 from handlers.websearch_tools.conversion import parse_conversion_request, Converter
+from handlers.search_bundle import SearchBundle, SearchResult, strip_tracking_params
 
 import pytz
 from datetime import datetime
@@ -1246,6 +1247,39 @@ Query: {query}
                     await asyncio.sleep(backoff_factor * (2 ** attempt))
 
         return []
+
+
+    def to_search_bundle(self, query: str, results: list, time_anchor=None, exactness_requested: bool = False) -> SearchBundle:
+        bundle = SearchBundle(query=(query or "").strip(), results=[], warnings=[])
+        for r in (results or []):
+            if not isinstance(r, dict):
+                continue
+            title = str(r.get("title") or "").strip()
+            url = strip_tracking_params(str(r.get("url") or "").strip())
+            snippet = str(r.get("description") or r.get("content") or "").strip()
+            source_domain = str(r.get("source") or r.get("provider") or "").strip()
+            published = str(r.get("published_at") or r.get("published") or "").strip() or None
+            if len(snippet) > 400:
+                snippet = snippet[:397].rstrip() + "..."
+            if title and url:
+                bundle.results.append(SearchResult(
+                    title=title,
+                    url=url,
+                    snippet=snippet,
+                    source_domain=source_domain,
+                    published_date=published,
+                ))
+
+        bundle.results = bundle.results[:6]
+        if exactness_requested and time_anchor:
+            target = str(time_anchor.get("year") or time_anchor.get("date") or "") if isinstance(time_anchor, dict) else ""
+            if target:
+                matched = [r for r in bundle.results if target in (r.published_date or "") or target in r.snippet or target in r.title]
+                if matched:
+                    bundle.results = matched + [r for r in bundle.results if r not in matched]
+                else:
+                    bundle.warnings.append("No clearly time-anchored sources found.")
+        return bundle
 
     def format_results(self, results: list) -> str:
         if not results:
