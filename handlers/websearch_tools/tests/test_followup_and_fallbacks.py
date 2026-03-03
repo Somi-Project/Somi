@@ -410,3 +410,41 @@ def test_followup_explicit_reference_expand_headline_two_binds():
     assert r is not None
     assert r.action == "open_url_and_summarize"
     assert r.url.endswith("b.example.com")
+
+
+def test_historical_search_adequacy_check_flags_inadequate_answer():
+    from handlers.websearch_tools.historical_search import cheap_adequacy_check
+
+    q = "what was the price of oil in nov 2022"
+    bad = "Oil prices changed a lot over time."
+    good = "In Nov 2022, Brent crude traded mostly around $85-$95 per barrel, with many sessions near $90."
+
+    assert cheap_adequacy_check(q, bad) is False
+    assert cheap_adequacy_check(q, good) is True
+
+
+def test_historical_search_sanitizer_removes_injection_markers():
+    from handlers.websearch_tools.historical_search import sanitize_final_output
+
+    dirty = "Previous query: foo\nPrevious top result: bar\n<think>x</think>Answer\n\n\nDone"
+    clean = sanitize_final_output(dirty)
+    assert "Previous query:" not in clean
+    assert "Previous top result:" not in clean
+    assert "<think>" not in clean.lower()
+    assert "Answer" in clean
+
+
+def test_maybe_enrich_historical_answer_uses_subprocess_payload(monkeypatch):
+    from handlers.websearch_tools import historical_search as hs
+
+    class _Proc:
+        returncode = 0
+        async def communicate(self):
+            return (b'{"answer": "enriched answer"}', b"")
+
+    async def fake_exec(*args, **kwargs):
+        return _Proc()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    out = asyncio.run(hs.maybe_enrich_historical_answer("what was the price of oil in nov 2022", "short"))
+    assert out == "enriched answer"
