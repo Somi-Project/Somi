@@ -8,7 +8,6 @@ import os
 import random
 import re
 import time
-from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 from ollama import AsyncClient
@@ -16,8 +15,8 @@ from config.settings import (
     GENERAL_MODEL,
     CODING_MODEL,
     MEMORY_MODEL,
+    INSTRUCT_MODEL,
     DEFAULT_TEMP,
-    INSTRUCT_MODEL, 
     VISION_MODEL,
     SYSTEM_TIMEZONE,
     USE_MEMORY3,
@@ -95,17 +94,6 @@ logger = logging.getLogger(__name__)
 logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
-
-
-@asynccontextmanager
-async def _compat_asyncio_timeout(seconds: float):
-    """Compatibility timeout context for Python versions without asyncio.timeout."""
-    if hasattr(asyncio, "timeout"):
-        async with asyncio.timeout(seconds):
-            yield
-    else:
-        yield
-
 class Agent:
     def __init__(self, name: str, use_studies: bool = False, use_flow: bool = False, user_id: str = "default_user"):
         self.personality_config = "config/personalC.json"
@@ -191,7 +179,6 @@ class Agent:
         self.rag = RAGHandler()
         self.websearch = WebSearchHandler()
         self.time_handler = TimeHandler(default_timezone=SYSTEM_TIMEZONE)
-        self._instruct_training_date_cache: Optional[str] = None
         self.wordgame = WordGameHandler(game_file=self.game_file)
         self.tool_context_store = ToolContextStore(ttl_seconds=900)
         self.followup_resolver = FollowUpResolver()
@@ -619,67 +606,6 @@ Raw content to clean:
         except Exception as e:
             logger.warning(f"Search naturalize failed (non-fatal): {e}")
             return raw_content  # safe fallback
-    async def _get_instruct_training_date(self) -> str:
-        """Best-effort probe for INSTRUCT_MODEL knowledge cutoff.
-        Returns YYYY-MM-DD, NONE, or UNKNOWN."""
-        if self._instruct_training_date_cache is not None:
-            return self._instruct_training_date_cache
-        probe_prompt = (
-            "Return your training knowledge cutoff date in strict JSON only: "
-            '{"training_date":"YYYY-MM-DD|NONE"}. '
-            "If unknown, use NONE. No extra text."
-        )
-        try:
-            resp = await self.ollama_client.chat(
-                model=INSTRUCT_MODEL,
-                messages=[{"role": "user", "content": probe_prompt}],
-                options={"temperature": 0.0, "max_tokens": 80, "keep_alive": 300},
-            )
-            raw = (resp.get("message", {}).get("content", "") or "").strip()
-            m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-            payload = json.loads(m.group(0) if m else raw)
-            training_date = str(payload.get("training_date") or "NONE").strip().upper()
-            if training_date != "NONE" and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", training_date):
-                training_date = "NONE"
-            self._instruct_training_date_cache = training_date
-            return training_date
-        except Exception:
-            self._instruct_training_date_cache = "UNKNOWN"
-            return "UNKNOWN"
-    async def _llm_decide_freshness_route(self, query: str, current_route: str) -> Optional[str]:
-        """Let INSTRUCT_MODEL decide whether websearch is required for freshness."""
-        if current_route not in {"websearch", "llm_only"}:
-            return None
-        training_date = await self._get_instruct_training_date()
-        current_time = self.time_handler.get_system_date_time()
-        routing_prompt = (
-            "You are an instruct model inside a framework and must choose safe routing.\n"
-            "Decide if the user query should use websearch or trained knowledge only.\n"
-            "Rules:\n"
-            "- Historical facts/prices before training cutoff are usually stable and can use llm_only.\n"
-            "- Up-to-date news, current prices, and events after training cutoff require websearch.\n"
-            "- If training date is NONE/UNKNOWN, use current time and be conservative for freshness-sensitive queries.\n\n"
-            f"Training date: {training_date}\n"
-            f"Current time: {current_time}\n"
-            f"Heuristic route: {current_route}\n"
-            f"User query: {query}\n\n"
-            "Return strict JSON only: {\"route\":\"websearch|llm_only\",\"reason\":\"short\"}."
-        )
-        try:
-            resp = await self.ollama_client.chat(
-                model=INSTRUCT_MODEL,
-                messages=[{"role": "user", "content": routing_prompt}],
-                options={"temperature": 0.0, "max_tokens": 140, "keep_alive": 300},
-            )
-            raw = (resp.get("message", {}).get("content", "") or "").strip()
-            m = re.search(r"\{.*\}", raw, flags=re.DOTALL)
-            payload = json.loads(m.group(0) if m else raw)
-            route = str(payload.get("route") or "").strip().lower()
-            if route in {"websearch", "llm_only"}:
-                return route
-        except Exception as e:
-            logger.debug(f"LLM freshness route fallback to heuristic: {e}")
-        return None
     def _compose_identity_block(self) -> str:
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
@@ -1043,7 +969,7 @@ Raw content to clean:
             return ""
     async def _maintenance_tick(self) -> None:
         try:
-            async with _compat_asyncio_timeout(4.0):
+            async with asyncio.timeout(4.0):
                 await self.memory.prune_old_memories()
         except Exception:
             pass
@@ -1205,11 +1131,6 @@ Raw content to clean:
             except Exception as e:
                 return f"Unable to prepare tool proposal safely: {e}"
         decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode, "last_tool_type": (follow_ctx.last_tool_type if follow_ctx else ""), "has_tool_context": bool(follow_ctx and follow_ctx.last_results)})
-        llm_route = await self._llm_decide_freshness_route(routing_prompt, decision.route)
-        if llm_route and llm_route != decision.route:
-            decision.route = llm_route
-            decision.reason = f"{decision.reason}|instruct_freshness_override"
-            decision.signals["instruct_freshness_override"] = True
         self._log_route_snapshot(user_id=active_user_id, prompt=routing_prompt, decision=decision, last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""))
         capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
@@ -1452,7 +1373,7 @@ Raw content to clean:
                     logger.debug(f"Image generation route failed (non-fatal): {e}")
         if decision.route == "conversion_tool":
             try:
-                async with _compat_asyncio_timeout(20.0):
+                async with asyncio.timeout(20.0):
                     conv_result = await self.websearch.converter.convert(routing_prompt)
                 if conv_result and "Error" not in conv_result and len(conv_result.strip()) > 5:
                     self._push_history_for(active_user_id, prompt, conv_result)
@@ -1654,7 +1575,7 @@ Raw content to clean:
             pass
         content = ""
         try:
-            async with _compat_asyncio_timeout(self._response_timeout_seconds()):
+            async with asyncio.timeout(self._response_timeout_seconds()):
                 selected_model = self._select_response_model(routing_prompt)
                 resp = await self.ollama_client.chat(
                     model=selected_model,
@@ -1823,7 +1744,7 @@ Raw content to clean:
         try:
             with open(image_path, "rb") as img:
                 image_data = img.read()
-            async with _compat_asyncio_timeout(self._vision_timeout_seconds()):
+            async with asyncio.timeout(self._vision_timeout_seconds()):
                 resp = await self.vision_client.chat(
                     model=self.vision_model,
                     messages=[
