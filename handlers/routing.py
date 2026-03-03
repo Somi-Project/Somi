@@ -58,6 +58,14 @@ def _is_explicit_websearch(prompt_l: str) -> bool:
     )
 
 
+def _is_url_summarize_request(prompt: str) -> bool:
+    p = str(prompt or "")
+    pl = p.lower()
+    has_url = bool(re.search(r"https?://\S+", p, flags=re.IGNORECASE))
+    asks_summary = bool(re.search(r"\b(summarize|summarise|summary|tl;dr)\b", pl))
+    return has_url and asks_summary
+
+
 # -----------------------------
 # Intent detection helpers
 # -----------------------------
@@ -280,6 +288,14 @@ def decide_route(prompt: str, agent_state: Optional[Dict[str, Any]] = None) -> R
 
     if parse_conversion_request(p) is not None:
         return RouteDecision(route="conversion_tool", tool_veto=True, reason="parser_confirmed_conversion", signals={"requires_execution": False, "read_only": True})
+
+    if _is_url_summarize_request(p):
+        return RouteDecision(
+            route="websearch",
+            tool_veto=False,
+            reason="open_url_and_summarize",
+            signals={"explicit": True, "volatile": True, "intent": "general", "requires_execution": False, "read_only": True},
+        )
 
     contextual = _is_contextual_followup(pl, agent_state)
     if contextual is not None:
