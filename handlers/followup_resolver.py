@@ -88,6 +88,12 @@ class FollowUpResolver:
             return 0.0
         return len(q & c) / max(1, len(q | c))
 
+    def _extract_quoted_reference(self, text: str) -> str:
+        m = re.search(r"[\"']([^\"']{3,140})[\"']", text or "")
+        if not m:
+            return ""
+        return (m.group(1) or "").strip()
+
     def _title_reference_score(self, msg: str, title: str) -> float:
         if not title or not msg:
             return 0.0
@@ -172,7 +178,21 @@ class FollowUpResolver:
                         rewritten_query=f"summarize this URL: {item.get('url')}",
                     )
 
-        # 3. Strong title match (news elaboration)
+        # 3. Quoted-title reference first (e.g. expand on 'X')
+        quoted_ref = self._extract_quoted_reference(msg)
+        if quoted_ref:
+            quoted_match = self._find_best_title_match(quoted_ref, ctx.last_results)
+            if quoted_match and quoted_match.get("url"):
+                qtitle = quoted_match.get("title", "")[:120]
+                return FollowUpResolution(
+                    action="open_url_and_summarize",
+                    url=str(quoted_match.get("url")),
+                    rewritten_query=f"summarize this URL: {quoted_match.get('url')}",
+                    previous_query=ctx.last_query,
+                    context_note=f"news elaboration on quoted title: {qtitle}",
+                )
+
+        # 4. Strong title match (news elaboration)
         title_match = self._find_best_title_match(msg, ctx.last_results)
         if title_match and title_match.get("url"):
             title = title_match.get("title", "")[:120]
@@ -184,7 +204,7 @@ class FollowUpResolver:
                 context_note=f"news elaboration on: {title}",
             )
 
-        # 4. Strong fuzzy match to a single result
+        # 5. Strong fuzzy match to a single result
         scored: List[tuple[float, Dict[str, str]]] = []
         for item in ctx.last_results:
             s = self._score(msg, item)
@@ -202,7 +222,7 @@ class FollowUpResolver:
                     rewritten_query=f"summarize this URL: {best.get('url')}",
                 )
 
-        # 5. SIMPLE CONTINUATION — this is the repair
+        # 6. SIMPLE CONTINUATION — this is the repair
         looks_followup = self._looks_like_followup(msg)
         temporal = self._has_temporal_continuation(msg)
         topic_score = self._topic_overlap(msg, ctx.last_query) if ctx.last_query else 0.0
@@ -233,7 +253,7 @@ class FollowUpResolver:
                 context_note="context-enriched continuation",
             )
 
-        # 6. Only clarify on weak explicit follow-up language
+        # 7. Only clarify on weak explicit follow-up language
         if looks_followup:
             return FollowUpResolution(
                 action="clarify",
