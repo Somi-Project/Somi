@@ -8,7 +8,6 @@ import re
 # Configuration
 DEFAULT_CACHE_DURATION = 600  # Cache duration in seconds (10 minutes)
 
-
 _OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 
@@ -50,7 +49,6 @@ def _open_meteo_weather_desc(code) -> str:
 # Set up logging
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
-
 
 # Words/phrases that frequently contaminate location strings (e.g., "miami currently")
 _TEMPORAL_TRASH = (
@@ -118,12 +116,13 @@ class WeatherHandler:
         self.timezone = pytz.timezone(timezone)
         self.cache = {}  # Cache format: {cache_key: (results, timestamp)}
 
+        # Hard caps for wttr: at most 1 retry (i.e., 1 attempt total) and 1 endpoint total.
+        self.WTTR_MAX_RETRIES = 1
+        self.WTTR_BACKOFF_FACTOR = 0.3  # irrelevant with 1 retry, but kept for future
+
     def get_system_time(self) -> str:
         """
         Get the current system time in the specified timezone.
-
-        Returns:
-            str: Formatted current time (e.g., "2023-10-25 14:30:00 EDT").
         """
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
 
@@ -135,9 +134,6 @@ class WeatherHandler:
         - "weather in miami currently" -> "miami"
         - "forecast for toronto ontario" -> "toronto ontario"
         - "sunrise in london uk" -> "london uk"
-
-        Returns:
-            cleaned location string or ""
         """
         q = (query or "").strip().lower()
         if not q:
@@ -152,8 +148,7 @@ class WeatherHandler:
             if loc:
                 return loc
 
-        # Fallback 1: if query starts with a location-like phrase and includes "weather/forecast"
-        # e.g. "miami weather now" -> try removing intent words and keep what's left
+        # Fallback: remove intent words and keep what's left
         if any(k in q for k in ("weather", "forecast", "sunrise", "sunset", "moon phase", "moon cycle")):
             t = q
             for w in _WEATHER_INTENT_TRASH:
@@ -314,29 +309,31 @@ class WeatherHandler:
     async def search_weather(
         self,
         query: str,
-        retries: int = 1,
+        retries: int = 1,  # upstream can pass anything; we will clamp for wttr below
         backoff_factor: float = 0.5,
         cache_duration: int = DEFAULT_CACHE_DURATION,
     ) -> list:
         """
         Process a weather-related query and return formatted results.
+
+        IMPORTANT:
+        - wttr is capped to 1 attempt total (no multi-endpoint probing).
+        - If wttr fails, we fall back to Open-Meteo.
         """
-        # Normalize query for cache key
         cache_key = _normalize_cache_key(query)
 
-        # Check cache
+        # Cache
         if cache_key in self.cache:
             results, timestamp = self.cache[cache_key]
             if (datetime.now(self.timezone) - timestamp).total_seconds() < cache_duration:
                 logger.info(f"Returning cached results for query '{query}'")
                 return results
-            else:
-                logger.info(f"Cache expired for query '{query}'")
-                del self.cache[cache_key]
+            logger.info(f"Cache expired for query '{query}'")
+            del self.cache[cache_key]
 
         query_lower = (query or "").lower()
 
-        # Moon Phase Query
+        # Moon Phase Query (wttr moon endpoint only)
         if "moon phase" in query_lower or "moon cycle" in query_lower:
             data = await self.fetch_wttr_data("moon?format=j1")
             if data and "weather" in data:
@@ -354,13 +351,14 @@ class WeatherHandler:
                 self.cache[cache_key] = (formatted_results, datetime.now(self.timezone))
                 logger.info(f"Moon phase retrieved for query '{query}'")
                 return formatted_results
+
             return [{
                 "title": "Error",
                 "url": "https://wttr.in/moon",
                 "description": "Could not retrieve moon phase information."
             }]
 
-        # --- Extract Location for Other Queries ---
+        # Extract location
         location = self.extract_location(query)
         if not location:
             return [{
@@ -371,38 +369,46 @@ class WeatherHandler:
 
         formatted_location = self.format_wttr_location(location)
 
-        # Small retry loop (you had retries args but not implemented)
-        last_err = None
+        # --- wttr: hard-cap to 1 attempt and 1 endpoint ---
+        wttr_retries = min(self.WTTR_MAX_RETRIES, max(1, int(retries)))
+        wttr_backoff = float(backoff_factor)  # not used when wttr_retries=1, but kept
+
         data = {}
-        endpoints = [f"{formatted_location}?format=j1&u", f"{formatted_location}?format=j1"]
-        for attempt in range(max(1, int(retries))):
-            for endpoint in endpoints:
-                try:
-                    data = await self.fetch_wttr_data(endpoint)
-                    if data and "current_condition" in data:
-                        break
-                    last_err = f"missing current_condition for endpoint={endpoint}"
-                except Exception as e:
-                    last_err = e
-            if data and "current_condition" in data:
-                break
-            if attempt < retries - 1:
-                await asyncio.sleep(backoff_factor * (2 ** attempt))
+        last_err = None
+
+        endpoint = f"{formatted_location}?format=j1"  # single endpoint only (no &u probing)
+
+        for attempt in range(wttr_retries):
+            try:
+                data = await self.fetch_wttr_data(endpoint)
+                if data and "current_condition" in data:
+                    break
+                last_err = f"missing current_condition endpoint={endpoint}"
+            except Exception as e:
+                last_err = e
+                data = {}
+
+            if attempt < wttr_retries - 1:
+                await asyncio.sleep(wttr_backoff * (2 ** attempt))
 
         if not data or "current_condition" not in data:
-            logger.error(f"No valid wttr data for location '{location}'. last_err={last_err}. Trying Open-Meteo fallback.")
+            logger.error(
+                f"No valid wttr data for location '{location}'. last_err={last_err}. "
+                f"Trying Open-Meteo fallback."
+            )
             fallback_results = await self._open_meteo_fallback(location, query_lower)
             if fallback_results:
                 self.cache[cache_key] = (fallback_results, datetime.now(self.timezone))
                 logger.info(f"Open-Meteo fallback succeeded for '{location}'")
                 return fallback_results
+
             return [{
                 "title": "Error",
                 "url": f"https://wttr.in/{formatted_location}",
                 "description": f"Could not retrieve weather information for {location}."
             }]
 
-        # Extract resolved location from response
+        # Resolve location from wttr response
         nearest_area = data.get("nearest_area", [{}])[0]
         area_name = nearest_area.get("areaName", [{}])[0].get("value", "Unknown")
         country = nearest_area.get("country", [{}])[0].get("value", "Unknown")
@@ -435,22 +441,16 @@ class WeatherHandler:
         # Chance of rain (best-effort; wttr fields vary)
         chanceofrain = "N/A"
         try:
-            # wttr sometimes provides hourly chanceofrain in weather[0]["hourly"]
             hourly_data = data.get("weather", [{}])[0].get("hourly", [])
             if hourly_data:
-                # pick first slot as a cheap proxy; better than failing hard
                 chanceofrain = hourly_data[0].get("chanceofrain", "N/A")
         except Exception as e:
             logger.error(f"Error parsing chanceofrain for '{resolved_location}': {str(e)}")
 
-        # --- Weather Query ---
+        # Build response
         if "forecast" in query_lower or "tomorrow" in query_lower:
-            # Tomorrow forecast: weather[1] if present
             weather_days = data.get("weather", [])
-            if len(weather_days) > 1:
-                forecast = weather_days[1]
-            else:
-                forecast = weather_days[0] if weather_days else {}
+            forecast = weather_days[1] if len(weather_days) > 1 else (weather_days[0] if weather_days else {})
 
             description = (
                 f"The weather forecast for {resolved_location} tomorrow is:\n"
@@ -481,7 +481,6 @@ class WeatherHandler:
             }]
 
         else:
-            # Default: current weather
             description = (
                 f"The weather in {resolved_location} is:\n"
                 f"Condition: {condition}\n"
@@ -497,7 +496,7 @@ class WeatherHandler:
                 "needs_details": True
             }]
 
-        # Cache and return results
+        # Cache and return
         self.cache[cache_key] = (formatted_results, datetime.now(self.timezone))
         logger.info(f"Weather data retrieved for '{resolved_location}' from query '{query}'")
         return formatted_results
