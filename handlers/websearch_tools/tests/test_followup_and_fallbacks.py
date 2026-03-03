@@ -313,16 +313,3 @@ def test_gold_sentence_maps_to_gc_f_ticker(monkeypatch):
     out = asyncio.run(fh.search_stocks_commodities("what's the price of gold"))
     assert out
     assert captured["ticker"] == "GC=F"
-
-
-def test_followup_resolver_phrase_match_selects_single_headline():
-    store = ToolContextStore(ttl_seconds=60)
-    store.set("u_phrase", "news", "latest news", [
-        {"title": "Full support for US action in Iran", "url": "https://a.example.com", "description": "A"},
-        {"title": "Another unrelated headline", "url": "https://b.example.com", "description": "B"},
-    ])
-    ctx = store.get("u_phrase")
-    r = FollowUpResolver().resolve("can you expand on full support for us action in iran", ctx)
-    assert r is not None
-    assert r.action == "open_url_and_summarize"
-    assert r.url.endswith("a.example.com")

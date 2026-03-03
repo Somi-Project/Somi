@@ -233,30 +233,6 @@ class Agent:
         except Exception:
             pass
 
-
-    def _infer_finance_context_symbol(self, follow_ctx: Any) -> str | None:
-        try:
-            if not follow_ctx:
-                return None
-            rows = list(getattr(follow_ctx, "last_results", []) or [])
-            for r in rows:
-                title = str((r or {}).get("title") or "")
-                url = str((r or {}).get("url") or "")
-                blob = f"{title} {url}".upper()
-                m = re.search(r"\\b([A-Z0-9]{2,12}USDT)\\b", blob)
-                if m:
-                    return m.group(1).replace("USDT", "-USD")
-                m2 = re.search(r"\\b([A-Z]{1,8}=F|[A-Z]{1,8}=X|\^[A-Z]{1,8}|[A-Z]{1,8}(?:-[A-Z0-9]{1,8})?)\\b", blob)
-                if m2:
-                    return m2.group(1)
-                if "BITCOIN" in blob or " BTC " in f" {blob} ":
-                    return "BTC-USD"
-                if "ETHEREUM" in blob or " ETH " in f" {blob} ":
-                    return "ETH-USD"
-        except Exception:
-            return None
-        return None
-
     def _safe_temperature_value(self, value: Any, fallback: float) -> float:
         try:
             out = float(value)
@@ -1364,8 +1340,7 @@ class Agent:
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
         if follow_ctx and follow_ctx.last_tool_type == "finance":
-            context_symbol = self._infer_finance_context_symbol(follow_ctx)
-            hist_res = await self.websearch.finance_handler.search_historical_price(routing_prompt, context_symbol=context_symbol)
+            hist_res = await self.websearch.finance_handler.search_historical_price(routing_prompt)
             if hist_res:
                 self.tool_context_store.set(active_user_id, "finance", routing_prompt, hist_res)
                 hist_text = self.websearch.format_results(hist_res)

@@ -81,38 +81,6 @@ class FollowUpResolver:
             return 0.0
         return len(q & c) / max(1, len(q | c))
 
-    def _extract_focus_phrase(self, text: str) -> str:
-        tl = (text or "").strip()
-        patterns = [
-            r"(?:expand on|tell me more about|about|open|summarize|summarise)\s+(.+)$",
-            r"the one about\s+(.+)$",
-        ]
-        for pat in patterns:
-            m = re.search(pat, tl, flags=re.IGNORECASE)
-            if m:
-                phrase = (m.group(1) or "").strip(" \t\r\n'\"?.!,")
-                if len(phrase) >= 4:
-                    return phrase
-        return ""
-
-    def _resolve_by_phrase(self, phrase: str, rows: List[Dict[str, str]]) -> Optional[FollowUpResolution]:
-        if not phrase:
-            return None
-        ph = phrase.lower()
-        matches = []
-        for r in rows:
-            title = str(r.get("title") or "")
-            snippet = str(r.get("snippet") or "")
-            blob = f"{title} {snippet}".lower()
-            if ph in blob:
-                matches.append(r)
-        if len(matches) == 1 and matches[0].get("url"):
-            u = str(matches[0].get("url"))
-            return FollowUpResolution(action="open_url_and_summarize", url=u, rewritten_query=f"summarize this URL: {u}")
-        if len(matches) > 1:
-            return FollowUpResolution(action="clarify", clarify_options=self._build_options(matches))
-        return None
-
     def _build_options(self, rows: List[Dict[str, str]]) -> List[Dict[str, str]]:
         opts = []
         for item in rows[:5]:
@@ -153,11 +121,6 @@ class FollowUpResolver:
                         rewritten_query=f"summarize this URL: {item.get('url')}",
                     )
 
-        phrase = self._extract_focus_phrase(msg)
-        by_phrase = self._resolve_by_phrase(phrase, list(ctx.last_results))
-        if by_phrase is not None:
-            return by_phrase
-
         scored: List[tuple[float, Dict[str, str]]] = []
         for item in ctx.last_results:
             s = self._score(msg, item)
@@ -175,10 +138,12 @@ class FollowUpResolver:
                     rewritten_query=f"summarize this URL: {best.get('url')}",
                 )
 
+            # Clarify not only near-tie: also when follow-up-like phrasing is present but confidence is weak.
             if self._looks_like_followup(msg):
                 if (best_score < self.fuzzy_threshold) or (len(scored) > 1 and abs(best_score - second_score) < self.margin):
                     return FollowUpResolution(action="clarify", clarify_options=self._build_options([x[1] for x in scored]))
 
+        # If user clearly asks a follow-up but no fuzzy score hit, offer ranked options from last results.
         if self._looks_like_followup(msg):
             return FollowUpResolution(action="clarify", clarify_options=self._build_options(list(ctx.last_results)))
 

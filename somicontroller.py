@@ -328,14 +328,18 @@ class SomiAIGUI(QMainWindow):
 
         middle = QVBoxLayout()
         self.build_presence_panel(middle)
-        self.build_embedded_chat(middle)
         self.build_intel_stream(middle)
         middle.setStretch(0, 1)
-        middle.setStretch(1, 5)
-        middle.setStretch(2, 1)
+        middle.setStretch(1, 1)
         row.addLayout(middle, 2)
 
-        self.build_speech_mini_console(row)
+        right = QVBoxLayout()
+        self.build_embedded_chat(right)
+        self.build_speech_mini_console(right)
+        right.setStretch(0, 5)
+        right.setStretch(1, 1)
+        row.addLayout(right, 2)
+
         self.main_layout.addLayout(row, 1)
 
     def build_embedded_chat(self, parent_layout):
@@ -373,6 +377,7 @@ class SomiAIGUI(QMainWindow):
     def build_intel_stream(self, parent_layout):
         self.intel_card = HoverIntelCard()
         self.intel_card.setObjectName("card")
+        self.intel_card.setMaximumHeight(120)
         self.intel_card.hovered.connect(lambda v: setattr(self, "intel_paused", v))
         il = QVBoxLayout(self.intel_card)
         self.intel_title = QLabel("Intelligence Stream")
