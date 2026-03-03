@@ -4,12 +4,18 @@ from datetime import datetime
 import httpx
 import pytz
 import re
+from urllib.parse import urljoin
 
 # Configuration
 DEFAULT_CACHE_DURATION = 600  # Cache duration in seconds (10 minutes)
 
 _OPEN_METEO_GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 _OPEN_METEO_FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
+
+# NEW: local SearXNG (JSON) fallback
+_SEARXNG_BASE_URL = "http://localhost:8080"
+_SEARXNG_TIMEOUT_S = 10.0
+_SEARXNG_MAX_RESULTS = 6
 
 
 def _open_meteo_weather_desc(code) -> str:
@@ -82,14 +88,11 @@ def _clean_location_text(text: str) -> str:
     if not t:
         return ""
 
-    # Remove temporal junk phrases
     for w in _TEMPORAL_TRASH:
         t = t.replace(w, " ")
 
-    # Drop lingering words like "currently" attached by punctuation
     t = re.sub(r"\b(currently|now|today|tonight)\b", " ", t)
 
-    # Keep location-friendly chars
     t = re.sub(r"[^a-z0-9\s,\-]", " ", t)
     t = _normalize_space(t).strip(" ,.;:!?")
     return t
@@ -105,14 +108,32 @@ def _normalize_cache_key(q: str) -> str:
     return t
 
 
+def _build_searxng_weather_query(original_query: str, location: str) -> str:
+    """
+    Build a sensible SearXNG query.
+    We do NOT want to pass only 'miami' — we want 'weather in miami' (or similar).
+    Prefer the original query if it already contains weather intent; otherwise synthesize.
+    """
+    oq = (original_query or "").strip()
+    oql = oq.lower()
+
+    # If user already asked weather-ish, keep their intent (but clean out temporal junk)
+    if any(k in oql for k in ("weather", "forecast", "sunrise", "sunset", "moon phase", "moon cycle", "temperature")):
+        # Remove temporal trash to avoid weird ranking ("miami currently")
+        cleaned = oq
+        for w in _TEMPORAL_TRASH:
+            cleaned = re.sub(rf"\b{re.escape(w)}\b", " ", cleaned, flags=re.IGNORECASE)
+        cleaned = _normalize_space(cleaned)
+        return cleaned.strip()
+
+    loc = (location or "").strip()
+    if not loc:
+        return oq if oq else "weather"
+    return f"weather in {loc}"
+
+
 class WeatherHandler:
     def __init__(self, timezone: str = "America/Port_of_Spain"):
-        """
-        Initialize the WeatherHandler with a timezone and an empty cache.
-
-        Args:
-            timezone (str): The system timezone (e.g., "America/New_York").
-        """
         self.timezone = pytz.timezone(timezone)
         self.cache = {}  # Cache format: {cache_key: (results, timestamp)}
 
@@ -121,25 +142,13 @@ class WeatherHandler:
         self.WTTR_BACKOFF_FACTOR = 0.3  # irrelevant with 1 retry, but kept for future
 
     def get_system_time(self) -> str:
-        """
-        Get the current system time in the specified timezone.
-        """
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
 
     def extract_location(self, query: str) -> str:
-        """
-        Extract the location from the query using regex + cleaning.
-
-        Supports:
-        - "weather in miami currently" -> "miami"
-        - "forecast for toronto ontario" -> "toronto ontario"
-        - "sunrise in london uk" -> "london uk"
-        """
         q = (query or "").strip().lower()
         if not q:
             return ""
 
-        # Primary regex: capture after "in|for"
         pattern = r"(?:\bin\b|\bfor\b)\s+(.*?)(?=\s*(?:weather|forecast|moon phase|moon cycle|sunrise|sunset|$))"
         match = re.search(pattern, q)
         if match:
@@ -148,7 +157,6 @@ class WeatherHandler:
             if loc:
                 return loc
 
-        # Fallback: remove intent words and keep what's left
         if any(k in q for k in ("weather", "forecast", "sunrise", "sunset", "moon phase", "moon cycle")):
             t = q
             for w in _WEATHER_INTENT_TRASH:
@@ -161,9 +169,6 @@ class WeatherHandler:
         return ""
 
     def format_wttr_location(self, location: str) -> str:
-        """
-        Format the location for the wttr.in API by replacing spaces with '+'.
-        """
         return (location or "").strip().replace(" ", "+")
 
     async def fetch_open_meteo_geocode(self, location: str) -> dict:
@@ -286,10 +291,63 @@ class WeatherHandler:
             "needs_details": True,
         }]
 
+    async def _searxng_fallback(self, original_query: str, location: str) -> list:
+        """
+        Third-tier fallback: SearXNG (local) returns SOURCES, not structured weather fields.
+        We synthesize a good query like 'weather in <location>' (or keep original weather intent).
+        """
+        q = _build_searxng_weather_query(original_query, location)
+        if not q:
+            return []
+
+        url = urljoin(_SEARXNG_BASE_URL.rstrip("/") + "/", "search")
+        params = {"q": q, "format": "json", "language": "en"}
+        headers = {"User-Agent": "SomiWeather/1.0", "Accept": "application/json"}
+
+        try:
+            async with httpx.AsyncClient(timeout=_SEARXNG_TIMEOUT_S, follow_redirects=True) as client:
+                r = await client.get(url, params=params, headers=headers)
+                r.raise_for_status()
+                data = r.json() or {}
+        except Exception as e:
+            logger.error(f"SearXNG fallback failed for q='{q}': {e}")
+            return []
+
+        items = data.get("results") or data.get("items") or []
+        out = []
+        for it in items:
+            if not isinstance(it, dict):
+                continue
+            title = (it.get("title") or "").strip()
+            link = (it.get("url") or it.get("link") or "").strip()
+            snippet = (it.get("content") or it.get("description") or it.get("snippet") or "").strip()
+            if not link.startswith("http"):
+                continue
+            out.append({
+                "title": title or "Weather source",
+                "url": link,
+                "description": snippet[:500],
+                "note": "SearXNG fallback (links only; structured provider unavailable).",
+            })
+            if len(out) >= _SEARXNG_MAX_RESULTS:
+                break
+
+        if not out:
+            return []
+
+        # Present as a single consolidated result card (cleaner UX) OR return many results.
+        # Here we return one summary card + top links embedded.
+        lines = [f"Structured weather providers failed. Here are sources for: {q}"]
+        for i, r in enumerate(out[:5], 1):
+            lines.append(f"{i}. {r['title']} — {r['url']}")
+        return [{
+            "title": f"Weather sources via SearXNG",
+            "url": _SEARXNG_BASE_URL,
+            "description": "\n".join(lines),
+            "volatile": True,
+        }]
+
     async def fetch_wttr_data(self, endpoint: str) -> dict:
-        """
-        Fetch data from wttr.in using the specified endpoint.
-        """
         url = f"https://wttr.in/{endpoint}"
         try:
             headers = {
@@ -309,17 +367,10 @@ class WeatherHandler:
     async def search_weather(
         self,
         query: str,
-        retries: int = 1,  # upstream can pass anything; we will clamp for wttr below
+        retries: int = 1,
         backoff_factor: float = 0.5,
         cache_duration: int = DEFAULT_CACHE_DURATION,
     ) -> list:
-        """
-        Process a weather-related query and return formatted results.
-
-        IMPORTANT:
-        - wttr is capped to 1 attempt total (no multi-endpoint probing).
-        - If wttr fails, we fall back to Open-Meteo.
-        """
         cache_key = _normalize_cache_key(query)
 
         # Cache
@@ -358,10 +409,12 @@ class WeatherHandler:
                 "description": "Could not retrieve moon phase information."
             }]
 
-        # Extract location
+        # Extract location (needed for wttr + open-meteo; also used to synthesize searxng query)
         location = self.extract_location(query)
         if not location:
-            return [{
+            # If location can't be extracted, still try searxng with the raw query as last resort
+            searx = await self._searxng_fallback(query, "")
+            return searx if searx else [{
                 "title": "Error",
                 "url": "https://wttr.in/",
                 "description": "Could not extract location from query."
@@ -371,12 +424,11 @@ class WeatherHandler:
 
         # --- wttr: hard-cap to 1 attempt and 1 endpoint ---
         wttr_retries = min(self.WTTR_MAX_RETRIES, max(1, int(retries)))
-        wttr_backoff = float(backoff_factor)  # not used when wttr_retries=1, but kept
+        wttr_backoff = float(backoff_factor)
 
         data = {}
         last_err = None
-
-        endpoint = f"{formatted_location}?format=j1"  # single endpoint only (no &u probing)
+        endpoint = f"{formatted_location}?format=j1"  # single endpoint only
 
         for attempt in range(wttr_retries):
             try:
@@ -391,6 +443,7 @@ class WeatherHandler:
             if attempt < wttr_retries - 1:
                 await asyncio.sleep(wttr_backoff * (2 ** attempt))
 
+        # wttr failed -> Open-Meteo fallback
         if not data or "current_condition" not in data:
             logger.error(
                 f"No valid wttr data for location '{location}'. last_err={last_err}. "
@@ -401,6 +454,13 @@ class WeatherHandler:
                 self.cache[cache_key] = (fallback_results, datetime.now(self.timezone))
                 logger.info(f"Open-Meteo fallback succeeded for '{location}'")
                 return fallback_results
+
+            # Open-Meteo failed -> SearXNG fallback (links)
+            logger.error(f"Open-Meteo fallback failed for '{location}'. Trying SearXNG fallback.")
+            searx = await self._searxng_fallback(query, location)
+            if searx:
+                self.cache[cache_key] = (searx, datetime.now(self.timezone))
+                return searx
 
             return [{
                 "title": "Error",
