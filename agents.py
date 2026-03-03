@@ -16,6 +16,7 @@ from config.settings import (
     CODING_MODEL,
     MEMORY_MODEL,
     DEFAULT_TEMP,
+    INSTRUCT_MODEL, 
     VISION_MODEL,
     SYSTEM_TIMEZONE,
     USE_MEMORY3,
