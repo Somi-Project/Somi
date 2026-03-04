@@ -16,6 +16,7 @@ class ToolContext:
     timestamp: float = field(default_factory=lambda: time.time())
     last_selected_rid: str = ""
     last_selected_rank: int = 0
+    last_selected_index: int = 0
     last_selected_url: str = ""
     last_selected_title: str = ""
     last_finance_intent: str = ""
@@ -72,6 +73,7 @@ class ToolContextStore:
                 last_results=normalized,
                 last_selected_rid=str(prev.last_selected_rid) if prev else "",
                 last_selected_rank=int(prev.last_selected_rank) if prev else 0,
+                last_selected_index=int(getattr(prev, "last_selected_index", prev.last_selected_rank)) if prev else 0,
                 last_selected_url=str(prev.last_selected_url) if prev else "",
                 last_selected_title=str(prev.last_selected_title) if prev else "",
                 last_finance_intent=str(finance_intent or (prev.last_finance_intent if prev else "")),
@@ -107,6 +109,7 @@ class ToolContextStore:
             if chosen:
                 ctx.last_selected_rid = str(chosen.get("rid") or "")
                 ctx.last_selected_rank = int(chosen.get("rank") or 0)
+                ctx.last_selected_index = int(chosen.get("rank") or 0)
                 ctx.last_selected_url = str(chosen.get("url") or "")
                 ctx.last_selected_title = str(chosen.get("title") or "")
 

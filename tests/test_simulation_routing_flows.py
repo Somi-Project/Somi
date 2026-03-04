@@ -209,14 +209,14 @@ def test_iv_crypto_price_routes_to_crypto_tooling():
 def test_v_crypto_followup_historical_returns_range_not_refusal(monkeypatch):
     fh = FinanceHandler()
 
-    async def fake_search_general(q, min_results=3):
-        return [{"title": "Fallback", "url": "https://example.com", "description": "fallback"}]
+    async def fake_search_finance_historical(q, min_results=3, tc=None):
+        return [{"title": "Fallback", "url": "https://example.com", "description": "fallback", "source": "searxng"}]
 
-    monkeypatch.setattr("handlers.websearch_tools.finance.search_general", fake_search_general)
+    monkeypatch.setattr("handlers.websearch_tools.finance.search_finance_historical", fake_search_finance_historical)
     res = asyncio.run(fh.search_historical_price("what was the price in october 2021", context_symbol="BTC-USD"))
     assert res
-    assert res[0].get("source") in {"yfinance_history", "general_search_fallback"}
-    assert "historical" in (res[0].get("title") or "").lower() or "fallback" in (res[0].get("source") or "")
+    assert res[0].get("source") in {"yfinance_history", "searxng", "ddg"}
+    assert "historical" in (res[0].get("title") or "").lower() or "fallback" in (res[0].get("title") or "").lower()
 
 
 def test_contextual_finance_followup_routes_websearch():
