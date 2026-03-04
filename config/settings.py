@@ -23,6 +23,9 @@ RAG_WEBSITES = [
 # System timezone
 SYSTEM_TIMEZONE = "America/New_York"
 
+# Finance vendor backend toggle: "yfinance" | "yahooquery"
+FINANCE_YAHOO_BACKEND = "yfinance"
+
 # Telegram permissions you can message @userinfobot on telegram for your user ID
 TELEGRAM_BOT_OWNER_IDS = {
     "placeholder",
