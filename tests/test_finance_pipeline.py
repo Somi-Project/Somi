@@ -39,3 +39,43 @@ def test_followup_rewrite_prefers_current_subject():
 def test_no_reuse_for_finance_symbol_switch():
     prev = PrevTurnState(domain="finance", query="price of AAPL", timestamp=0)
     assert can_reuse_evidence("price of TSLA", prev) is False
+
+
+
+def test_build_binance_query_from_llm_output():
+    from handlers.websearch_tools.finance import FinanceHandler
+
+    fh = FinanceHandler()
+    query, params = fh._build_binance_query_from_llm(
+        """symbol=BTCUSDT
+interval=1d
+start=2022-11-01
+end=2022-12-01"""
+    )
+    assert query.startswith("GET /api/v3/klines?")
+    assert params["symbol"] == "BTCUSDT"
+    assert params["interval"] == "1d"
+    assert isinstance(params["startTime"], int)
+    assert isinstance(params["endTime"], int)
+
+
+def test_llm_format_crypto_historical_falls_back_without_ollama(monkeypatch):
+    from handlers.websearch_tools.finance import FinanceHandler
+
+    fh = FinanceHandler()
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("offline")
+
+    monkeypatch.setattr("handlers.websearch_tools.finance.ollama_vision_chat", boom)
+    out = fh._llm_format_crypto_historical(
+        "what was bitcoin price in nov 2022",
+        "BTCUSDT",
+        "1d",
+        date(2022, 11, 1),
+        date(2022, 12, 1),
+    )
+    assert "symbol=BTCUSDT" in out
+    assert "interval=1d" in out
+    assert "start=2022-11-01" in out
+    assert "end=2022-12-01" in out

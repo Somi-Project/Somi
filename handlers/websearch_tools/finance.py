@@ -1,7 +1,8 @@
 # handlers/websearch_tools/finance.py
 import logging
 import asyncio
-from config.settings import SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL, FINANCE_YAHOO_BACKEND
+from urllib.parse import urlencode
+from config.settings import SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL, FINANCE_YAHOO_BACKEND, INSTRUCT_MODEL
 import pytz
 from datetime import datetime, date, timedelta
 import re
@@ -10,6 +11,8 @@ from .stickers import get_stock_ticker_suggestions
 from .ftickers import get_forex_ticker_suggestions
 from .itickers import get_index_ticker_suggestions
 from .ctickers import get_commodity_ticker_suggestions
+from .bcrypto import get_crypto_price, TICKER_MAPPING
+from handlers.ocr.vision_backend import ollama_vision_chat, VisionBackendError
 from handlers.finance.compute_summary import compute_historical_summary
 from handlers.finance.format_query import normalize_query_spec
 from handlers.finance.vendors.binance_client import BinanceClient, NoDataError as BinanceNoDataError, UnsupportedSymbolError
@@ -17,6 +20,8 @@ from handlers.finance.vendors.yahoo_yfinance_client import YahooYFinanceClient, 
 from handlers.finance.vendors.yahoo_yahooquery_client import YahooYahooQueryClient, NoDataError as YahooQueryNoDataError
 
 logger = logging.getLogger(__name__)
+
+BINANCE_KLINES_ENDPOINT = "/api/v3/klines"
 
 
 
@@ -360,6 +365,88 @@ class FinanceHandler:
             "source": "binance",
         }
 
+    @staticmethod
+    def _date_to_ms(date_str: str) -> int:
+        dt = datetime.strptime(date_str.strip(), "%Y-%m-%d")
+        return int(dt.timestamp() * 1000)
+
+    @staticmethod
+    def _parse_llm_history_output(text: str) -> dict:
+        result = {}
+        for line in (text or "").strip().splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            result[key.strip().lower()] = value.strip()
+
+        for required in ("symbol", "interval", "start", "end"):
+            if required not in result:
+                raise ValueError(f"Missing required field: {required}")
+        return result
+
+    def _build_binance_query_from_llm(self, llm_text: str) -> tuple[str, dict]:
+        params = self._parse_llm_history_output(llm_text)
+        query_params = {
+            "symbol": params["symbol"],
+            "interval": params["interval"],
+            "startTime": self._date_to_ms(params["start"]),
+            "endTime": self._date_to_ms(params["end"]),
+        }
+        query = f"GET {BINANCE_KLINES_ENDPOINT}?{urlencode(query_params)}"
+        return query, query_params
+
+    def _resolve_crypto_symbol_with_bcrypto(self, query: str) -> str | None:
+        explicit = self._extract_explicit_ticker(query)
+        if explicit and explicit.upper().endswith("USDT"):
+            return explicit.upper()
+
+        q = self._normalize_asset_phrase(query)
+        if not q:
+            return None
+
+        key = q.lower().strip()
+        symbol = TICKER_MAPPING.get(key) or TICKER_MAPPING.get(q) or TICKER_MAPPING.get(key.upper())
+        if symbol:
+            return str(symbol).upper().strip()
+
+        for candidate, mapped in TICKER_MAPPING.items():
+            if re.search(r"\b" + re.escape(str(candidate).lower()) + r"\b", key):
+                return str(mapped).upper().strip()
+        return None
+
+    def _llm_format_crypto_historical(self, query: str, symbol: str, interval: str, start: date, end: date) -> str:
+        prompt = (
+            "Normalize this crypto historical query into exactly 4 lines in this format:\n"
+            "symbol=<BINANCE_SYMBOL>\n"
+            "interval=<BINANCE_INTERVAL>\n"
+            "start=<YYYY-MM-DD>\n"
+            "end=<YYYY-MM-DD>\n"
+            "No extra text.\n\n"
+            f"Query: {query}\n"
+            f"Defaults:\n"
+            f"symbol={symbol}\n"
+            f"interval={interval}\n"
+            f"start={start.isoformat()}\n"
+            f"end={end.isoformat()}\n"
+        )
+        try:
+            out = ollama_vision_chat(
+                model=INSTRUCT_MODEL,
+                prompt=prompt,
+                image_paths=[],
+                timeout_sec=20,
+                options={"temperature": 0.0, "num_predict": 128},
+            )
+            self._parse_llm_history_output(out)
+            return out
+        except (VisionBackendError, ValueError, Exception):
+            return (
+                f"symbol={symbol}\n"
+                f"interval={interval}\n"
+                f"start={start.isoformat()}\n"
+                f"end={end.isoformat()}"
+            )
+
     def _get_yahoo_clients_in_order(self):
         if self._yahoo_backend == "yahooquery":
             return [self._yahoo_yq, self._yahoo_yf]
@@ -524,35 +611,9 @@ class FinanceHandler:
         if deroute and not any(k in ql for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana", "usdt")):
             logger.info(f"De-routing crypto query: reason={reason} query='{query}'")
             return self._deroute_payload(query, reason)
-        explicit = self._extract_explicit_ticker(query)
-        if explicit and explicit.upper().endswith("USDT"):
-            symbol = explicit.upper()
-        else:
-            normalized = self._normalize_asset_phrase(query)
-            symbol = (normalized.replace("/", "").replace("-", "").replace(" ", "").upper())
-            if not symbol.endswith("USDT"):
-                symbol = f"{symbol}USDT"
-
-        spec = normalize_query_spec(asset_class="crypto", symbol=symbol, query_type="spot")
-        try:
-            quote = self._binance.get_spot_price(spec.symbol)
-            return [{
-                "title": f"{spec.symbol} Price",
-                "url": f"https://www.binance.com/en/trade/{spec.symbol}",
-                "description": f"Current price: {quote['price']} USD (Binance). Do not alter this number.",
-                "price_usd": quote["price"],
-                "source": "binance",
-                "timestamp": quote.get("timestamp"),
-            }]
-        except UnsupportedSymbolError as e:
-            return [{"title": "Price Not Found", "url": "", "description": str(e), "source": "binance"}]
-        except Exception as e:
-            logger.error(f"Binance spot query failed for '{spec.symbol}': {e}")
-            return [{
-                "title": "Price Not Found",
-                "url": "",
-                "description": "Crypto price could not be retrieved at this time.",
-            }]
+        crypto_query = self._normalize_asset_phrase(query)
+        parsed = self._format_crypto_result(get_crypto_price(crypto_query), query)
+        return [parsed]
 
     # -----------------------------
     # Forex
@@ -678,10 +739,9 @@ class FinanceHandler:
         q = (query or "").upper()
         if context_symbol:
             return context_symbol
-        if "BTCUSDT" in q or "BTC" in q or "BITCOIN" in q:
-            return "BTCUSDT"
-        if "ETHUSDT" in q or "ETH" in q or "ETHEREUM" in q:
-            return "ETHUSDT"
+        symbol = self._resolve_crypto_symbol_with_bcrypto(query)
+        if symbol:
+            return symbol
         explicit = self._extract_explicit_ticker(query)
         if explicit and explicit.endswith("USDT"):
             return explicit
@@ -712,9 +772,15 @@ class FinanceHandler:
 
         try:
             if spec.asset_class == "crypto":
-                start_ms = int(datetime.combine(spec.start, datetime.min.time()).timestamp() * 1000)
-                end_ms = int(datetime.combine(spec.end + timedelta(days=1), datetime.min.time()).timestamp() * 1000)
-                candles = self._binance.get_historical_candles(spec.symbol, self._interval_to_binance(spec.interval or "1d"), start_ms, end_ms)
+                interval = self._interval_to_binance(spec.interval or "1d")
+                llm_text = self._llm_format_crypto_historical(query, spec.symbol, interval, spec.start, spec.end)
+                _, query_params = self._build_binance_query_from_llm(llm_text)
+                candles = self._binance.get_historical_candles(
+                    query_params["symbol"],
+                    query_params["interval"],
+                    int(query_params["startTime"]),
+                    int(query_params["endTime"]),
+                )
             else:
                 start_s = spec.start.isoformat()
                 end_s = (spec.end + timedelta(days=1)).isoformat()
