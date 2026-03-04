@@ -192,41 +192,6 @@ def time_anchor(tc: Dict[str, Any]) -> str:
     return ""
 
 
-
-
-def _query_has_anchor_equivalent(query_text: str, tc: Dict[str, Any], anchor_text: str) -> bool:
-    ql = str(query_text or "").lower()
-    if not ql:
-        return False
-    anchor_l = str(anchor_text or "").lower().strip()
-    if anchor_l and anchor_l in ql:
-        return True
-
-    kind = str((tc or {}).get("kind") or "").lower()
-    if kind == "month":
-        y = str(tc.get("year") or "").strip()
-        m = int(tc.get("month") or 0)
-        if not y or not m:
-            return False
-        month_full = _MONTHS.get(m, "").lower()
-        month_short = month_full[:3] if month_full else ""
-        return bool(re.search(rf"\b(?:{re.escape(month_full)}|{re.escape(month_short)})\s+{re.escape(y)}\b", ql)) if month_full else False
-
-    if kind == "year":
-        y = str(tc.get("year") or "").strip()
-        return bool(y and re.search(rf"\b{re.escape(y)}\b", ql))
-
-    if kind == "date":
-        d = tc.get("start")
-        return bool(getattr(d, "isoformat", None) and d.isoformat() in ql)
-
-    if kind == "range":
-        s = tc.get("start")
-        e = tc.get("end")
-        return bool(getattr(s, "isoformat", None) and getattr(e, "isoformat", None) and s.isoformat() in ql and e.isoformat() in ql)
-
-    return False
-
 def rewrite_historical_query(raw_query: str, *, symbol_hint: str | None, tc: Dict[str, Any]) -> str:
     cleaned = strip_meta_scaffold(raw_query)
     anchor = time_anchor(tc)
@@ -235,7 +200,7 @@ def rewrite_historical_query(raw_query: str, *, symbol_hint: str | None, tc: Dic
     q = cleaned
     if phrase:
         q = re.sub(re.escape(str(symbol_hint or "")), "", q, flags=re.IGNORECASE).strip() or phrase
-    if anchor and not _query_has_anchor_equivalent(q, tc, anchor):
+    if anchor and anchor.lower() not in q.lower():
         q = f"{q} {anchor}".strip()
 
     if not phrase and symbol_hint and re.search(r"^[A-Z0-9=\-\.\^]+$", str(symbol_hint)) and symbol_hint not in q:
