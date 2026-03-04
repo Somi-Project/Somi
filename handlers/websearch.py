@@ -14,7 +14,12 @@ import httpx
 import ollama
 from duckduckgo_search import DDGS
 
-from config.settings import WEBSEARCH_MODEL, SYSTEM_TIMEZONE, ROUTING_DEBUG
+from config.settings import (
+    WEBSEARCH_MODEL,
+    SYSTEM_TIMEZONE,
+    ROUTING_DEBUG,
+    RESEARCHER_BUNDLE_SHADOW_MODE,
+)
 from config.searchsettings import WEBSEARCH_DEBUG_RESULTS, WEBSEARCH_MAX_FORMAT_CHARS
 
 from handlers.websearch_tools.finance import FinanceHandler
@@ -40,6 +45,11 @@ except Exception as e:
     logger.warning(f"Agentpedia not available: {e}")
     agentpedia_available = False
     Agentpedia = None
+
+try:
+    from handlers.research.evidence_bundle import bundle_from_results
+except Exception:
+    bundle_from_results = None
 
 
 @dataclass
@@ -449,9 +459,28 @@ class WebSearchHandler:
         self._re_doi = re.compile(r"\b10\.\d{4,9}/[-._;()/:A-Z0-9]+\b", re.IGNORECASE)
         self._re_nct = re.compile(r"\bnct\d{8}\b", re.IGNORECASE)
         self._re_arxiv = re.compile(r"\barxiv[:\s]*\d{4}\.\d{4,5}\b", re.IGNORECASE)
+        self.last_research_bundle: Optional[Dict[str, Any]] = None
 
     def get_system_time(self) -> str:
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+    def _maybe_build_shadow_bundle(self, query: str, results: List[Dict[str, Any]], *, domain: str = "science") -> None:
+        if not RESEARCHER_BUNDLE_SHADOW_MODE or bundle_from_results is None:
+            return
+        try:
+            bundle = bundle_from_results(query, results, intent="science", domain=domain)
+            errs = bundle.validate()
+            payload = bundle.as_dict()
+            payload["validation_errors"] = errs
+            self.last_research_bundle = payload
+            logger.info(
+                "Research shadow bundle created id=%s claims=%d errors=%d",
+                payload.get("bundle_id"),
+                len(payload.get("claims") or []),
+                len(errs),
+            )
+        except Exception as e:
+            logger.debug(f"Shadow bundle build failed: {type(e).__name__}: {e}")
 
     # --- Deroute detection ---
     def _is_deroute(self, results: Any) -> bool:
@@ -906,6 +935,7 @@ Query: {query}
 
             picked = _pick_best(candidate_results)
             if picked:
+                self._maybe_build_shadow_bundle(q, picked, domain="science")
                 for p in pending:
                     p.cancel()
                 return picked
@@ -925,6 +955,7 @@ Query: {query}
                         candidate_results2[src] = res or []
                 picked2 = _pick_best(candidate_results2)
                 if picked2:
+                    self._maybe_build_shadow_bundle(q, picked2, domain="science")
                     for p in pending2:
                         p.cancel()
                     return picked2
@@ -940,7 +971,9 @@ Query: {query}
             return []
         try:
             res = await self.search_web(q, retries=2, backoff_factor=0.5)
-            return self._tag(res, "science", False)
+            tagged = self._tag(res, "science", False)
+            self._maybe_build_shadow_bundle(q, tagged, domain="science")
+            return tagged
         except Exception:
             return []
 
