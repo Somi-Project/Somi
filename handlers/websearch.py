@@ -19,6 +19,8 @@ from config.settings import (
     SYSTEM_TIMEZONE,
     ROUTING_DEBUG,
     RESEARCHER_BUNDLE_SHADOW_MODE,
+    RESEARCH_COMPOSER_ENABLED,
+    RESEARCH_COMPOSER_DEEPREAD,
 )
 from config.searchsettings import WEBSEARCH_DEBUG_RESULTS, WEBSEARCH_MAX_FORMAT_CHARS
 
@@ -50,6 +52,8 @@ try:
     from handlers.research.evidence_bundle import bundle_from_results
 except Exception:
     bundle_from_results = None
+
+from handlers.research.composer import research_compose
 
 
 @dataclass
@@ -853,6 +857,39 @@ Query: {query}
         q = (query or "").strip()
         if not q:
             return []
+
+        if RESEARCH_COMPOSER_ENABLED:
+            try:
+                bundle = await research_compose(
+                    q,
+                    max_web_results=10,
+                    max_enrich_results_per_domain=6,
+                    max_deep_reads=8 if RESEARCH_COMPOSER_DEEPREAD else 0,
+                    risk_mode="auto",
+                )
+                self.last_research_bundle = bundle.as_dict()
+                if bundle.items:
+                    return [{
+                        "title": "Research composer answer",
+                        "url": "",
+                        "description": bundle.answer,
+                        "category": "science",
+                        "source": "research_composer",
+                        "volatile": True,
+                        "queries": bundle.queries,
+                        "conflicts": bundle.conflicts,
+                    }]
+                return [{
+                    "title": "Research composer insufficient evidence",
+                    "url": "",
+                    "description": bundle.answer,
+                    "category": "science",
+                    "source": "research_composer",
+                    "volatile": True,
+                    "queries": bundle.queries,
+                }]
+            except Exception as e:
+                logger.warning(f"Research composer failed for '{q}': {e}")
 
         deadline_s = 12.0
         started = time.monotonic()
