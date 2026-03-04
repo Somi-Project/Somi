@@ -215,6 +215,34 @@ class FinanceHandler:
 
         return None
 
+
+    def _build_endpoint_candidates(self, query: str) -> list[str]:
+        """
+        Build endpoint-compatible candidate strings (asset-focused, low boilerplate).
+        Keeps free API wrappers fed with minimal normalized tokens.
+        """
+        raw = self._clean_query(query)
+        norm_asset = self._normalize_asset_phrase(raw)
+        candidates = [norm_asset]
+        for cand in self._candidate_queries(raw):
+            cl = cand.lower()
+            if any(tok in cl for tok in ("what", "whats", "what's", "price of", "tell me", "show me")):
+                continue
+            candidates.append(cand)
+
+        out: list[str] = []
+        seen = set()
+        for c in candidates:
+            c2 = re.sub(r"\s+", " ", str(c or "")).strip(" ?!.,")
+            if not c2:
+                continue
+            k = c2.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(c2)
+        return out
+
     # -----------------------------
     # De-route logic (deterministic)
     # -----------------------------
@@ -352,20 +380,31 @@ class FinanceHandler:
             ticker = explicit
             logger.info(f"Using explicit ticker '{ticker}' from query '{query}'")
 
-        # 1) Stocks/ETFs via dictionary suggestions
-        if not ticker:
-            norm_asset = self._normalize_asset_phrase(query)
-            candidates = [norm_asset] + [c for c in self._candidate_queries(query) if c != norm_asset]
+        candidates = self._build_endpoint_candidates(query)
+        norm_asset = candidates[0] if candidates else self._normalize_asset_phrase(query)
+        logger.info(f"Endpoint-compatible candidates for finance lookup: {candidates[:4]}")
+
+        # 1) Commodities first to avoid false stock matches like "NOW" from phrases such as "price of oil now".
+        if not ticker and not any(k in query_lower for k in ["ishares", "spdr", "etf", "trust"]):
             for cand in candidates:
-                ticker_list = get_stock_ticker_suggestions(cand)
+                ticker_list = get_commodity_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
                     break
 
-        # 2) Commodities
-        if not ticker and not any(k in query_lower for k in ["ishares", "spdr", "etf", "trust"]):
-            for cand in self._candidate_queries(query):
-                ticker_list = get_commodity_ticker_suggestions(cand)
+        # 2) Stocks/ETFs via dictionary suggestions
+        if not ticker:
+            stock_candidates = [norm_asset]
+            # Include broader candidates only if they don't contain temporal/current-price filler tokens.
+            for cand in candidates:
+                cl = cand.lower()
+                if cand == norm_asset:
+                    continue
+                if any(tok in cl for tok in (" now", " today", " current", " latest")):
+                    continue
+                stock_candidates.append(cand)
+            for cand in stock_candidates:
+                ticker_list = get_stock_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
                     break

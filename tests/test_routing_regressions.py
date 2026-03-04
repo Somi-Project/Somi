@@ -13,11 +13,11 @@ def test_cross_domain_followup_bug_finance_not_reusing_weather_evidence():
     assert can_reuse_evidence("what's the price of oil", prev) is False
 
 
-def test_historical_vs_volatile_collision_nov_2022_defaults_llm_only():
+def test_historical_vs_volatile_collision_nov_2022_finance_search_mode():
     plan = build_query_plan("what was the price of bitcoin nov 2022")
     assert plan.time_anchor is not None
-    assert plan.mode == "LLM_ONLY"
-    assert plan.evidence_enabled is False
+    assert plan.mode == "SEARCH_ONLY"
+    assert plan.evidence_enabled is True
 
 
 def test_news_freshness_sort_and_warning_behavior():
