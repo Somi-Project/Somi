@@ -524,10 +524,6 @@ class FinanceHandler:
         if deroute and not any(k in ql for k in ("btc", "bitcoin", "eth", "ethereum", "crypto", "sol", "solana", "usdt")):
             logger.info(f"De-routing crypto query: reason={reason} query='{query}'")
             return self._deroute_payload(query, reason)
-        # Historical crypto queries must go to Binance klines, not spot ticker endpoint.
-        if self._extract_time_constraint(query):
-            return await self.search_historical_price(query)
-
         explicit = self._extract_explicit_ticker(query)
         if explicit and explicit.upper().endswith("USDT"):
             symbol = explicit.upper()
