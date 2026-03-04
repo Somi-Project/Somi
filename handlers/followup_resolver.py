@@ -14,7 +14,7 @@ _ORDINALS = {
 }
 
 _FINANCE_SUBJECT = re.compile(
-    r"\b(bitcoin|btc|ethereum|eth|solana|sol|oil|wti|brent|gold|silver|eurusd|gbpusd|usdjpy|forex|fx)\b",
+    r"\b(bitcoin|btc|ethereum|eth|solana|sol|oil|wti|brent|gold|silver|eurusd|gbpusd|usdjpy|forex|fx|apple|tesla|amazon|microsoft|nvidia|aapl|tsla|amzn|msft|nvda)\b",
     re.IGNORECASE,
 )
 _TEMPORAL = re.compile(
@@ -195,15 +195,21 @@ class FollowUpResolver:
         return opts
 
     def _extract_subject(self, text: str) -> str:
-        m = _FINANCE_SUBJECT.search(text or "")
-        if m:
-            v = m.group(1).lower()
-            if v == "btc":
-                return "bitcoin"
-            if v == "eth":
-                return "ethereum"
-            return v
-        return ""
+        raw = text or ""
+        ticker_m = re.search(r"\(([A-Z]{1,5})\)", raw)
+        if ticker_m:
+            return ticker_m.group(1).upper()
+
+        m = _FINANCE_SUBJECT.search(raw)
+        if not m:
+            return ""
+        v = m.group(1)
+        vl = v.lower()
+        if vl == "btc":
+            return "bitcoin"
+        if vl == "eth":
+            return "ethereum"
+        return vl
 
     def _extract_temporal_constraint(self, text: str) -> str:
         m = _TEMPORAL.search(text or "")
@@ -233,7 +239,7 @@ class FollowUpResolver:
                 if "price" in msg_l or "price" in last_query.lower() or ctx.last_tool_type == "finance":
                     return f"{subject} price {temporal}".strip()
                 return f"{subject} {temporal}".strip()
-            return f"{last_query} {temporal}".strip()
+            return f"{raw} {temporal}".strip()
 
         if subject and ("price" in msg_l or ctx.last_tool_type == "finance"):
             return f"{subject} price".strip()
