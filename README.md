@@ -72,9 +72,9 @@ Somi focuses on something different:
 
 ## Requirements
 
-- Python 3.11+ download at https://www.python.org/downloads/release/python-3110/
-- Git download at https://git-scm.com/install/windows
-- Ollama running locally at `http://127.0.0.1:11434` download at https://ollama.com/download
+- Python 3.11+
+- Git
+- Ollama running locally at `http://127.0.0.1:11434`
 
 Optional:
 - CUDA GPU (recommended for performance)
