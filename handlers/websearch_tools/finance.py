@@ -14,7 +14,7 @@ from .ftickers import get_forex_ticker_suggestions
 from .itickers import get_index_ticker_suggestions
 from .ctickers import get_commodity_ticker_suggestions
 from .bcrypto import get_crypto_price
-from .generalsearch import search_general
+from .finance_historical_search import search_finance_historical, rewrite_historical_query
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +215,34 @@ class FinanceHandler:
 
         return None
 
+
+    def _build_endpoint_candidates(self, query: str) -> list[str]:
+        """
+        Build endpoint-compatible candidate strings (asset-focused, low boilerplate).
+        Keeps free API wrappers fed with minimal normalized tokens.
+        """
+        raw = self._clean_query(query)
+        norm_asset = self._normalize_asset_phrase(raw)
+        candidates = [norm_asset]
+        for cand in self._candidate_queries(raw):
+            cl = cand.lower()
+            if any(tok in cl for tok in ("what", "whats", "what's", "price of", "tell me", "show me")):
+                continue
+            candidates.append(cand)
+
+        out: list[str] = []
+        seen = set()
+        for c in candidates:
+            c2 = re.sub(r"\s+", " ", str(c or "")).strip(" ?!.,")
+            if not c2:
+                continue
+            k = c2.lower()
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(c2)
+        return out
+
     # -----------------------------
     # De-route logic (deterministic)
     # -----------------------------
@@ -352,20 +380,31 @@ class FinanceHandler:
             ticker = explicit
             logger.info(f"Using explicit ticker '{ticker}' from query '{query}'")
 
-        # 1) Stocks/ETFs via dictionary suggestions
-        if not ticker:
-            norm_asset = self._normalize_asset_phrase(query)
-            candidates = [norm_asset] + [c for c in self._candidate_queries(query) if c != norm_asset]
+        candidates = self._build_endpoint_candidates(query)
+        norm_asset = candidates[0] if candidates else self._normalize_asset_phrase(query)
+        logger.info(f"Endpoint-compatible candidates for finance lookup: {candidates[:4]}")
+
+        # 1) Commodities first to avoid false stock matches like "NOW" from phrases such as "price of oil now".
+        if not ticker and not any(k in query_lower for k in ["ishares", "spdr", "etf", "trust"]):
             for cand in candidates:
-                ticker_list = get_stock_ticker_suggestions(cand)
+                ticker_list = get_commodity_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
                     break
 
-        # 2) Commodities
-        if not ticker and not any(k in query_lower for k in ["ishares", "spdr", "etf", "trust"]):
-            for cand in self._candidate_queries(query):
-                ticker_list = get_commodity_ticker_suggestions(cand)
+        # 2) Stocks/ETFs via dictionary suggestions
+        if not ticker:
+            stock_candidates = [norm_asset]
+            # Include broader candidates only if they don't contain temporal/current-price filler tokens.
+            for cand in candidates:
+                cl = cand.lower()
+                if cand == norm_asset:
+                    continue
+                if any(tok in cl for tok in (" now", " today", " current", " latest")):
+                    continue
+                stock_candidates.append(cand)
+            for cand in stock_candidates:
+                ticker_list = get_stock_ticker_suggestions(cand)
                 if ticker_list:
                     ticker = ticker_list[0]
                     break
@@ -693,20 +732,10 @@ class FinanceHandler:
             }]
         except Exception:
             symbol_hint = symbol or ""
-            # Keep fallback broad when symbol inference is incomplete.
-            fallback_q = f"{query} price {tc['start']} {tc['end']} high low".strip()
-            if symbol_hint:
-                fallback_q = f"{symbol_hint} price {tc['start']} {tc['end']} high low"
-            web = await search_general(fallback_q, min_results=3)
+            clean_q = rewrite_historical_query(query, symbol_hint=symbol_hint, tc=tc)
+            web = await search_finance_historical(clean_q, min_results=3, tc=tc)
             if web:
-                head = web[0]
-                label = symbol_hint or "asset"
-                return [{
-                    "title": f"{label} historical context (web fallback)",
-                    "url": head.get("url", ""),
-                    "description": f"Used web fallback for historical query {tc['start']} to {tc['end']}. Top source: {head.get('title','')}",
-                    "source": "general_search_fallback",
-                }] + web[:3]
+                return web[:3]
             return [{
                 "title": "Historical price unavailable",
                 "url": "",

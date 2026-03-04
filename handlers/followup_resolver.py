@@ -33,6 +33,8 @@ class FollowUpResolution:
     clarify_options: Optional[List[Dict[str, str]]] = None
     previous_query: str = ""
     context_note: str = ""
+    selected_index: int = 0
+    selected_url: str = ""
 
 
 class FollowUpResolver:
@@ -244,6 +246,19 @@ class FollowUpResolver:
 
         return raw or last_query
 
+    def _open_resolution_from_item(self, item: Dict[str, str], *, previous_query: str = "", context_note: str = "") -> FollowUpResolution:
+        url = str(item.get("url") or "")
+        rank = int(item.get("rank") or 0)
+        return FollowUpResolution(
+            action="open_url_and_summarize",
+            url=url,
+            rewritten_query=f"summarize this URL: {url}",
+            previous_query=previous_query,
+            context_note=context_note,
+            selected_index=rank,
+            selected_url=url,
+        )
+
     def resolve(self, user_text: str, ctx: Optional[ToolContext]) -> Optional[FollowUpResolution]:
         if not user_text:
             return None
@@ -269,33 +284,17 @@ class FollowUpResolver:
         if rank is not None and rank > 0:
             for item in ctx.last_results:
                 if int(item.get("rank", 0)) == rank and item.get("url"):
-                    return FollowUpResolution(
-                        action="open_url_and_summarize",
-                        url=str(item.get("url")),
-                        rewritten_query=f"summarize this URL: {item.get('url')}",
-                    )
+                    return self._open_resolution_from_item(item)
 
         quoted_ref = self._extract_quoted_reference(msg)
         if quoted_ref:
             quoted_match = self._find_best_title_match(quoted_ref, ctx.last_results)
             if quoted_match and quoted_match.get("url"):
-                return FollowUpResolution(
-                    action="open_url_and_summarize",
-                    url=str(quoted_match.get("url")),
-                    rewritten_query=f"summarize this URL: {quoted_match.get('url')}",
-                    previous_query=ctx.last_query,
-                    context_note="quoted_title_match",
-                )
+                return self._open_resolution_from_item(quoted_match, previous_query=ctx.last_query, context_note="quoted_title_match")
 
         title_match = self._find_best_title_match(msg, ctx.last_results)
         if title_match and title_match.get("url"):
-            return FollowUpResolution(
-                action="open_url_and_summarize",
-                url=str(title_match.get("url")),
-                rewritten_query=f"summarize this URL: {title_match.get('url')}",
-                previous_query=ctx.last_query,
-                context_note="title_match",
-            )
+            return self._open_resolution_from_item(title_match, previous_query=ctx.last_query, context_note="title_match")
 
         scored: List[tuple[float, Dict[str, str]]] = []
         for item in ctx.last_results:
@@ -308,11 +307,7 @@ class FollowUpResolver:
             best_score, best = scored[0]
             second_score = scored[1][0] if len(scored) > 1 else 0.0
             if best_score >= self.fuzzy_threshold and (best_score - second_score) >= self.margin and best.get("url"):
-                return FollowUpResolution(
-                    action="open_url_and_summarize",
-                    url=str(best.get("url")),
-                    rewritten_query=f"summarize this URL: {best.get('url')}",
-                )
+                return self._open_resolution_from_item(best)
 
         if _STORY_REF.search(msg) and len(ctx.last_results) > 1:
             return FollowUpResolution(

@@ -29,6 +29,18 @@ def build_query_plan(text: str, prev: Optional[PrevTurnState] = None) -> QueryPl
         return QueryPlan("LLM_ONLY", signals.domain, False, signals.time_anchor, False, "", "personal_query_hardblock", 0.99)
 
     if signals.time_anchor is not None and not signals.recency and not _has_hard_search_request(text):
+        # Finance historical queries still need tool execution for reliable numeric ranges.
+        if signals.domain == "finance":
+            return QueryPlan(
+                "SEARCH_ONLY",
+                signals.domain,
+                False,
+                signals.time_anchor,
+                True,
+                _rewrite_search_query(text, signals.time_anchor, include_recency=False),
+                "historical_finance_requires_data",
+                0.94,
+            )
         if signals.exactness:
             return QueryPlan("LLM_ONLY", signals.domain, False, signals.time_anchor, False, "", "historical_exactness_internal", 0.91)
         return QueryPlan("LLM_ONLY", signals.domain, False, signals.time_anchor, False, "", "historical_time_anchor", 0.90)
