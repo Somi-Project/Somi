@@ -213,10 +213,6 @@ class FinanceHandler:
             logger.info("Memory usage disabled for stock/commodity/index query")
 
         query = self._clean_query(query)
-        if self._is_historical_query(query):
-            logger.info(f"Historical stock/commodity query blocked: '{query}'")
-            return self._historical_unavailable_result()
-
         query_lower = query.lower().strip()
         logger.info(f"Processing stock/commodity query: '{query}' at {self.get_system_time()}")
 
