@@ -1,6 +1,8 @@
 # agents.py
 # Mainframe
+
 from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -10,12 +12,13 @@ import re
 import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
+
 from ollama import AsyncClient
+
 from config.settings import (
     GENERAL_MODEL,
     CODING_MODEL,
     MEMORY_MODEL,
-    INSTRUCT_MODEL,
     DEFAULT_TEMP,
     VISION_MODEL,
     SYSTEM_TIMEZONE,
@@ -40,19 +43,13 @@ from config.settings import (
     ARTIFACT_DEGRADE_NOTICE,
     ARTIFACT_PLAN_REVISION_MAX_AGE_MINUTES,
     STRATEGIC_HUMAN_SUMMARY_ENABLED,
-    ENABLE_SMART_FOLLOWUPS,
 )
+
 from rag import RAGHandler
 from handlers.websearch import WebSearchHandler
 from handlers.websearch_tools.conversion import parse_conversion_request  # parser-gated conversion
-from handlers.websearch_tools.historical_search import maybe_enrich_historical_answer
 from handlers.routing import decide_route
-from routing import PrevTurnState, build_query_plan, can_reuse_evidence, extract_signals
-from handlers.search_bundle import render_search_bundle
-from synthesis.answer_mixer import mix_answer
 from handlers.time_handler import TimeHandler
-from handlers.tool_context import ToolContextStore
-from handlers.followup_resolver import FollowUpResolver
 from handlers.wordgame import WordGameHandler
 from handlers.skills.dispatch import handle_skill_command
 from handlers.skills.registry import build_registry_snapshot
@@ -64,6 +61,7 @@ from executive.life_modeling.artifact_store import ArtifactStore as MontagueArti
 from executive.strategic import StrategicPlanner
 from executive.strategic.human_summary import render_human_summary
 from toolbox.loader import ToolLoader
+
 from handlers.memory import Memory3Manager
 from handlers.contracts.intent import ArtifactIntentDetector
 from handlers.contracts.store import ArtifactStore
@@ -87,43 +85,21 @@ from handlers.heartbeat import (
     save_assistant_profile,
 )
 from promptforge import PromptForge
+
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
 LOG_PATH = os.path.join("sessions", "logs", "bot.log")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8")],
 )
 logger = logging.getLogger(__name__)
+
 logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-_FOLLOWUP_INJECTION_MARKERS = (
-    "previous query:",
-    "previous top result:",
-    "now answer this follow-up:",
-    "decide whether to:",
-    "build directly on the previous context",
-    "you have the previous search results available",
-)
-
-
-def sanitize_user_visible_prompt(text: str) -> str:
-    raw = str(text or "").strip()
-    if not raw:
-        return ""
-    lower = raw.lower()
-    if lower.startswith("previous query:") or "now answer this follow-up:" in lower:
-        m = re.search(r"now\s+answer\s+this\s+follow-up\s*:\s*(.+)", raw, flags=re.IGNORECASE | re.DOTALL)
-        if m:
-            return (m.group(1) or "").strip().splitlines()[0].strip()
-    return raw
-
-
-def has_followup_injection_markers(text: str) -> bool:
-    tl = str(text or "").lower()
-    return any(marker in tl for marker in _FOLLOWUP_INJECTION_MARKERS)
 
 class Agent:
     def __init__(self, name: str, use_studies: bool = False, use_flow: bool = False, user_id: str = "default_user"):
@@ -131,18 +107,22 @@ class Agent:
         self.default_agent_key = "Name: Somi"
         self.use_studies = use_studies
         self.use_flow = use_flow
+
         self.current_mode = "normal"
         self.story_iterations = 0
         self.conversation_cache: List[Dict[str, str]] = []
+
         # Default / constructor user_id (call-level user_id can override at runtime)
         self.user_id = str(user_id or "default_user")
         self.session_dir = os.path.join("sessions", self.user_id)
         os.makedirs(self.session_dir, exist_ok=True)
         self.story_file = os.path.join(self.session_dir, "story.json")
         self.game_file = os.path.join(self.session_dir, "game.json")
+
         self.ollama_client = AsyncClient()
         self.vision_client = AsyncClient()
         self._client_loop_id: Optional[int] = None
+
         self._maintenance_task: Optional[asyncio.Task] = None
         self._mem_write_sem = asyncio.Semaphore(1)
         self._last_due_injected_at: Dict[str, float] = {}
@@ -155,6 +135,7 @@ class Agent:
         os.makedirs(self._memory_queue_dir, exist_ok=True)
         self.last_attachments_by_user: Dict[str, List[Dict[str, Any]]] = {}
         self._background_tasks: set[asyncio.Task] = set()
+
         # Load personality config
         try:
             with open(self.personality_config, "r", encoding="utf-8") as f:
@@ -174,21 +155,25 @@ class Agent:
                     "behaviors": [],
                 }
             }
+
         # Alias mapping
         self.alias_to_key: Dict[str, str] = {}
         for key, cfg in self.characters.items():
             aliases = cfg.get("aliases", []) + [key, key.replace("Name: ", "")]
             for a in aliases:
                 self.alias_to_key[str(a).lower()] = key
+
         self.assistant_profile = load_assistant_profile()
         catalog = load_persona_catalog()
         active_key, active_persona = get_active_persona(str(self.assistant_profile.get("active_persona_key") or self.default_agent_key), catalog or self.characters)
         self.assistant_profile["active_persona_key"] = active_key
         self.heartbeat_engine = HeartbeatEngine()
+
         self.agent_key = self._resolve_agent_key(name)
         character = dict(self.characters.get(self.agent_key, self.characters.get(self.default_agent_key, {})))
         if active_persona:
             character.update(active_persona)
+
         self.name = self.agent_key.replace("Name: ", "")
         self.role = character.get("role", "assistant")
         self.temperature = character.get("temperature", DEFAULT_TEMP)
@@ -198,29 +183,32 @@ class Agent:
         self.inhibitions = character.get("inhibitions", [])
         self.hobbies = character.get("hobbies", [])
         self.behaviors = character.get("behaviors", [])
+
         self.model = GENERAL_MODEL
         self.coding_model = CODING_MODEL
         self.memory_model = MEMORY_MODEL
         self.vision_model = VISION_MODEL
+
         # History:
         # - self.history: default single-user history (CLI/GUI unchanged)
         # - self.history_by_user: optional per-user history for Telegram/WhatsApp/etc
         self.history: List[Dict[str, str]] = []
         self.history_by_user: Dict[str, List[Dict[str, str]]] = {}
+
         self.rag = RAGHandler()
         self.websearch = WebSearchHandler()
         self.time_handler = TimeHandler(default_timezone=SYSTEM_TIMEZONE)
         self.wordgame = WordGameHandler(game_file=self.game_file)
-        self.tool_context_store = ToolContextStore(ttl_seconds=900)
-        self.followup_resolver = FollowUpResolver()
-        self.enable_smart_followups = ENABLE_SMART_FOLLOWUPS
+
         self.promptforge = PromptForge(workspace=".")
+
         self.artifact_store = ArtifactStore()
         self.artifact_detector = ArtifactIntentDetector(threshold=float(ARTIFACT_INTENT_THRESHOLD))
         self.fact_distiller = FactDistiller()
         self.istari_protocol = IstariProtocol()
         self.montague_context_store = MontagueArtifactStore()
         self.strategic_planner = StrategicPlanner()
+
         self.use_memory3 = bool(USE_MEMORY3)
         self.memory = Memory3Manager(
             ollama_client=self.ollama_client,
@@ -228,12 +216,14 @@ class Agent:
             time_handler=self.time_handler,
             user_id=self.user_id,
         )
+
         self.turn_counter = 0
         self._perf_samples: list[dict[str, float | str | bool]] = []
         self._capulet_context_cache: dict[str, Any] = {"fetched_at": 0.0, "payload": None}
         self.context_profile = str(CONTEXT_PROFILE or CHAT_CONTEXT_PROFILE or "8k").lower()
         self.context_profile_cfg = dict((CHAT_CONTEXT_PROFILES or {}).get(self.context_profile, {}))
         self._load_mode_files()
+
     def _refresh_profile_and_persona(self) -> tuple[dict, str, dict]:
         self.assistant_profile = load_assistant_profile()
         catalog = load_persona_catalog() or self.characters
@@ -246,41 +236,10 @@ class Agent:
             except Exception:
                 pass
         return self.assistant_profile, active_key, persona
+
     def _heartbeat_first_interaction_of_day(self, active_user_id: str, profile: dict) -> bool:
         today = datetime.now(timezone.utc).date().isoformat()
         return str(profile.get("last_brief_date") or "") != today
-    def _log_route_snapshot(
-        self,
-        *,
-        user_id: str,
-        prompt: str,
-        raw_user_text: str,
-        routing_text_used: str,
-        decision: Any,
-        last_tool_type: str = "",
-        mode_switch_explanation: bool = False,
-        ignore_last_results: bool = False,
-    ) -> None:
-        try:
-            path = os.path.join("sessions", "logs", "routing_decisions.log")
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            row = {
-                "ts": datetime.now(timezone.utc).isoformat(),
-                "user_id": str(user_id or "default_user"),
-                "prompt": str(prompt or "")[:260],
-                "raw_user_text": str(raw_user_text or "")[:260],
-                "routing_text_used": str(routing_text_used or "")[:260],
-                "route": str(getattr(decision, "route", "")),
-                "reason": str(getattr(decision, "reason", "")),
-                "intent": str((getattr(decision, "signals", {}) or {}).get("intent", "")),
-                "last_tool_type": str(last_tool_type or ""),
-                "mode_switch_explanation": bool(mode_switch_explanation),
-                "ignore_last_results": bool(ignore_last_results),
-            }
-            with open(path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(row, ensure_ascii=False) + "\n")
-        except Exception:
-            pass
 
     def _safe_temperature_value(self, value: Any, fallback: float) -> float:
         try:
@@ -292,6 +251,7 @@ class Agent:
         if out > 1.5:
             return 1.5
         return out
+
     def _resolve_agent_key(self, name: str) -> str:
         if not name:
             return self.default_agent_key
@@ -302,6 +262,7 @@ class Agent:
             return self.alias_to_key[nl]
         logger.warning(f"Agent '{name}' not found. Using default: {self.default_agent_key}")
         return self.default_agent_key
+
     def _load_mode_files(self) -> None:
         try:
             if os.path.exists(self.story_file):
@@ -313,6 +274,7 @@ class Agent:
         except Exception:
             self.current_mode = "normal"
             self.story_iterations = 0
+
         try:
             if os.path.exists(self.game_file):
                 self.current_mode = "game"
@@ -320,6 +282,7 @@ class Agent:
         except Exception:
             if self.current_mode == "game":
                 self.current_mode = "normal"
+
     def _extract_tradeoff_options(self, user_text: str) -> tuple[str, str]:
         text = str(user_text or "").strip()
         parts = re.split(r"\s+vs\.?\s+", text, maxsplit=1, flags=re.IGNORECASE)
@@ -329,6 +292,7 @@ class Agent:
         if len(parts) == 2 and parts[0].strip() and parts[1].strip():
             return parts[0].strip(" ?.!,"), parts[1].strip(" ?.!,")
         return "Option A", "Option B"
+
     def _get_latest_montague_context_context_pack(self, *, cache_ttl_seconds: float = 2.0) -> dict[str, Any]:
         now = time.time()
         cached = self._capulet_context_cache.get("payload")
@@ -346,6 +310,7 @@ class Agent:
         }
         self._capulet_context_cache = {"fetched_at": now, "payload": cp}
         return cp
+
     def _ensure_async_clients_for_current_loop(self) -> None:
         """
         Recreate async Ollama clients when called from a different event loop.
@@ -356,12 +321,15 @@ class Agent:
             loop = asyncio.get_running_loop()
         except RuntimeError:
             return
+
         loop_id = id(loop)
         if self._client_loop_id == loop_id:
             return
+
         self.ollama_client = AsyncClient()
         self.vision_client = AsyncClient()
         self._client_loop_id = loop_id
+
         # Keep memory manager + embedder aligned with the active async client.
         try:
             self.memory.client = self.ollama_client
@@ -369,9 +337,11 @@ class Agent:
                 self.memory.embedder.client = self.ollama_client
         except Exception:
             pass
+
     def _pending_ticket_path(self, user_id: str) -> str:
         safe = re.sub(r"[^a-zA-Z0-9._-]", "_", str(user_id or "default_user"))[:120]
         return os.path.join(self._pending_ticket_dir, f"{safe}.json")
+
     def _persist_pending_ticket(self, user_id: str, ticket: ExecutionTicket) -> None:
         try:
             path = self._pending_ticket_path(user_id)
@@ -386,6 +356,7 @@ class Agent:
             os.replace(tmp, path)
         except Exception as e:
             logger.debug(f"Pending ticket persist failed: {e}")
+
     def _load_pending_ticket(self, user_id: str) -> Optional[ExecutionTicket]:
         path = self._pending_ticket_path(user_id)
         if not os.path.exists(path):
@@ -398,6 +369,7 @@ class Agent:
         except Exception as e:
             logger.debug(f"Pending ticket load failed: {e}")
             return None
+
     def _clear_pending_ticket(self, user_id: str) -> None:
         path = self._pending_ticket_path(user_id)
         try:
@@ -405,22 +377,27 @@ class Agent:
                 os.remove(path)
         except Exception:
             pass
+
     def _schedule_background_task(self, coro: Any, *, label: str = "bg_task") -> None:
         try:
             task = asyncio.create_task(coro)
             self._background_tasks.add(task)
+
             def _done(t: asyncio.Task) -> None:
                 self._background_tasks.discard(t)
                 try:
                     t.result()
                 except Exception as e:
                     logger.debug(f"Background task '{label}' failed: {type(e).__name__}: {e}")
+
             task.add_done_callback(_done)
         except Exception as e:
             logger.debug(f"Background task scheduling failed ({label}): {e}")
+
     def _memory_queue_path(self, user_id: str) -> str:
         safe = re.sub(r"[^a-zA-Z0-9._-]", "_", str(user_id or "default_user"))[:120]
         return os.path.join(self._memory_queue_dir, f"{safe}.jsonl")
+
     def _enqueue_memory_write(self, *, prompt: str, content: str, active_user_id: str, should_search: bool) -> None:
         path = self._memory_queue_path(active_user_id)
         row = {
@@ -432,6 +409,7 @@ class Agent:
         }
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
     def _read_memory_queue(self, active_user_id: str) -> List[Dict[str, Any]]:
         path = self._memory_queue_path(active_user_id)
         if not os.path.exists(path):
@@ -450,6 +428,7 @@ class Agent:
                     continue
                 out.append(item)
         return out
+
     def _write_memory_queue(self, active_user_id: str, items: List[Dict[str, Any]]) -> None:
         path = self._memory_queue_path(active_user_id)
         tmp = path + ".tmp"
@@ -457,6 +436,7 @@ class Agent:
             for item in items:
                 f.write(json.dumps(item, ensure_ascii=False) + "\n")
         os.replace(tmp, path)
+
     async def _memory_ingest_nonblocking(self, *, active_user_id: str, limit: int = 4) -> None:
         try:
             async with self._mem_write_sem:
@@ -495,10 +475,12 @@ class Agent:
                 self._write_memory_queue(active_user_id, keep)
         except Exception:
             pass
+
     def _extract_user_correction(self, prompt: str) -> Tuple[str, str]:
         p = (prompt or "").strip()
         if len(p) < 8:
             return "", ""
+
         # Keep this conservative to avoid false-positive reroutes on generic "no" replies.
         m = re.search(
             r"\b(?:not quite|that'?s not what i (?:asked|meant)|i (?:wanted|meant)|instead i (?:wanted|meant))\b[\s,:-]*(.*)$",
@@ -512,6 +494,8 @@ class Agent:
             return "User signaled previous answer mismatch; prioritize clarification and corrected intent.", ""
         tail_norm = tail.lower()
         return f"User correction received: {tail_norm}", tail_norm
+
+
     def _is_explicit_coding_intent(self, prompt: str) -> bool:
         p = (prompt or "").strip().lower()
         if not p:
@@ -523,6 +507,7 @@ class Agent:
         )
         if p.startswith(strong_prefixes):
             return True
+
         explicit_action_markers = (
             "fix", "debug", "refactor", "implement", "write", "generate", "create", "update",
             "optimize", "add", "remove", "patch", "review",
@@ -532,14 +517,18 @@ class Agent:
             "unit test", "skill.md", "pull request", "compile", "lint", "pytest", "api endpoint",
             "sql query", "script", "module", "file", "repository", "repo",
         )
+
         has_action = any(m in p for m in explicit_action_markers)
         has_target = any(m in p for m in technical_targets)
+
         # explicit code syntax cues
         has_code_cue = bool(
             re.search(r"```|\bdef\s+\w+\s*\(|\bclass\s+\w+\s*[:(]|\bimport\s+\w+", p)
             or re.search(r"\bselect\b.+\bfrom\b", p)
         )
+
         return (has_action and has_target) or has_code_cue
+
     def _is_plan_revision_followup(self, prompt: str) -> bool:
         p = (prompt or "").strip().lower()
         if len(p) < 10:
@@ -550,6 +539,7 @@ class Agent:
         )
         plan_markers = ("plan", "that", "it", "schedule", "steps")
         return any(m in p for m in revision_markers) and any(m in p for m in plan_markers)
+
     def _extract_plan_revision_constraints(self, prompt: str) -> List[str]:
         p = (prompt or "").strip()
         if not p:
@@ -566,6 +556,7 @@ class Agent:
         if cleaned:
             out.append(f"User adjustment request: {cleaned}")
         return out[:3]
+
     def _plan_revision_confidence(self, prompt: str) -> float:
         p = (prompt or "").strip().lower()
         if not p:
@@ -580,6 +571,7 @@ class Agent:
         if "plan" in p:
             score += 0.2
         return min(score, 0.99)
+
     def _is_recent_artifact(self, artifact: Optional[Dict[str, Any]], *, max_age_minutes: int) -> bool:
         if not artifact:
             return False
@@ -594,6 +586,7 @@ class Agent:
             return age_s <= float(max_age_minutes) * 60.0
         except Exception:
             return False
+
     def _get_plan_for_revision(self, user_id: str, prompt: str) -> Optional[Dict[str, Any]]:
         conf = self._plan_revision_confidence(prompt)
         if conf < 0.75:
@@ -603,8 +596,10 @@ class Agent:
         if not self._is_recent_artifact(candidate, max_age_minutes=max_age):
             return None
         return candidate
+
     def _should_force_research_websearch(self, route: str, artifact_intent: Optional[str]) -> bool:
         return bool(ENABLE_NL_ARTIFACTS and artifact_intent == "research_brief" and str(route or "") != "websearch")
+
     def _apply_research_degrade_notice(self, content: str, *, reason: str = "") -> str:
         if not bool(ARTIFACT_DEGRADE_NOTICE):
             return content
@@ -612,114 +607,25 @@ class Agent:
         if "insufficient_sources" not in reason_l and "web search unavailable" not in reason_l:
             return content
         return (content or "").rstrip() + "\n\nI couldn’t fetch enough sources right now, so I answered without citations."
+
     def _select_response_model(self, prompt: str) -> str:
         if self._is_explicit_coding_intent(prompt):
             return self.coding_model
         return self.model
+
     def _clean_think_tags(self, text: str) -> str:
         return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
     def _strip_unwanted_json(self, text: str) -> str:
         if self.current_mode != "game":
             text = re.sub(r"```json\s*\{.*?\}\s*```", "", text, flags=re.DOTALL)
         return text.strip()
-    def _is_internal_artifact_leak(self, text: str) -> bool:
-        t = str(text or "").strip().lower()
-        if not (t.startswith("{") and t.endswith("}")):
-            return False
-        internal_types = ("tradeoff_evaluation", "routing_artifact", "router_decision", "internal_action")
-        return any(f'"type": "{k}"' in t or f'"type":"{k}"' in t for k in internal_types)
-    def _looks_like_tool_dump(self, text: str) -> bool:
-        """Heuristic gate: only naturalize clear tool/search dumps."""
-        if not text:
-            return False
-        t = str(text)
-        tl = t.lower()
-        strong_markers = (
-            "## web/search context",
-            "reply 'expand",
-            "reply expand",
-            "top results",
-        )
-        if any(m in tl for m in strong_markers):
-            return True
-        url_count = len(re.findall(r"https?://[^\s\]\)]+", t, flags=re.IGNORECASE))
-        dump_markers = 0
-        dump_markers += len(re.findall(r"(?im)^\s*(?:[-*]|\d+\.)\s+.+https?://", t))
-        dump_markers += len(re.findall(r"(?im)^\s*(?:title|source|url)\s*:\s*", t))
-        dump_markers += len(re.findall(r"(?im)^\s*\[[0-9]+\]\s+", t))
-        if url_count >= 2 and dump_markers >= 2:
-            return True
-        return False
-    def _strip_search_meta_leakage(self, text: str) -> str:
-        """Conservative post-filter to remove common cleanup meta narration lines."""
-        if not text:
-            return text
-        banned_line_patterns = [
-            r"(?i)\bas an ai\b.*",
-            r"(?i)\bbased on the provided\b.*",
-            r"(?i)^\s*to provide\b.*",
-            r"(?i)^\s*i would summarize\b.*",
-            r"(?i)^\s*i hope this explanation helps\b.*",
-            r"(?i)^\s*if you have any further questions\b.*",
-            r"(?i)\braw search response\b.*",
-            r"(?i)\btool output\b.*",
-        ]
-        kept_lines = []
-        for line in str(text).splitlines():
-            stripped = line.strip()
-            if not stripped:
-                kept_lines.append(line)
-                continue
-            has_url = bool(re.search(r"https?://", stripped, flags=re.IGNORECASE))
-            has_number = bool(re.search(r"\d", stripped))
-            is_meta = any(re.search(p, stripped) for p in banned_line_patterns)
-            if is_meta and not has_url and not has_number:
-                continue
-            kept_lines.append(line)
-        return "\n".join(kept_lines).strip()
-    async def _naturalize_search_output(self, raw_content: str, original_prompt: str) -> str:
-        """Use the configured INSTRUCT_MODEL to turn raw websearch dumps into natural, friendly answers.
-        This runs AFTER the FollowUpResolver has done its job — resolver abilities are 100% preserved."""
-        if not self._looks_like_tool_dump(raw_content):
-            return raw_content  # nothing to clean
 
-        system_prompt = (
-            "You are a rewrite engine that outputs only final user-facing answer text.\n"
-            "Rules:\n"
-            "- Output ONLY the final answer. No preface, no analysis, no process narration.\n"
-            "- Do NOT mention being an AI.\n"
-            "- Do NOT mention raw response, tool output, cleanup, summarizing, or transformation steps.\n"
-            "- Do NOT include technical headers like '## Web/Search Context' or 'Top results'.\n"
-            "- Preserve all numbers, dates, times, percentages, and ranges exactly as shown in the input.\n"
-            "- If any URLs are present in the input, include a 'Sources:' section listing those URLs.\n"
-            "- Keep the answer concise and natural.\n"
-        )
-        user_prompt = (
-            f"Original user question:\n{original_prompt}\n\n"
-            "Tool output to rewrite:\n"
-            f"{raw_content}\n\n"
-            "Output ONLY the final answer text. Preserve numbers/dates/ranges exactly."
-        )
-
-        try:
-            resp = await self.ollama_client.chat(
-                model=INSTRUCT_MODEL,   # ← comes from config/settings.py
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt},
-                ],
-                options={"temperature": 0.1, "max_tokens": 600, "keep_alive": 300},
-            )
-            cleaned = resp.get("message", {}).get("content", "") or raw_content
-            scrubbed = self._strip_search_meta_leakage(cleaned)
-            return scrubbed if scrubbed else raw_content
-        except Exception as e:
-            logger.warning(f"Search naturalize failed (non-fatal): {e}")
-            return raw_content  # safe fallback
     def _compose_identity_block(self) -> str:
         behavior = random.choice(self.behaviors) if self.behaviors else "neutral"
         physicality = random.choice(self.physicality) if self.physicality else "generic assistant"
         inhibition = random.choice(self.inhibitions) if self.inhibitions else "respond naturally"
+
         return (
             f"You are {self.name}, a {self.description} AI assistant.\n"
             f"Role: {self.role}\n"
@@ -733,6 +639,7 @@ class Agent:
             "- Be direct and practical.\n"
             "- Never simulate timers or countdowns. If asked to set a reminder, confirm it was scheduled.\n"
         )
+
     # -------- History selection (safe, minimal) --------
     def _should_use_per_user_history(self, active_user_id: str) -> bool:
         """
@@ -744,31 +651,37 @@ class Agent:
         if not au:
             return False
         return au != str(self.user_id)
+
     def _get_history_list(self, active_user_id: str) -> List[Dict[str, str]]:
         if self._should_use_per_user_history(active_user_id):
             return self.history_by_user.setdefault(active_user_id, [])
         return self.history
+
     def _push_history_for(self, active_user_id: str, user_prompt: str, assistant_content: str) -> None:
         hist = self._get_history_list(active_user_id)
         hist.append({"role": "user", "content": user_prompt})
         hist.append({"role": "assistant", "content": assistant_content})
         if len(hist) > 60:
             del hist[:-60]
+
         if self.use_flow:
             self.conversation_cache.append({"role": "user", "content": user_prompt})
             self.conversation_cache.append({"role": "assistant", "content": assistant_content})
             if len(self.conversation_cache) > 10:
                 self.conversation_cache = self.conversation_cache[-10:]
+
     def _format_due_ts_local(self, due_ts: str) -> str:
         try:
             return self.time_handler.format_iso_to_local(str(due_ts or ""), SYSTEM_TIMEZONE)
         except Exception:
             return str(due_ts or "")
+
     # -------- Local intent routing (memory/goals/reminders) --------
     def _is_personal_memory_query(self, prompt: str) -> bool:
         pl = (prompt or "").strip().lower()
         if not pl:
             return False
+
         # Strong internal-state triggers: never websearch
         internal_triggers = (
             "what do you remember", "remember about me", "summarize everything you remember",
@@ -781,13 +694,18 @@ class Agent:
         )
         if any(t in pl for t in internal_triggers):
             return True
+
         if re.search(r"\b(my)\s+(name|preferences?|goals?|reminders?|favorite)\b", pl):
             return True
+
         if re.search(r"\bwhat'?s\s+my\b", pl):
             return True
+
         if ("remind me" in pl) and not any(k in pl for k in ("news", "weather", "price", "quote", "market")):
             return True
+
         return False
+
     def _should_inject_due_context(self, prompt: str, active_user_id: str) -> bool:
         """
         Avoid due-reminder context pollution on unrelated turns.
@@ -799,9 +717,11 @@ class Agent:
         uid = str(active_user_id or self.user_id)
         last = float(self._last_due_injected_at.get(uid, 0.0) or 0.0)
         return (now - last) >= float(self._due_inject_cooldown_seconds)
+
     def _mark_due_context_injected(self, active_user_id: str) -> None:
         uid = str(active_user_id or self.user_id)
         self._last_due_injected_at[uid] = time.time()
+
     async def _route_local_memory_intents(self, prompt: str, active_user_id: str) -> Optional[str]:
         """
         Handle obvious memory/goals/reminders intents deterministically.
@@ -811,14 +731,17 @@ class Agent:
         pll = pl.lower()
         if not pll:
             return None
+
         if pll.strip() == "memory doctor":
             try:
                 report = await self.memory.memory_doctor(prompt, user_id=active_user_id)
                 return report
             except Exception as e:
                 return f"Memory doctor failed: {type(e).__name__}: {e}"
+
         # 1) One-time reminders: supports common natural phrasing + shorthand units
         reminder_prefix = r"(?:remind me\s+(?:to|about)|set\s+(?:a\s+)?reminder\s+to)"
+
         m = re.search(
             rf"^{reminder_prefix}\s+(.+?)\s+in\s+(\d+)\s+(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h|days?|d)\s*$",
             pl,
@@ -832,6 +755,7 @@ class Agent:
             if rid:
                 return f"Got it — reminder set: '{title}' in {n} {unit}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
         m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+in\s+(a|an)\s+(minute|hour|day)\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
@@ -841,6 +765,7 @@ class Agent:
             if rid:
                 return f"Got it — reminder set: '{title}' in {article} {unit}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
         m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+in\s+half\s+an?\s+hour\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
@@ -848,6 +773,7 @@ class Agent:
             if rid:
                 return f"Got it — reminder set: '{title}' in half an hour."
             return "I couldn't schedule that reminder time. Try: remind me to <task> in 2 minutes."
+
         m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+at\s+(.+)\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
@@ -856,6 +782,7 @@ class Agent:
             if rid:
                 return f"Got it — reminder set: '{title}' at {at_when}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> at 8:30 pm."
+
         m = re.search(rf"^{reminder_prefix}\s+(.+?)\s+tomorrow\s+at\s+(.+)\s*$", pl, flags=re.IGNORECASE)
         if m:
             title = m.group(1).strip()
@@ -864,6 +791,7 @@ class Agent:
             if rid:
                 return f"Got it — reminder set: '{title}' tomorrow at {at_when}."
             return "I couldn't schedule that reminder time. Try: remind me to <task> tomorrow at 8 am."
+
         # 2) Due reminders: "any due reminders" / "are there any due reminders right now"
         if ("due reminder" in pll) or ("due reminders" in pll) or ("what did i have to do again" in pll):
             due = await self.memory.peek_due_reminders(active_user_id, limit=10)
@@ -881,18 +809,23 @@ class Agent:
                 due_ts = self._format_due_ts_local(str(d.get("due_ts", "soon")))
                 lines.append(f"- {title} (due {due_ts})")
             return "\n".join(lines)
+
         # 3) Save goal (and split off trailing reminder request)
         if pll.startswith("my goal is "):
             tail = pl[len("my goal is "):].strip()
+
             goal_text = tail
             reminder_tail = ""
+
             # Split on ". remind me ..." or " remind me ..."
             mm = re.search(r"^(.*?)(?:\.\s*remind me| remind me)\s+(.+)$", tail, flags=re.IGNORECASE)
             if mm:
                 goal_text = (mm.group(1) or "").strip()
                 reminder_tail = (mm.group(2) or "").strip()
+
             if goal_text:
                 await self.memory.upsert_goal(active_user_id, title=goal_text, scope="task", progress=0.0, confidence=0.7)
+
             # If they asked for recurring reminders, be honest (recurring reminders are not implemented yet)
             if reminder_tail:
                 # common patterns humans use
@@ -913,6 +846,7 @@ class Agent:
                         return f"Goal saved: {goal_text}\nAlso set a reminder in {n} {unit}."
                 return f"Goal saved: {goal_text}"
             return f"Goal saved: {goal_text}" if goal_text else "I didn’t catch the goal. Try: My goal is <something>."
+
         # 4) Update goal progress: "update goal <title> to <progress%>"
         if pll.startswith("update goal ") and " to " in pll:
             tail = pl[len("update goal "):].strip()
@@ -923,9 +857,11 @@ class Agent:
                     prog = max(0.0, min(1.0, float(pct_txt) / 100.0))
                     await self.memory.upsert_goal(active_user_id, title=parts[0].strip(), scope="task", progress=prog, confidence=0.72)
                     return f"Updated goal '{parts[0].strip()}' to {int(prog * 100)}%."
+
         # 5) List goals and/or reminders (best-effort; reminders listing may not exist yet)
         if re.search(r"\b(list|show)\b.*\b(goals?|reminders?)\b", pll) or ("goals and reminders" in pll):
             lines: List[str] = []
+
             # Goals
             try:
                 goals = await self.memory.list_active_goals(active_user_id, scope="task", limit=25)
@@ -943,6 +879,7 @@ class Agent:
                     lines.append(f"- {title} (progress {pct}%)")
             else:
                 lines.append("- (none)")
+
             # Reminders (only if the method exists; otherwise be honest)
             lines.append("\n**Reminders**:")
             list_rem = getattr(self.memory, "list_active_reminders", None)
@@ -960,7 +897,9 @@ class Agent:
                     lines.append("- (none)")
             else:
                 lines.append("- (listing not available yet — I can only announce reminders when they become due)")
+
             return "\n".join(lines)
+
         # 6) Summarize what you remember about me (offline; no websearch)
         if ("remember about me" in pll) or ("what do you remember" in pll) or ("summarize everything you remember" in pll):
             # Pull profile + small conversation summary + goals
@@ -971,6 +910,7 @@ class Agent:
                 goal_ctx = await self.memory.build_goal_context(active_user_id, scope="task", limit=10)
             except Exception:
                 goal_ctx = None
+
             parts: List[str] = ["Here’s what I have stored about you:"]
             if profile:
                 parts.append("\n**Profile**\n" + profile)
@@ -978,9 +918,11 @@ class Agent:
                 parts.append("\n**Goals**\n" + goal_ctx)
             if conv:
                 parts.append("\n**Recent memory**\n" + conv)
+
             if len(parts) == 1:
                 return "I don’t have anything stored about you yet."
             return "\n".join(parts)
+
         # 7) Forget/remove/delete (best-effort: goals/reminders if delete methods exist; otherwise forget_phrase filter)
         if re.search(r"^(forget|remove|delete)\b", pll):
             # Extract target phrase
@@ -988,7 +930,9 @@ class Agent:
             target = (mm.group(1).strip() if mm else "").strip()
             if not target:
                 return "Tell me what to forget/remove. Example: “forget about my water goal”."
+
             removed_any = False
+
             # Try goal deletion if available
             del_goal = getattr(self.memory, "delete_goal_by_title", None)
             if callable(del_goal):
@@ -997,6 +941,7 @@ class Agent:
                     removed_any = removed_any or bool(ok)
                 except Exception:
                     pass
+
             # Try reminder deletion if available
             del_rem = getattr(self.memory, "delete_reminder_by_title", None)
             if callable(del_rem):
@@ -1005,14 +950,72 @@ class Agent:
                     removed_any = removed_any or (int(n) > 0)
                 except Exception:
                     pass
+
             # Always add forget-phrase filter as fallback for recall (prevents resurfacing)
             try:
                 ok2 = await self.memory.forget_phrase(active_user_id, phrase=target, scope="task")
                 removed_any = removed_any or bool(ok2)
             except Exception:
                 pass
+
             return "Done — I’ll stop using that." if removed_any else "I couldn’t find anything matching that to remove, but I’ll avoid bringing it up."
+
         return None
+
+    def _should_websearch(self, prompt: str) -> bool:
+        """
+        Network decision gate (natural-language-first):
+        - Default to LLM-only.
+        - Search only when user intent requires freshness/volatility/citations or research.
+        """
+        pl = (prompt or "").strip().lower()
+        if not pl:
+            return False
+
+        # Hard block: internal state / memory/goals/reminders must never websearch
+        if self._is_personal_memory_query(pl) or re.search(r"\bwhat'?s\s+my\b", pl):
+            return False
+
+        explicit = any(k in pl for k in (
+            "search", "look up", "google", "find online", "check online",
+            "source", "sources", "cite", "citation", "link", "verify", "confirm online",
+        ))
+
+        recency = any(k in pl for k in (
+            "latest", "current", "today", "now", "right now", "this week", "updated", "newest",
+            "breaking", "live", "recent",
+        ))
+
+        volatile = any(k in pl for k in (
+            "price", "quote", "market", "stock", "shares",
+            "bitcoin", "btc", "ethereum", "eth", "crypto", "coin",
+            "exchange rate", "fx", "forex",
+            "weather", "forecast", "temperature", "rain",
+            "news", "headline", "current events",
+        ))
+
+        research_keywords = (
+            "evidence", "paper", "papers", "study", "studies", "literature", "review",
+            "systematic review", "meta-analysis", "metaanalysis",
+            "rct", "randomized", "randomised", "trial", "clinical trial",
+            "guideline", "practice guideline", "consensus", "position statement",
+            "pmid", "pubmed", "doi", "arxiv", "openalex", "semantic scholar", "crossref",
+            "clinicaltrials", "clinicaltrials.gov", "nct",
+        )
+        research = any(k in pl for k in research_keywords) or bool(
+            re.search(r"\b(10\.\d{4,9}/\S+|pmid\s*\d{6,9}|nct\s*\d{8}|arxiv\s*:\s*\d{4}\.\d{4,5})\b", pl)
+        )
+
+        years = [int(y) for y in re.findall(r"\b(19\d{2}|20\d{2})\b", pl)]
+        has_year = bool(years)
+        near_present = any(y >= 2023 for y in years)
+
+        historical_only = has_year and not (explicit or recency or volatile or research) and not near_present
+        if historical_only:
+            return False
+
+        return bool(explicit or recency or volatile or research or (has_year and near_present))
+
     def _build_rag_block(self, prompt: str, k: int = 2) -> str:
         if not self.use_studies:
             return ""
@@ -1032,18 +1035,21 @@ class Agent:
         except Exception as e:
             logger.debug(f"RAG retrieval failed (non-fatal): {e}")
             return ""
+
     async def _maintenance_tick(self) -> None:
         try:
             async with asyncio.timeout(4.0):
                 await self.memory.prune_old_memories()
         except Exception:
             pass
+
     async def _persist_memory_serial(self, mem_content: str, user_id: str, mem_type: str, source: str, scope: str = "conversation") -> None:
         try:
             async with self._mem_write_sem:
                 await self.memory.ingest_turn(mem_content, assistant_text="", tool_summaries=[source], session_id=user_id)
         except Exception:
             pass
+
     def _memory_scope_for_prompt(self, prompt: str, should_search: bool = False) -> str:
         pl = (prompt or "").lower()
         if self.current_mode == "story":
@@ -1053,6 +1059,7 @@ class Agent:
         if should_search:
             return "task"
         return "conversation"
+
     def _response_timeout_seconds(self) -> float:
         profile = str(self.context_profile or "").lower()
         if profile in {"4k", "fast"}:
@@ -1060,6 +1067,7 @@ class Agent:
         if profile in {"16k", "32k", "quality"}:
             return 120.0
         return 75.0
+
     def _vision_timeout_seconds(self) -> float:
         profile = str(self.context_profile or "").lower()
         if profile in {"4k", "fast"}:
@@ -1067,6 +1075,7 @@ class Agent:
         if profile in {"16k", "32k", "quality"}:
             return 180.0
         return 120.0
+
     def _token_budget(self, prompt: str, system_prompt: str, base_max: int) -> int:
         total_chars = len(prompt) + len(system_prompt)
         if total_chars > 14000:
@@ -1076,6 +1085,7 @@ class Agent:
         if total_chars > 6000:
             return max(180, int(base_max * 0.70))
         return base_max
+
     def _extract_urls_from_results(self, results: List[Dict[str, Any]], limit: int = 4) -> List[str]:
         urls = []
         for r in results or []:
@@ -1087,6 +1097,7 @@ class Agent:
             if len(urls) >= limit:
                 break
         return urls
+
     def _is_volatile_results(self, results: List[Dict[str, Any]]) -> Tuple[bool, str]:
         volatile = False
         cat = "general"
@@ -1098,6 +1109,7 @@ class Agent:
             if bool(r.get("volatile", False)):
                 volatile = True
         return volatile, cat
+
     def _safe_build_image_spec(self, prompt: str, image_spec: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
         try:
             from handlers.image_tools.image_generate import spec_from_text
@@ -1105,8 +1117,10 @@ class Agent:
         except Exception as e:
             logger.debug(f"Image spec build failed: {e}")
             return None
+
     def _is_chart_keyword_prompt(self, prompt_lower: str) -> bool:
         return any(k in prompt_lower for k in ("chart", "graph", "plot", "bar chart", "bar graph", "line chart"))
+
     def _numeric_guard(self, content: str, search_context: str) -> str:
         """
         Replace numeric tokens not present in search_context with [see source].
@@ -1115,11 +1129,14 @@ class Agent:
         try:
             if not content or not search_context:
                 return content
+
             ctx = search_context.lower()
             ctx_norm = ctx.replace(",", "").replace(" ", "")
+
             numbers = re.findall(r"\b\d{1,3}(?:,\d{3})*(?:\.\d+)?%?\b", content)
             if not numbers:
                 return content
+
             out = content
             for n in set(numbers):
                 n_norm = n.lower().replace(",", "").replace(" ", "")
@@ -1128,6 +1145,7 @@ class Agent:
             return out
         except Exception:
             return content
+
     async def generate_response(
         self,
         prompt: str,
@@ -1139,57 +1157,17 @@ class Agent:
     ) -> str:
         start_total = time.time()
         self.turn_counter += 1
-        raw_user_text = (prompt or "").strip()
-        if not raw_user_text:
+
+        prompt = (prompt or "").strip()
+        if not prompt:
             return "Hey, give me something to work with!"
-        prompt = raw_user_text
+
         # Call-level user_id override (Telegram/WhatsApp multi-chat)
         active_user_id = str(user_id or self.user_id)
         prompt_lower = prompt.lower()
         self._set_last_attachments(active_user_id, [])
         correction_note, corrected_intent_text = self._extract_user_correction(prompt)
-        routing_prompt = sanitize_user_visible_prompt(corrected_intent_text or raw_user_text)
-        # ==================== SMART CONTEXTUAL FOLLOW-UPS v3.0 ====================
-        follow_ctx = self.tool_context_store.get(active_user_id)
-        mode_switch_explanation = bool(self.followup_resolver.is_mode_switch_explanation(routing_prompt))
-        explicit_reference = bool(self.followup_resolver.is_explicit_reference(routing_prompt))
-        ignore_last_results = bool(mode_switch_explanation and not explicit_reference)
-        force_no_followup_binding = bool(ignore_last_results)
-        follow_resolution = None
-        if getattr(self, "enable_smart_followups", True) and not force_no_followup_binding:
-            follow_resolution = self.followup_resolver.resolve(routing_prompt, follow_ctx)
-
-        logger.info(
-            "followup_mode_guard mode_switch_explanation=%s ignore_last_results=%s force_no_followup_binding=%s",
-            mode_switch_explanation,
-            ignore_last_results,
-            force_no_followup_binding,
-        )
-
-        force_followup_search = False
-
-        if follow_resolution:
-            if follow_resolution.action == "clarify":
-                opts = follow_resolution.clarify_options or []
-                lines = ["I found multiple possible matches from the last search. Reply with the number:"]
-                for o in opts[:5]:
-                    lines.append(f"{o.get('rank')}. {o.get('title')[:90]}")
-                return "\n".join(lines)
-
-            elif follow_resolution.action in ("open_url_and_summarize", "rewrite_query") and follow_resolution.rewritten_query:
-                routing_prompt = sanitize_user_visible_prompt(str(follow_resolution.rewritten_query).strip())
-                force_followup_search = True
-                if follow_resolution.action == "open_url_and_summarize":
-                    self.tool_context_store.mark_selected(
-                        active_user_id,
-                        rank=int(getattr(follow_resolution, "selected_index", 0) or 0),
-                        url=str(getattr(follow_resolution, "selected_url", "") or follow_resolution.url or ""),
-                    )
-        if has_followup_injection_markers(routing_prompt):
-            fallback_rewrite = ""
-            if follow_resolution and follow_resolution.action == "rewrite_query":
-                fallback_rewrite = sanitize_user_visible_prompt(str(follow_resolution.rewritten_query or "").strip())
-            routing_prompt = fallback_rewrite or sanitize_user_visible_prompt(raw_user_text)
+        routing_prompt = corrected_intent_text or prompt
         if correction_note:
             self._enqueue_memory_write(
                 prompt=f"Correction signal: {prompt}",
@@ -1197,6 +1175,7 @@ class Agent:
                 active_user_id=active_user_id,
                 should_search=False,
             )
+
         controller_context = {"user_id": active_user_id}
         pending_ticket = self._pending_tickets_by_user.get(active_user_id)
         if pending_ticket is None:
@@ -1205,6 +1184,7 @@ class Agent:
                 self._pending_tickets_by_user[active_user_id] = pending_ticket
         if pending_ticket is not None:
             controller_context["pending_ticket"] = pending_ticket
+
         toolbox_run = re.match(r"^run tool\s+([a-zA-Z0-9_\-]+)(?:\s+(.*))?$", prompt.strip(), flags=re.IGNORECASE)
         if toolbox_run:
             tool_name = toolbox_run.group(1)
@@ -1214,30 +1194,12 @@ class Agent:
                 controller_context["proposed_ticket"] = proposed_ticket
             except Exception as e:
                 return f"Unable to prepare tool proposal safely: {e}"
-        decision = decide_route(
-            routing_prompt,
-            agent_state={
-                "mode": self.current_mode,
-                "last_tool_type": (follow_ctx.last_tool_type if follow_ctx else ""),
-                "has_tool_context": bool(follow_ctx and follow_ctx.last_results and not ignore_last_results),
-                "last_finance_intent": (follow_ctx.last_finance_intent if follow_ctx else ""),
-                "ignore_last_results": ignore_last_results,
-                "force_no_followup_binding": force_no_followup_binding,
-            },
-        )
-        self._log_route_snapshot(
-            user_id=active_user_id,
-            prompt=routing_prompt,
-            raw_user_text=raw_user_text,
-            routing_text_used=routing_prompt,
-            decision=decision,
-            last_tool_type=(follow_ctx.last_tool_type if follow_ctx else ""),
-            mode_switch_explanation=mode_switch_explanation,
-            ignore_last_results=ignore_last_results,
-        )
+
+        decision = decide_route(routing_prompt, agent_state={"mode": self.current_mode})
         capulet_requested = bool(decision.signals.get("capulet_artifact_type"))
         requires_execution = bool(decision.signals.get("requires_execution", False))
         read_only_fast_path = bool(decision.signals.get("read_only", False) and not toolbox_run)
+
         istari_started = time.time()
         istari_handled, istari_text = self.istari_protocol.handle(prompt, active_user_id, toolbox_run_match=toolbox_run)
         istari_ms = (time.time() - istari_started) * 1000.0
@@ -1246,8 +1208,10 @@ class Agent:
             if len(self._perf_samples) > 300:
                 self._perf_samples = self._perf_samples[-300:]
             return istari_text
+
         approval_like = bool(re.match(r"^(approve(\s+&\s+run|\s+patch)?|deny|reject|revoke|cancel)\b", prompt.strip(), flags=re.IGNORECASE))
         should_invoke_controller = bool(toolbox_run or requires_execution or approval_like)
+
         if should_invoke_controller:
             ctl_started = time.time()
             control = handle_turn(prompt, controller_context)
@@ -1255,6 +1219,7 @@ class Agent:
             if control.action_package and control.action_package.get("ticket_hash") and controller_context.get("proposed_ticket") is not None:
                 self._pending_tickets_by_user[active_user_id] = controller_context["proposed_ticket"]
                 self._persist_pending_ticket(active_user_id, controller_context["proposed_ticket"])
+
             if control.action_package and control.action_package.get("execute") and pending_ticket is not None:
                 try:
                     receipt = ApprovalReceipt(
@@ -1269,6 +1234,7 @@ class Agent:
                     return f"{control.response_text}\nExecution result: {json.dumps(result)}"
                 except Exception as e:
                     return f"{control.response_text} Execution blocked: {type(e).__name__}: {e}"
+
             if control.handled:
                 if prompt_lower.strip() == "cancel":
                     self._pending_tickets_by_user.pop(active_user_id, None)
@@ -1277,6 +1243,7 @@ class Agent:
                 if len(self._perf_samples) > 300:
                     self._perf_samples = self._perf_samples[-300:]
                 return control.response_text
+
         self._perf_samples.append({"turn": float(self.turn_counter), "route": str(decision.route), "controller_ms": 0.0, "istari_ms": istari_ms, "read_only_fast_path": read_only_fast_path})
         if len(self._perf_samples) > 300:
             self._perf_samples = self._perf_samples[-300:]
@@ -1285,15 +1252,19 @@ class Agent:
             if ro:
                 avg = sum(float(x.get("controller_ms") or 0.0) for x in ro) / max(1, len(ro))
                 logger.info(f"Perf(read_only_fast_path): n={len(ro)} avg_controller_ms={avg:.3f}")
+
         skill_cmd = handle_skill_command(prompt)
         if skill_cmd.handled:
             if skill_cmd.forced_skill_keys:
                 self._forced_skill_keys_by_user[active_user_id] = list(skill_cmd.forced_skill_keys)
             return skill_cmd.response
+
         self._ensure_async_clients_for_current_loop()
+
         if self.turn_counter % 25 == 0:
             if self._maintenance_task is None or self._maintenance_task.done():
                 self._maintenance_task = asyncio.create_task(self._maintenance_tick())
+
         # Mode toggles
         if self.current_mode == "normal":
             if prompt_lower == "tell me a story":
@@ -1304,6 +1275,7 @@ class Agent:
                     self.current_mode = "game"
                 else:
                     return "Oops, something went wrong starting Hangman. Try again!"
+
         cmd = prompt_lower.strip()
         if cmd in ("stop", "end", "quit"):
             if self.current_mode == "game":
@@ -1319,6 +1291,7 @@ class Agent:
                 except Exception:
                     pass
                 return "Story ended. What's next?"
+
         # Game path
         if self.current_mode == "game":
             game_response, game_ended = self.wordgame.process_game_input(prompt)
@@ -1327,8 +1300,10 @@ class Agent:
                 if game_ended:
                     self.current_mode = "normal"
                 return game_response
+
         if ROUTING_DEBUG:
             logger.info(f"Routing decision: route={decision.route} veto={decision.tool_veto} reason={decision.reason} signals={decision.signals}")
+
         artifact_intent = None
         artifact_confidence = 0.0
         force_websearch_for_research = False
@@ -1350,10 +1325,12 @@ class Agent:
                     )
             except Exception as e:
                 logger.debug(f"Artifact intent detection failed (non-fatal): {e}")
+
         if self._should_force_research_websearch(decision.route, artifact_intent):
             force_websearch_for_research = True
             if ROUTING_DEBUG:
                 logger.info("Artifact intent requested route upgrade: forcing websearch for research_brief")
+
         idx_snapshot = None
         if ENABLE_NL_ARTIFACTS and not capulet_requested:
             try:
@@ -1374,6 +1351,7 @@ class Agent:
                     return markdown
             except Exception as e:
                 logger.debug(f"Continuity engine failed (non-fatal): {e}")
+
         active_persona_for_turn = {"temperature": self.temperature}
         if not capulet_requested:
             try:
@@ -1400,6 +1378,7 @@ class Agent:
                     return markdown
             except Exception as e:
                 logger.debug(f"Heartbeat engine failed (non-fatal): {e}")
+
         capulet_type = str(decision.signals.get("capulet_artifact_type") or "").strip()
         if capulet_type:
             try:
@@ -1444,6 +1423,7 @@ class Agent:
                 return display_text
             except Exception as e:
                 logger.warning(f"Capulet strategic planning failed; continuing standard path: {type(e).__name__}: {e}")
+
         if decision.route == "command":
             cmd = prompt_lower.strip()
             if cmd == "memory doctor":
@@ -1455,6 +1435,7 @@ class Agent:
                     msg = f"Memory doctor failed: {type(e).__name__}: {e}"
                     self._push_history_for(active_user_id, prompt, msg)
                     return msg
+
         if decision.route == "local_memory_intent":
             try:
                 local = await self._route_local_memory_intents(prompt, active_user_id)
@@ -1463,6 +1444,7 @@ class Agent:
                     return local
             except Exception as e:
                 logger.debug(f"Local intent routing failed (non-fatal): {e}")
+
         force_image_from_spec = image_spec is not None
         should_try_image = force_image_from_spec or decision.route == "image_tool" or (decision.route == "conversion_tool" and self._is_chart_keyword_prompt(prompt_lower))
         if should_try_image:
@@ -1474,6 +1456,7 @@ class Agent:
                     self._set_last_attachments(active_user_id, attachments)
                 except Exception as e:
                     logger.debug(f"Image generation route failed (non-fatal): {e}")
+
         if decision.route == "conversion_tool":
             try:
                 async with asyncio.timeout(20.0):
@@ -1483,85 +1466,39 @@ class Agent:
                     return conv_result + "\n(Source: real-time finance data)"
             except Exception as e:
                 logger.debug(f"Early conversion failed: {e}")
+
         detail_keywords = ["explain", "detail", "in-depth", "detailed", "elaborate", "expand", "clarify", "iterate"]
         long_form = long_form or any(k in prompt_lower for k in detail_keywords) or self.current_mode == "story"
         base_max_tokens = 650 if long_form or self.current_mode == "story" else 260
-        no_websearch_override = bool(decision.signals.get("no_websearch_override", False))
-        if follow_ctx and follow_ctx.last_tool_type == "finance" and not no_websearch_override:
-            hist_res = await self.websearch.finance_handler.search_historical_price(routing_prompt)
-            if hist_res:
-                self.tool_context_store.set(active_user_id, "finance", routing_prompt, hist_res)
-                hist_text = self.websearch.format_results(hist_res)
 
-                if self._looks_like_tool_dump(hist_text):
-                    hist_text = await self._naturalize_search_output(hist_text, prompt)
+        should_search = decision.route == "websearch" or force_websearch_for_research
 
-                self._push_history_for(active_user_id, prompt, hist_text)
-                return hist_text
-        prev_state = None
-        if follow_ctx:
-            prev_state = PrevTurnState(
-                domain=str(follow_ctx.last_tool_type or "general"),
-                query=str(follow_ctx.last_query or ""),
-                timestamp=float(follow_ctx.timestamp or 0.0),
-            )
-        signals = extract_signals(routing_prompt)
-        plan = build_query_plan(routing_prompt, prev_state)
-        logger.info(
-            "QUERY_PLAN MODE=%s DOMAIN=%s NEEDS_RECENCY=%s TIME_ANCHOR=%s EVIDENCE_ENABLED=%s REASON=%s",
-            plan.mode,
-            plan.domain,
-            plan.needs_recency,
-            (plan.time_anchor.label if plan.time_anchor else None),
-            plan.evidence_enabled,
-            plan.reason,
-        )
-        # Pipeline: user_text -> decide_route/build_query_plan -> websearch.search -> SearchBundle render -> PromptForge.build_system_prompt.
-        should_search = (
-            plan.mode in {"SEARCH_ONLY", "DUAL"}
-            or force_websearch_for_research
-            or force_followup_search
-        )
-        if no_websearch_override:
-            should_search = False
-            logger.info("no_websearch_override: true")
-        reuse_evidence = can_reuse_evidence(routing_prompt, prev_state)
-        if should_search and not reuse_evidence and follow_ctx:
-            follow_ctx.last_results = []
-        logger.info("route.plan=%s reuse_evidence=%s search_ran=%s", plan.mode, reuse_evidence, should_search)
-        search_context = ""
+        search_context = "Not required for this query. Use internal knowledge."
         memory_context = "No relevant memories found"
         results: List[Dict[str, Any]] = []
         volatile_search = False
         volatile_category = "general"
+
         if should_search:
             try:
                 # === PATCH: forward router metadata (reason/signals) into WebSearchHandler ===
-                planned_query = plan.search_query or routing_prompt
                 results = await self.websearch.search(
-                    planned_query,
+                    routing_prompt,
                     tool_veto=decision.tool_veto,
                     reason=decision.reason,
                     signals=decision.signals,
                     route_hint=decision.route,
                 )
                 volatile_search, volatile_category = self._is_volatile_results(results)
-                bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled, domain=plan.domain, needs_recency=plan.needs_recency)
-                formatted = render_search_bundle(bundle, max_results=6, max_snippet_chars=350)
-                tool_type = str(decision.signals.get("intent") or volatile_category or "general")
-                finance_intent = ""
-                if tool_type in {"crypto", "forex", "stock/commodity"}:
-                    finance_intent = tool_type
-                    tool_type = "finance"
-                self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results, finance_intent=finance_intent)
+                formatted = self.websearch.format_results(results)
                 if formatted and "Error" not in formatted:
                     search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
-                    search_context = formatted[:search_cap] if plan.evidence_enabled else ""
+                    search_context = formatted[:search_cap]
                 else:
-                    search_context = ""
+                    search_context = "Web search returned no results."
             except Exception as e:
                 logger.info(f"Web search failed (non-fatal): {e}")
-                search_context = ""
+                search_context = "Web search unavailable."
         else:
             mem = await self.memory.build_injected_context(routing_prompt, user_id=active_user_id)
             due_block = ""
@@ -1577,16 +1514,21 @@ class Agent:
                 memory_context = mem
             elif due_block:
                 memory_context = f"[Due reminders]\n{due_block}"
+
             mem_cap = max(120, int(BUDGET_MEMORY_TOKENS) * 4)
             if len(memory_context) > mem_cap:
                 memory_context = memory_context[:mem_cap]
+
         rag_block = self._build_rag_block(routing_prompt, k=2)
         current_time = self.time_handler.get_system_date_time()
         identity_block = self._compose_identity_block()
+
         mode_context = "Normal mode."
         if self.current_mode == "story":
             mode_context = "Story mode active. Continue the story coherently. End with 'Want more?'"
+
         extra_blocks = []
+
         extra_blocks.append(
             "## Skills\n"
             "Skills are available via /skill list and runnable with /skill run <name> ..."
@@ -1597,6 +1539,7 @@ class Agent:
             "- If blocked, ineligible, or dry-run, state that clearly and provide next safe step.\n"
             "- Prefer /skill commands for user-requested automations over ad-hoc claims."
         )
+
         extra_blocks.append(
             "## Image Tool Contract\n"
             "When user asks for chart/graph/plot, emit strict JSON only (no prose in JSON):\n"
@@ -1622,6 +1565,7 @@ class Agent:
                 extra_blocks.append("## Skills Catalog\n" + "\n".join(skill_lines))
         except Exception:
             pass
+
         forced_keys_effective = forced_skill_keys or self._forced_skill_keys_by_user.pop(active_user_id, [])
         if forced_keys_effective:
             try:
@@ -1638,6 +1582,7 @@ class Agent:
                 pass
         if rag_block:
             extra_blocks.append(rag_block)
+
         extra_blocks.append(
             "## Reminder/Goal Rules (STRICT)\n"
             "- Do not mention reminders or goals unless the user asked about them OR a [Due reminders] block is present.\n"
@@ -1651,9 +1596,11 @@ class Agent:
                     extra_blocks.append("## Active Goals\n" + goal_ctx)
             except Exception:
                 pass
-        if should_search and plan.evidence_enabled and search_context.strip():
+
+        if should_search:
             sources = self._extract_urls_from_results(results, limit=4)
             sources_text = "\n".join([f"- {u}" for u in sources]) if sources else "(No URLs available in results.)"
+
             evidence_rules = (
                 "## Evidence Rules (STRICT)\n"
                 "You MUST follow these rules when Web/Search Context is present:\n"
@@ -1666,6 +1613,7 @@ class Agent:
                 f"{sources_text}\n"
             )
             extra_blocks.append(evidence_rules)
+
         hist = self._get_history_list(active_user_id)
         history_keep = int(HISTORY_MAX_MESSAGES or 10)
         history_msgs = hist[-history_keep:] if hist else []
@@ -1679,7 +1627,9 @@ class Agent:
             trimmed_history.append(m)
             total_hist_chars += len(c)
         history_msgs = list(reversed(trimmed_history))
+
         history_for_system = history_msgs if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else None
+
         system_prompt = self.promptforge.build_system_prompt(
             identity_block=identity_block,
             current_time=current_time,
@@ -1690,19 +1640,22 @@ class Agent:
             history=history_for_system,
             mode="EXECUTE",
             privilege="SAFE",
-            evidence_enabled=plan.evidence_enabled,
-            query_plan_summary=plan.summary(),
         )
+
         system_prompt += (
             "\n\nFor currency or crypto conversions (like \"100 AUD to TTD\" or \"0.5 BTC to ETH\"): "
             "please use the finance/conversion tools or search for current rates — old numbers from training are usually wrong."
         )
+
+
         max_tokens = self._token_budget(routing_prompt, system_prompt, base_max_tokens)
+
         messages = self.promptforge.build_messages(
             system_prompt=system_prompt,
             history=[] if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else history_msgs,
             user_prompt=routing_prompt,
         )
+
         try:
             est = getattr(self.promptforge, "_estimate_tokens")
             sys_est = int(est(system_prompt))
@@ -1713,6 +1666,7 @@ class Agent:
             logger.info(f"Budget est tokens: system={sys_est} memory={mem_est} search={search_est} history={hist_est} total={total_est}")
         except Exception:
             pass
+
         content = ""
         try:
             async with asyncio.timeout(self._response_timeout_seconds()):
@@ -1727,69 +1681,25 @@ class Agent:
                     },
                 )
             content = resp.get("message", {}).get("content", "") or ""
-
-            # ==================== NATURAL SEARCH OUTPUT CLEANUP v4.1 ====================
-            # Runs AFTER FollowUpResolver — does NOT affect resolver logic
-            if self._looks_like_tool_dump(content):
-                content = await self._naturalize_search_output(content, prompt)
-
-            evidence_bundle = locals().get("bundle") if "bundle" in locals() else None
-            content = mix_answer(routing_prompt, plan=plan, llm_draft=content, evidence=evidence_bundle)
         except Exception as e:
             logger.exception(f"Ollama chat failed: {type(e).__name__}: {e}")
             content = "Sorry — generation failed. Try again."
+
         content = self._clean_think_tags(content)
         content = self._strip_unwanted_json(content)
-        if not should_search:
-            try:
-                content = await maybe_enrich_historical_answer(routing_prompt, content)
-            except Exception as e:
-                logger.debug(f"Historical fallback skipped: {e}")
-        if self._is_internal_artifact_leak(content):
-            fallback_messages = self.promptforge.build_messages(
-                system_prompt=self.promptforge.build_system_prompt(
-                    identity_block=identity_block,
-                    current_time=current_time,
-                    memory_context=memory_context,
-                    search_context="",
-                    mode_context=mode_context,
-                    extra_blocks=extra_blocks if extra_blocks else None,
-                    history=history_for_system,
-                    mode="EXECUTE",
-                    privilege="SAFE",
-                    evidence_enabled=False,
-                    query_plan_summary=(
-                        "QUERY_PLAN:\n"
-                        "MODE=LLM_ONLY\n"
-                        "DOMAIN=general\n"
-                        "NEEDS_RECENCY=false\n"
-                        "TIME_ANCHOR=none\n"
-                        "EVIDENCE_ENABLED=false\n"
-                        "REASON=internal_artifact_leak_fallback"
-                    ),
-                ),
-                history=[] if (PROMPT_ENTERPRISE_ENABLED and not PROMPT_FORCE_LEGACY) else history_msgs,
-                user_prompt=routing_prompt,
-            )
-            try:
-                resp2 = await self.ollama_client.chat(
-                    model=self._select_response_model(routing_prompt),
-                    messages=fallback_messages,
-                    options={"temperature": self._safe_temperature_value(active_persona_for_turn.get("temperature", self.temperature), float(self.temperature)), "max_tokens": int(max_tokens), "keep_alive": 300},
-                )
-                content = str(resp2.get("message", {}).get("content", "") or "").strip()
-            except Exception:
-                content = "Sorry — I hit an internal formatting error. Please try again."
+
         if self.get_last_attachments(active_user_id):
             content = (content or "").strip()
             addon = f"\n\nSaved chart/image to {SESSION_MEDIA_DIR} and attached it above."
             content = (content + addon).strip() if content else f"Saved chart/image to {SESSION_MEDIA_DIR} and attached it above."
+
         if should_search and volatile_search:
             content = self._numeric_guard(content, search_context)
             if "http" not in content.lower():
                 urls = self._extract_urls_from_results(results, limit=4)
                 if urls:
                     content = content.rstrip() + "\n\nSources:\n" + "\n".join([f"- {u}" for u in urls])
+
         if self.current_mode == "story":
             if not content.endswith("Want more?"):
                 content = content.rstrip() + " Want more?"
@@ -1798,10 +1708,12 @@ class Agent:
                 self.current_mode = "normal"
                 self.story_iterations = 0
                 content = content.rstrip() + " And so, the story comes to an end."
+
         if dementia_friendly:
             if len(content) > 420:
                 content = content[:390] + "... (kept short and clear)"
             content = content.replace("however", "but").replace("therefore", "so")
+
         # Memory write-back: non-blocking to reduce user-perceived latency.
         self._enqueue_memory_write(
             prompt=prompt,
@@ -1813,6 +1725,7 @@ class Agent:
             self._memory_ingest_nonblocking(active_user_id=active_user_id),
             label="memory_ingest",
         )
+
         if ENABLE_NL_ARTIFACTS and artifact_intent:
             try:
                 effective_route = "websearch" if should_search else decision.route
@@ -1849,6 +1762,7 @@ class Agent:
                 artifact["thread_id"] = chosen_thread
                 if artifact.get("revises_artifact_id"):
                     artifact["parent_artifact_id"] = artifact.get("revises_artifact_id")
+
                 emit_task_state = artifact_intent in {"plan", "meeting_summary"} and should_emit_task_state(routing_prompt)
                 artifact_to_persist = artifact
                 if emit_task_state:
@@ -1867,6 +1781,7 @@ class Agent:
                     t_art["parent_artifact_id"] = artifact.get("artifact_id")
                     t_art["related_artifact_ids"] = [artifact.get("artifact_id")]
                     artifact_to_persist = t_art
+
                 markdown = validate_and_render(artifact_to_persist)
                 self.artifact_store.append(active_user_id, artifact_to_persist)
                 self.fact_distiller.distill_and_write(
@@ -1884,13 +1799,17 @@ class Agent:
                     search_issue = "web search unavailable" in str(search_context).lower()
                     if (insufficient or search_issue) and bool(ARTIFACT_DEGRADE_NOTICE):
                         content = (content or "").rstrip() + "\n\nI couldn’t fetch enough sources right now, so I answered without citations."
+
         self._push_history_for(active_user_id, prompt, content)
         logger.info(f"[{active_user_id}] Total response time: {time.time() - start_total:.2f}s")
         return content
+
     def _set_last_attachments(self, user_id: str, attachments: Optional[List[Dict[str, Any]]] = None) -> None:
         self.last_attachments_by_user[str(user_id or self.user_id)] = list(attachments or [])
+
     def get_last_attachments(self, user_id: str = "default_user") -> List[Dict[str, Any]]:
         return list(self.last_attachments_by_user.get(str(user_id or self.user_id), []))
+
     async def generate_response_with_attachments(
         self,
         prompt: str,
@@ -1911,22 +1830,27 @@ class Agent:
             image_spec=image_spec,
         )
         return content, self.get_last_attachments(active_user_id)
+
     async def analyze_image(self, image_path: str, caption: str = "", user_id: str = "default_user") -> str:
         active_user_id = str(user_id or self.user_id)
         self._ensure_async_clients_for_current_loop()
+
         system_prompt = self._compose_identity_block()
         memory_context = (
             await self.memory.build_injected_context(caption or "image", user_id=active_user_id)
             or "No relevant memories found"
         )
+
         prompt = (
             f"You received an image with caption: '{caption or 'Describe this image'}'.\n"
             f"Relevant memory:\n{memory_context}\n\n"
             "Describe what you see clearly. If uncertain, say so."
         )
+
         try:
             with open(image_path, "rb") as img:
                 image_data = img.read()
+
             async with asyncio.timeout(self._vision_timeout_seconds()):
                 resp = await self.vision_client.chat(
                     model=self.vision_model,
@@ -1939,14 +1863,17 @@ class Agent:
             content = resp.get("message", {}).get("content", "") or ""
             content = self._clean_think_tags(content)
             content = self._strip_unwanted_json(content)
+
             note = f"Image noted: {caption}".strip()
             await self.memory.ingest_turn(note, assistant_text=content, tool_summaries=["vision"], session_id=active_user_id)
             return content or "I couldn't extract anything useful from that image."
         except Exception as e:
             return f"Sorry — image analysis failed ({type(e).__name__})."
+
     def clear_short_term_history(self) -> None:
         # Preserve existing CLI/GUI semantics: clears only default history
         self.history = []
+
     def __del__(self):
         try:
             if self.current_mode == "game":
