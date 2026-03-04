@@ -1,4 +1,7 @@
 from datetime import date, datetime
+import importlib
+import sys
+import types
 
 from handlers.finance.compute_summary import compute_historical_summary
 from handlers.finance.format_query import normalize_query_spec
@@ -29,9 +32,11 @@ def test_compute_historical_summary():
 
 def test_followup_rewrite_prefers_current_subject():
     resolver = FollowUpResolver()
+
     class Ctx:
         last_query = "What is the current stock price of Apple (AAPL)?"
         last_tool_type = "finance"
+
     rewritten = resolver._rewrite_followup_query("Now compare its 52-week high/low and recent performance to Tesla (TSLA).", Ctx())
     assert "TSLA" in rewritten
 
@@ -41,41 +46,32 @@ def test_no_reuse_for_finance_symbol_switch():
     assert can_reuse_evidence("price of TSLA", prev) is False
 
 
+def _load_finance_handler_with_stubs(monkeypatch):
+    yf_stub = types.SimpleNamespace(Ticker=lambda *_args, **_kwargs: None)
+    yq_stub = types.SimpleNamespace(Ticker=lambda *_args, **_kwargs: None)
+    monkeypatch.setitem(sys.modules, "yfinance", yf_stub)
+    monkeypatch.setitem(sys.modules, "yahooquery", yq_stub)
+    pytz_stub = types.SimpleNamespace(timezone=lambda _tz: None)
+    monkeypatch.setitem(sys.modules, "pytz", pytz_stub)
+    class _ReqSession:
+        def get(self, *_args, **_kwargs):
+            return None
 
-def test_build_binance_query_from_llm_output():
-    from handlers.websearch_tools.finance import FinanceHandler
+    requests_stub = types.SimpleNamespace(get=lambda *_args, **_kwargs: None, Session=lambda: _ReqSession())
+    monkeypatch.setitem(sys.modules, "requests", requests_stub)
 
-    fh = FinanceHandler()
-    query, params = fh._build_binance_query_from_llm(
-        """symbol=BTCUSDT
-interval=1d
-start=2022-11-01
-end=2022-12-01"""
-    )
-    assert query.startswith("GET /api/v3/klines?")
-    assert params["symbol"] == "BTCUSDT"
-    assert params["interval"] == "1d"
-    assert isinstance(params["startTime"], int)
-    assert isinstance(params["endTime"], int)
+    finance_mod = importlib.import_module("handlers.websearch_tools.finance")
+    finance_mod = importlib.reload(finance_mod)
+    return finance_mod.FinanceHandler()
 
 
-def test_llm_format_crypto_historical_falls_back_without_ollama(monkeypatch):
-    from handlers.websearch_tools.finance import FinanceHandler
+def test_historical_detection_blocks_year_query(monkeypatch):
+    fh = _load_finance_handler_with_stubs(monkeypatch)
+    assert fh._is_historical_query("what was bitcoin price in 2022") is True
 
-    fh = FinanceHandler()
 
-    def boom(*args, **kwargs):
-        raise RuntimeError("offline")
-
-    monkeypatch.setattr("handlers.websearch_tools.finance.ollama_vision_chat", boom)
-    out = fh._llm_format_crypto_historical(
-        "what was bitcoin price in nov 2022",
-        "BTCUSDT",
-        "1d",
-        date(2022, 11, 1),
-        date(2022, 12, 1),
-    )
-    assert "symbol=BTCUSDT" in out
-    assert "interval=1d" in out
-    assert "start=2022-11-01" in out
-    assert "end=2022-12-01" in out
+def test_historical_unavailable_message_shape(monkeypatch):
+    fh = _load_finance_handler_with_stubs(monkeypatch)
+    out = fh._historical_unavailable_result()
+    assert out[0]["title"] == "Historical Data Not Available"
+    assert "not available" in out[0]["description"].lower()
