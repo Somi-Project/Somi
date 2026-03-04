@@ -212,3 +212,7 @@ MONTAGUE_TELEMETRY_PATH = "executive/index/montague_context_telemetry.json"
 STRATEGIC_EXECUTION_BYPASS_PHRASES = ["do it", "apply", "run", "execute", "proceed now"]
 STRATEGIC_HUMAN_SUMMARY_ENABLED = False
 
+# Researcher Layer rollout flags (safe defaults)
+RESEARCHER_LAYER_ENABLED = False
+RESEARCHER_BUNDLE_SHADOW_MODE = True
+AGENTPEDIA_PROMOTE_FROM_BUNDLE = False

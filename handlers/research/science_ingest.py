@@ -1,15 +1,16 @@
 """
-Textbook ingestion v2.2 (one-time)
+Textbook ingestion v2.3 (one-time, idempotent)
 - Scan a folder of PDFs, hash each file, skip if already ingested
 - Extract text by page with pdfplumber
 - Chunk into compact "study notes" chunks
 - Store into TextbookFactsStore + registry (book_id)
+- Emit sidecar markdown for quick local browsing
 
 Run:
   python -m handlers.research.science_ingest
 
 Folder default:
-  data/textbooks
+  research/textbooks
 """
 
 from __future__ import annotations
@@ -21,7 +22,8 @@ from typing import List, Tuple
 
 from .science_stores import TextbookFactsStore, _norm_space
 
-DEFAULT_TEXTBOOKS_DIR = Path("data") / "textbooks"
+DEFAULT_TEXTBOOKS_DIR = Path("research") / "textbooks"
+DEFAULT_INGESTED_MD_DIR = DEFAULT_TEXTBOOKS_DIR / "ingested"
 
 
 def _sha256_file(path: Path, chunk_size: int = 1 << 20) -> str:
@@ -56,10 +58,23 @@ def _chunk_text(text: str, max_len: int = 900) -> List[str]:
         if not s:
             continue
 
-        keep = any(k in s.lower() for k in [
-            "is defined", "characterized", "treatment", "diagnosis", "risk",
-            "contraind", "dose", "mg", "iv", "oral", "management", "complication"
-        ])
+        keep = any(
+            k in s.lower()
+            for k in [
+                "is defined",
+                "characterized",
+                "treatment",
+                "diagnosis",
+                "risk",
+                "contraind",
+                "dose",
+                "mg",
+                "iv",
+                "oral",
+                "management",
+                "complication",
+            ]
+        )
         keep = keep or bool(re.search(r"\b\d+(\.\d+)?\b", s))
         if not keep:
             continue
@@ -86,13 +101,20 @@ def _chunk_text(text: str, max_len: int = 900) -> List[str]:
     return out
 
 
+def _discover_pdfs(folder: Path) -> List[Path]:
+    return sorted([p for p in folder.rglob("*.pdf") if p.is_file() and "ingested" not in p.parts])
+
+
 def ingest_folder(folder: Path = DEFAULT_TEXTBOOKS_DIR) -> Tuple[int, int]:
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
 
-    store = TextbookFactsStore()
+    ingested_dir = DEFAULT_INGESTED_MD_DIR
+    ingested_dir.mkdir(parents=True, exist_ok=True)
 
-    pdfs = sorted([p for p in folder.rglob("*.pdf") if p.is_file()])
+    store = TextbookFactsStore()
+    pdfs = _discover_pdfs(folder)
+
     books_added = 0
     chunks_added = 0
 
@@ -107,7 +129,21 @@ def ingest_folder(folder: Path = DEFAULT_TEXTBOOKS_DIR) -> Tuple[int, int]:
         except Exception:
             continue
 
+        md_sidecar = ingested_dir / f"{pdf_path.stem}.md"
         if store.book_exists(file_hash):
+            if not md_sidecar.exists():
+                md_sidecar.write_text(
+                    "\n".join(
+                        [
+                            f"# {pdf_path.stem}",
+                            "",
+                            f"Source: {pdf_path}",
+                            "",
+                            "Already ingested (hash match).",
+                        ]
+                    ),
+                    encoding="utf-8",
+                )
             continue
 
         title = pdf_path.stem
@@ -120,6 +156,16 @@ def ingest_folder(folder: Path = DEFAULT_TEXTBOOKS_DIR) -> Tuple[int, int]:
             file_hash=file_hash,
         )
         books_added += 1
+
+        md_lines: List[str] = [
+            f"# {title}",
+            "",
+            f"Source: {pdf_path}",
+            f"Book ID: {book_id}",
+            "",
+            "## Extracted Notes",
+            "",
+        ]
 
         with pdfplumber.open(str(pdf_path)) as pdf:
             for i, page in enumerate(pdf.pages):
@@ -141,6 +187,14 @@ def ingest_folder(folder: Path = DEFAULT_TEXTBOOKS_DIR) -> Tuple[int, int]:
                     chunks=chunks,
                     tags="textbook",
                 )
+
+                md_lines.append(f"### Page {i + 1}")
+                for ch in chunks[:6]:
+                    md_lines.append(f"- {ch}")
+                md_lines.append("")
+
+        if len(md_lines) > 7:
+            md_sidecar.write_text("\n".join(md_lines), encoding="utf-8")
 
     return books_added, chunks_added
 

@@ -33,6 +33,24 @@ _PROFILES: Dict[str, SearchProfile] = {
     "finance_current": SearchProfile(name="finance_current", category="finance", time_range="day", safe=0, domain="finance_current"),
     "finance_historical": SearchProfile(name="finance_historical", category="general", time_range="year", safe=1, domain="finance_historical"),
     "weather": SearchProfile(name="weather", category="general", safe=0, domain="weather"),
+    # Research domain-specialized profiles
+    "science_biomed": SearchProfile(name="science_biomed", category="science", engines=["pubmed", "semantic_scholar"], safe=0, domain="biomed"),
+    "science_engineering": SearchProfile(name="science_engineering", category="science", engines=["arxiv", "semantic_scholar"], safe=0, domain="engineering"),
+    "science_nutrition": SearchProfile(name="science_nutrition", category="science", engines=["pubmed", "semantic_scholar"], safe=0, domain="nutrition"),
+    "science_religion": SearchProfile(name="science_religion", category="general", engines=["wikipedia", "duckduckgo"], safe=1, domain="religion"),
+    "science_entertainment": SearchProfile(name="science_entertainment", category="general", engines=["wikipedia", "duckduckgo"], safe=1, domain="entertainment"),
+    "science_business_administrator": SearchProfile(name="science_business_administrator", category="general", engines=["duckduckgo"], safe=1, domain="business_administrator"),
+    "science_journalism_communication": SearchProfile(name="science_journalism_communication", category="news", engines=["duckduckgo"], safe=1, domain="journalism_communication"),
+}
+
+_DOMAIN_TO_PROFILE: Dict[str, str] = {
+    "biomed": "science_biomed",
+    "engineering": "science_engineering",
+    "nutrition": "science_nutrition",
+    "religion": "science_religion",
+    "entertainment": "science_entertainment",
+    "business_administrator": "science_business_administrator",
+    "journalism_communication": "science_journalism_communication",
 }
 
 
@@ -121,6 +139,11 @@ async def search_searxng(
         return []
 
     p = _PROFILES.get((profile or "").strip(), _PROFILES["general"])
+    # If caller passes domain but no explicit profile, auto-pick specialized research profile.
+    if (profile or "general").strip() == "general" and domain:
+        mapped = _DOMAIN_TO_PROFILE.get(str(domain).strip().lower())
+        if mapped:
+            p = _PROFILES.get(mapped, p)
     chosen_cat = str(category or p.category or "general").strip().lower()
     chosen_engines = engines if engines is not None else list(p.engines)
     chosen_time_range = time_range if time_range is not None else p.time_range
