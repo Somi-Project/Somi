@@ -111,43 +111,6 @@ class FinanceHandler:
             out.append(c2)
         return out
 
-    def _is_historical_query(self, query: str) -> bool:
-        """
-        Detect historical/time-anchored finance requests.
-        Historical retrieval is intentionally disabled for now.
-        """
-        q = self._clean_query(query).lower()
-
-        # Explicit historical language
-        if re.search(
-            r"\b(historical|history|back\s+in|previously|earlier|at\s+that\s+time|ago|last\s+year|last\s+month)\b",
-            q,
-        ):
-            return True
-
-        # Concrete date anchors: YYYY, YYYY-MM-DD, month+year, or date ranges.
-        if re.search(r"\b(?:19|20)\d{2}\b", q):
-            return True
-        if re.search(r"\b\d{4}-\d{2}-\d{2}\b", q):
-            return True
-        if re.search(
-            r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+(?:19|20)\d{2}\b",
-            q,
-        ):
-            return True
-        if re.search(r"\b(?:between|from)\b.*\b(?:to|and)\b", q):
-            return True
-
-        return False
-
-    def _historical_unavailable_result(self) -> list[dict]:
-        return [{
-            "title": "Historical Data Not Available",
-            "url": "",
-            "description": "Historical financial queries are not available right now. Please ask for the current price/rate.",
-            "source": "finance_handler_guard",
-        }]
-
     # -----------------------------
     # NEW: sentence forex pair extractor
     # -----------------------------
@@ -365,9 +328,6 @@ class FinanceHandler:
             logger.info("Memory usage disabled for crypto query")
 
         query = self._clean_query(query)
-        if self._is_historical_query(query):
-            logger.info(f"Historical crypto query blocked: '{query}'")
-            return self._historical_unavailable_result()
 
         for attempt in range(retries):
             try:
@@ -398,10 +358,6 @@ class FinanceHandler:
             logger.info("Memory usage disabled for forex query")
 
         query = self._clean_query(query)
-        if self._is_historical_query(query):
-            logger.info(f"Historical forex query blocked: '{query}'")
-            return self._historical_unavailable_result()
-
         logger.info(f"Processing forex query: '{query}' at {self.get_system_time()}")
 
         ticker = None
