@@ -242,14 +242,14 @@ def test_finance_historical_fallback_without_symbol_uses_query(monkeypatch):
 
     captured = {"q": ""}
 
-    async def fake_search_general(q, min_results=3):
+    async def fake_search_finance_historical(q, min_results=3, tc=None):
         captured["q"] = q
-        return [{"title": "Fallback source", "url": "https://example.com", "description": "d"}]
+        return [{"title": "Fallback source", "url": "https://example.com", "description": "d", "source": "searxng"}]
 
     monkeypatch.setattr("handlers.websearch_tools.finance.yf.download", fake_download)
-    monkeypatch.setattr("handlers.websearch_tools.finance.search_general", fake_search_general)
+    monkeypatch.setattr("handlers.websearch_tools.finance.search_finance_historical", fake_search_finance_historical)
     out = asyncio.run(fh.search_historical_price("what was xyzcoin price in 2021"))
-    assert out and out[0].get("source") == "general_search_fallback"
+    assert out
     assert "xyzcoin" in captured["q"].lower()
 
 
@@ -361,6 +361,7 @@ def test_tool_context_finance_intent_and_selection_tracking():
     assert ctx is not None
     assert ctx.last_finance_intent == "crypto"
     assert ctx.last_selected_rank == 2
+    assert ctx.last_selected_index == 2
     assert ctx.last_selected_url.endswith("b.example.com")
 
 
@@ -448,3 +449,129 @@ def test_maybe_enrich_historical_answer_uses_subprocess_payload(monkeypatch):
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
     out = asyncio.run(hs.maybe_enrich_historical_answer("what was the price of oil in nov 2022", "short"))
     assert out == "enriched answer"
+
+
+def test_finance_historical_strip_meta_scaffold_and_rewrite():
+    from handlers.websearch_tools.finance_historical_search import strip_meta_scaffold, rewrite_historical_query
+
+    raw = "Previous query: x\nDecide whether to: y\nNow answer this follow-up: what was the price of gold in nov 2022"
+    cleaned = strip_meta_scaffold(raw)
+    assert cleaned == "what was the price of gold in nov 2022"
+
+    q = rewrite_historical_query(raw, symbol_hint="GC=F", tc={"kind": "month", "year": 2022, "month": 11})
+    assert "GC=F" not in q
+    assert "gold" in q.lower()
+    assert "-quote" in q
+
+
+def test_finance_historical_filter_blocks_quote_pages():
+    from handlers.websearch_tools.finance_historical_search import filter_finance_historical_results
+
+    rows = [
+        {"title": "Yahoo Quote", "url": "https://finance.yahoo.com/quote/GC=F", "description": "live quote"},
+        {"title": "Yahoo History", "url": "https://finance.yahoo.com/quote/GC=F/history", "description": "nov 2022 high low"},
+    ]
+    out = filter_finance_historical_results(rows, {"kind": "year", "year": 2022})
+    assert len(out) == 1
+    assert "/history" in out[0]["url"]
+
+
+def test_followup_explicit_reference_sets_selected_index_and_url():
+    store = ToolContextStore(ttl_seconds=60)
+    store.set("u_bind_3", "news", "latest ai headlines", [
+        {"title": "Story A", "url": "https://a.example.com", "description": "A"},
+        {"title": "Story B", "url": "https://b.example.com", "description": "B"},
+    ])
+    ctx = store.get("u_bind_3")
+    r = FollowUpResolver().resolve("summarize the 2nd result", ctx)
+    assert r is not None
+    assert r.selected_index == 2
+    assert r.selected_url.endswith("b.example.com")
+
+
+def test_general_search_junk_filter_applies_only_for_finance_historical():
+    from handlers.websearch_tools.generalsearch import _is_junk_result
+
+    url = "https://finance.yahoo.com/quote/GC=F"
+    assert _is_junk_result(url, "Quote", "desc", query="what was gold price in nov 2022") is True
+    assert _is_junk_result(url, "Quote", "desc", query="latest markets news") is False
+
+
+def test_finance_strip_meta_scaffold_bulleted_lines():
+    from handlers.websearch_tools.finance_historical_search import strip_meta_scaffold
+
+    raw = "- Previous query: x\n* Decide whether to: y\nNow answer this follow-up: summarize gold in 2022"
+    cleaned = strip_meta_scaffold(raw)
+    assert cleaned == "summarize gold in 2022"
+
+
+def test_general_search_telemetry_counters_increment():
+    from handlers.websearch_tools import generalsearch as gs
+
+    gs.reset_general_search_telemetry()
+    cleaned = gs._strip_meta_scaffold_query("Previous query: x\nNow answer this follow-up: latest markets news")
+    assert cleaned == "latest markets news"
+    tele = gs.get_general_search_telemetry()
+    assert tele["sanitized_query_count"] >= 1
+
+
+def test_finance_historical_telemetry_and_broader_retry(monkeypatch):
+    from handlers.websearch_tools import finance_historical_search as fhs
+
+    fhs.reset_finance_historical_telemetry()
+
+    calls = {"n": 0}
+
+    async def fake_searx(client, query, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            return [{"title": "Quote", "url": "https://finance.yahoo.com/quote/GC=F", "description": "live"}]
+        return [{"title": "History", "url": "https://finance.yahoo.com/quote/GC=F/history", "description": "2022 high low"}]
+
+    async def fake_ddg(*args, **kwargs):
+        return []
+
+    monkeypatch.setattr("handlers.websearch_tools.finance_historical_search.search_searxng", fake_searx)
+    monkeypatch.setattr("handlers.websearch_tools.finance_historical_search._ddg_text", fake_ddg)
+
+    out = asyncio.run(
+        fhs.search_finance_historical(
+            "Previous query: x\nNow answer this follow-up: what was gold price in nov 2022",
+            min_results=1,
+            tc={"kind": "year", "year": 2022},
+        )
+    )
+    assert out and "/history" in out[0]["url"]
+    tele = fhs.get_finance_historical_telemetry()
+    assert tele["sanitized_query_count"] >= 1
+    assert tele["filtered_results_count"] >= 1
+    assert tele["fallback_triggered_count"] >= 1
+
+
+def test_rank_results_by_domain_contract():
+    from handlers.websearch_tools.finance_historical_search import rank_results_by_domain
+
+    rows = [
+        {"title": "misc", "url": "https://example.com", "description": "none"},
+        {"title": "arxiv", "url": "https://arxiv.org/abs/1234", "description": "paper"},
+    ]
+    ranked = rank_results_by_domain(rows, "science", {})
+    assert ranked[0]["url"].startswith("https://arxiv.org")
+
+
+def test_general_search_periodic_diagnostics_smoke():
+    from handlers.websearch_tools import generalsearch as gs
+
+    gs.reset_general_search_telemetry()
+    gs._TELEMETRY["fallback_triggered_count"] = 2
+    gs._maybe_emit_diagnostics(now_ts=10_000)
+    assert gs._DIAG_STATE["last_log_ts"] == 10_000
+
+
+def test_finance_historical_periodic_diagnostics_smoke():
+    from handlers.websearch_tools import finance_historical_search as fhs
+
+    fhs.reset_finance_historical_telemetry()
+    fhs._TELEMETRY["filtered_results_count"] = 3
+    fhs._maybe_emit_diagnostics(now_ts=10_000)
+    assert fhs._DIAG_STATE["last_log_ts"] == 10_000

@@ -14,7 +14,7 @@ from .ftickers import get_forex_ticker_suggestions
 from .itickers import get_index_ticker_suggestions
 from .ctickers import get_commodity_ticker_suggestions
 from .bcrypto import get_crypto_price
-from .generalsearch import search_general
+from .finance_historical_search import search_finance_historical, rewrite_historical_query
 
 logger = logging.getLogger(__name__)
 
@@ -693,20 +693,10 @@ class FinanceHandler:
             }]
         except Exception:
             symbol_hint = symbol or ""
-            # Keep fallback broad when symbol inference is incomplete.
-            fallback_q = f"{query} price {tc['start']} {tc['end']} high low".strip()
-            if symbol_hint:
-                fallback_q = f"{symbol_hint} price {tc['start']} {tc['end']} high low"
-            web = await search_general(fallback_q, min_results=3)
+            clean_q = rewrite_historical_query(query, symbol_hint=symbol_hint, tc=tc)
+            web = await search_finance_historical(clean_q, min_results=3, tc=tc)
             if web:
-                head = web[0]
-                label = symbol_hint or "asset"
-                return [{
-                    "title": f"{label} historical context (web fallback)",
-                    "url": head.get("url", ""),
-                    "description": f"Used web fallback for historical query {tc['start']} to {tc['end']}. Top source: {head.get('title','')}",
-                    "source": "general_search_fallback",
-                }] + web[:3]
+                return web[:3]
             return [{
                 "title": "Historical price unavailable",
                 "url": "",

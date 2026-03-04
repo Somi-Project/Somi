@@ -1180,7 +1180,11 @@ class Agent:
                 routing_prompt = sanitize_user_visible_prompt(str(follow_resolution.rewritten_query).strip())
                 force_followup_search = True
                 if follow_resolution.action == "open_url_and_summarize":
-                    self.tool_context_store.mark_selected(active_user_id, url=str(follow_resolution.url or ""))
+                    self.tool_context_store.mark_selected(
+                        active_user_id,
+                        rank=int(getattr(follow_resolution, "selected_index", 0) or 0),
+                        url=str(getattr(follow_resolution, "selected_url", "") or follow_resolution.url or ""),
+                    )
         if has_followup_injection_markers(routing_prompt):
             fallback_rewrite = ""
             if follow_resolution and follow_resolution.action == "rewrite_query":
