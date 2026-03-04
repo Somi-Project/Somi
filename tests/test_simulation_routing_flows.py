@@ -248,6 +248,17 @@ def test_contextual_finance_followup_pronoun_defaults_stock_commodity_when_subty
     assert d.signals.get("intent") == "stock/commodity"
 
 
+
+
+def test_contextual_finance_followup_spot_price_now_routes_websearch():
+    d = decide_route(
+        "what is its price now",
+        agent_state={"last_tool_type": "finance", "has_tool_context": True, "last_finance_intent": "crypto"},
+    )
+    assert d.route == "websearch"
+    assert d.reason == "contextual_followup_finance"
+    assert d.signals.get("intent") == "crypto"
+
 def test_contextual_weather_followup_routes_weather():
     d = decide_route(
         "tomorrow hourly?",
