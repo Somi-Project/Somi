@@ -1,21 +1,91 @@
 # handlers/websearch_tools/finance.py
 import logging
 import asyncio
+from datetime import date, datetime, timedelta
+from typing import Any, Dict, List
+import re
+import traceback
+
 import yfinance as yf
 from yahooquery import Ticker as YahooQueryTicker
-import traceback
-from config.settings import SYSTEM_TIMEZONE, DISABLE_MEMORY_FOR_FINANCIAL
 import pytz
-from datetime import datetime
-import re
+
+try:
+    import config.settings as _settings
+except Exception:
+    _settings = None
+
+SYSTEM_TIMEZONE = str(getattr(_settings, "SYSTEM_TIMEZONE", "America/New_York"))
+DISABLE_MEMORY_FOR_FINANCIAL = bool(getattr(_settings, "DISABLE_MEMORY_FOR_FINANCIAL", False))
+SEARXNG_BASE_URL = str(getattr(_settings, "SEARXNG_BASE_URL", "http://localhost:8080"))
+FINANCE_HISTORICAL_CRAWLIES_ENABLED = bool(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_ENABLED", False))
+FINANCE_HISTORICAL_CRAWLIES_TIMEOUT_SECONDS = float(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_TIMEOUT_SECONDS", 14.0))
+FINANCE_HISTORICAL_CRAWLIES_MAX_PAGES = int(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_MAX_PAGES", 2))
+FINANCE_HISTORICAL_CRAWLIES_MAX_CANDIDATES = int(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_MAX_CANDIDATES", 10))
+FINANCE_HISTORICAL_CRAWLIES_MAX_OPEN_LINKS = int(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_MAX_OPEN_LINKS", 3))
+FINANCE_HISTORICAL_CRAWLIES_MIN_QUALITY_STOP = float(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_MIN_QUALITY_STOP", 30.0))
+FINANCE_HISTORICAL_CRAWLIES_USE_SCRAPLING = bool(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_USE_SCRAPLING", True))
+FINANCE_HISTORICAL_CRAWLIES_USE_PLAYWRIGHT = bool(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_USE_PLAYWRIGHT", True))
+FINANCE_HISTORICAL_CRAWLIES_USE_LLM_RERANK = bool(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_USE_LLM_RERANK", False))
+FINANCE_HISTORICAL_CRAWLIES_SAVE_ARTIFACTS = bool(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_SAVE_ARTIFACTS", True))
+FINANCE_HISTORICAL_CRAWLIES_CATEGORY = str(getattr(_settings, "FINANCE_HISTORICAL_CRAWLIES_CATEGORY", "general"))
+
+from handlers.finance.compute_summary import compute_historical_summary
 
 from .stickers import get_stock_ticker_suggestions
 from .ftickers import get_forex_ticker_suggestions
 from .itickers import get_index_ticker_suggestions
 from .ctickers import get_commodity_ticker_suggestions
 from .bcrypto import get_crypto_price
+from .finance_historical_search import search_finance_historical, rewrite_historical_query, time_anchor
+
+try:
+    from crawlies import CrawliesConfig, CrawliesEngine
+except Exception:
+    CrawliesConfig = None  # type: ignore
+    CrawliesEngine = None  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _scalar_float(value):
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    try:
+        return float(value)
+    except Exception:
+        pass
+
+    iloc = getattr(value, "iloc", None)
+    if iloc is not None:
+        for idx in (-1, 0):
+            try:
+                candidate = iloc[idx]
+                got = _scalar_float(candidate)
+                if got is not None:
+                    return got
+            except Exception:
+                continue
+
+    for attr in ("item", "max", "min", "mean"):
+        fn = getattr(value, attr, None)
+        if callable(fn):
+            try:
+                got = _scalar_float(fn())
+                if got is not None:
+                    return got
+            except Exception:
+                continue
+    return None
+
+def _safe_trim(text: str, max_chars: int = 1600) -> str:
+    s = str(text or "").strip()
+    if len(s) <= max_chars:
+        return s
+    return s[: max(0, max_chars - 3)].rstrip() + "..."
+
 
 
 class FinanceHandler:
@@ -62,6 +132,398 @@ class FinanceHandler:
 
     def get_system_time(self):
         return datetime.now(self.timezone).strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
+    def _is_historical_query(self, query: str) -> bool:
+        q = (query or "").lower()
+        if not q:
+            return False
+        if re.search(r"\b(19|20)\d{2}\b", q):
+            return True
+        historical_terms = (
+            "historical",
+            "history",
+            "previous close",
+            "past year",
+            "last year",
+            "all-time",
+            "all time",
+            "52-week",
+            "52 week",
+            "year-to-date",
+            "ytd",
+            "what was",
+            "how much was",
+        )
+        return any(term in q for term in historical_terms)
+
+
+    def _historical_unavailable_result(self) -> list:
+        return [{
+            "title": "Historical Data Not Available",
+            "url": "",
+            "description": "Historical data is currently not available for this query.",
+            "source": "finance_guardrail",
+        }]
+
+
+    def _extract_time_constraint(self, query: str) -> Dict[str, Any]:
+        q = (query or "").strip().lower()
+        if not q:
+            return {}
+
+        range_match = re.search(r"\b(\d{4}-\d{2}-\d{2})\s+(?:to|through|until|-)\s+(\d{4}-\d{2}-\d{2})\b", q)
+        if range_match:
+            try:
+                start = datetime.strptime(range_match.group(1), "%Y-%m-%d").date()
+                end = datetime.strptime(range_match.group(2), "%Y-%m-%d").date()
+                if start <= end:
+                    return {"kind": "range", "start": start, "end": end}
+            except Exception:
+                pass
+
+        date_match = re.search(r"\bon\s+(\d{4}-\d{2}-\d{2})\b", q)
+        if date_match:
+            try:
+                dt = datetime.strptime(date_match.group(1), "%Y-%m-%d").date()
+                return {"kind": "date", "start": dt, "end": dt}
+            except Exception:
+                pass
+
+        month_match = re.search(
+            r"\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t|tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+((?:19|20)\d{2})\b",
+            q,
+            re.IGNORECASE,
+        )
+        if month_match:
+            month_map = {
+                "jan": 1,
+                "feb": 2,
+                "mar": 3,
+                "apr": 4,
+                "may": 5,
+                "jun": 6,
+                "jul": 7,
+                "aug": 8,
+                "sep": 9,
+                "sept": 9,
+                "oct": 10,
+                "nov": 11,
+                "dec": 12,
+            }
+            mon = month_match.group(1).lower()
+            year = int(month_match.group(2))
+            if mon.startswith("sept"):
+                key = "sept"
+            else:
+                key = mon[:3]
+            m = month_map.get(key, 0)
+            if m:
+                start = date(year, m, 1)
+                if m == 12:
+                    end = date(year, 12, 31)
+                else:
+                    end = date(year, m + 1, 1) - timedelta(days=1)
+                return {"kind": "month", "year": year, "month": m, "start": start, "end": end}
+
+        year_match = re.search(r"\b((?:19|20)\d{2})\b", q)
+        if year_match:
+            year = int(year_match.group(1))
+            return {"kind": "year", "year": year, "start": date(year, 1, 1), "end": date(year, 12, 31)}
+
+        return {}
+
+
+    def _resolve_history_symbol(self, query: str, context_symbol: str | None = None) -> str | None:
+        if context_symbol:
+            return str(context_symbol).strip().upper()
+
+        q = query or ""
+        ql = q.lower()
+
+        explicit = self._extract_explicit_ticker(q)
+        if explicit:
+            return explicit.upper()
+
+        if self._looks_like_forex_pair(ql):
+            pair = self._extract_fiat_pair(q)
+            if pair:
+                return f"{pair[0]}{pair[1]}=X"
+
+        for cand in self._candidate_queries(q):
+            for resolver in (
+                get_stock_ticker_suggestions,
+                get_commodity_ticker_suggestions,
+                get_index_ticker_suggestions,
+                get_forex_ticker_suggestions,
+            ):
+                try:
+                    hits = resolver(cand)
+                except Exception:
+                    hits = []
+                if hits:
+                    return str(hits[0]).strip().upper()
+
+        crypto_hint = self._normalize_crypto_lookup_query(q)
+        crypto_map = {
+            "bitcoin": "BTC-USD",
+            "btc": "BTC-USD",
+            "ethereum": "ETH-USD",
+            "eth": "ETH-USD",
+            "solana": "SOL-USD",
+            "sol": "SOL-USD",
+            "dogecoin": "DOGE-USD",
+            "doge": "DOGE-USD",
+            "ripple": "XRP-USD",
+            "xrp": "XRP-USD",
+            "cardano": "ADA-USD",
+            "ada": "ADA-USD",
+        }
+        if crypto_hint in crypto_map:
+            return crypto_map[crypto_hint]
+        if any(k in ql for k in ("bitcoin", " btc ", "btc")):
+            return "BTC-USD"
+        if any(k in ql for k in ("ethereum", " eth ", "eth")):
+            return "ETH-USD"
+        if any(k in ql for k in ("solana", " sol ", "sol")):
+            return "SOL-USD"
+        if "gold" in ql:
+            return "GC=F"
+        if "brent" in ql:
+            return "BZ=F"
+        if any(k in ql for k in ("oil", "wti")):
+            return "CL=F"
+
+        return None
+
+
+    def _infer_historical_symbol(self, query: str, context_symbol: str | None = None) -> str | None:
+        return self._resolve_history_symbol(query, context_symbol=context_symbol)
+
+
+    def _series_to_values(self, series: Any, max_points: int = 10000) -> List[Any]:
+        if series is None:
+            return []
+
+        # pandas DataFrame-like: grab first column if multi-column selection.
+        try:
+            if hasattr(series, "shape") and hasattr(series, "iloc"):
+                shape = getattr(series, "shape", None)
+                if isinstance(shape, tuple) and len(shape) >= 2 and int(shape[1]) > 1:
+                    series = series.iloc[:, 0]
+        except Exception:
+            pass
+
+        for attr in ("tolist", "to_list"):
+            fn = getattr(series, attr, None)
+            if callable(fn):
+                try:
+                    vals = list(fn())
+                    if vals:
+                        return vals
+                except Exception:
+                    pass
+
+        vals_attr = getattr(series, "values", None)
+        if vals_attr is not None and not callable(vals_attr):
+            try:
+                vals = list(vals_attr)
+                if vals:
+                    return vals
+            except Exception:
+                pass
+
+        raw_vals = getattr(series, "vals", None)
+        if isinstance(raw_vals, list):
+            return list(raw_vals)
+
+        iloc = getattr(series, "iloc", None)
+        if iloc is not None:
+            vals = []
+            for idx in range(max_points):
+                try:
+                    vals.append(iloc[idx])
+                except Exception:
+                    break
+            if vals:
+                return vals
+
+        try:
+            vals = list(series)
+            if vals:
+                return vals
+        except Exception:
+            pass
+
+        return []
+
+
+    def _history_to_candles(self, hist: Any) -> List[Dict[str, float]]:
+        try:
+            open_s = hist["Open"]
+            high_s = hist["High"]
+            low_s = hist["Low"]
+            close_s = hist["Close"]
+        except Exception:
+            return []
+
+        opens = [_scalar_float(v) for v in self._series_to_values(open_s)]
+        highs = [_scalar_float(v) for v in self._series_to_values(high_s)]
+        lows = [_scalar_float(v) for v in self._series_to_values(low_s)]
+        closes = [_scalar_float(v) for v in self._series_to_values(close_s)]
+
+        n = min(len(opens), len(highs), len(lows), len(closes))
+        rows: List[Dict[str, float]] = []
+        for i in range(n):
+            o = opens[i]
+            h = highs[i]
+            l = lows[i]
+            c = closes[i]
+            if None in (o, h, l, c):
+                continue
+            rows.append({"open": float(o), "high": float(h), "low": float(l), "close": float(c)})
+        return rows
+
+
+    async def _crawlies_historical(self, query: str, tc: Dict[str, Any]) -> list:
+        if not FINANCE_HISTORICAL_CRAWLIES_ENABLED or CrawliesConfig is None or CrawliesEngine is None:
+            return []
+
+        try:
+            cfg = CrawliesConfig(
+                searx_base_url=str(SEARXNG_BASE_URL or "http://localhost:8080"),
+                category=str(FINANCE_HISTORICAL_CRAWLIES_CATEGORY or "general"),
+                max_pages=max(1, int(FINANCE_HISTORICAL_CRAWLIES_MAX_PAGES)),
+                max_candidates=max(1, int(FINANCE_HISTORICAL_CRAWLIES_MAX_CANDIDATES)),
+                max_open_links=max(1, int(FINANCE_HISTORICAL_CRAWLIES_MAX_OPEN_LINKS)),
+                min_quality_stop=float(FINANCE_HISTORICAL_CRAWLIES_MIN_QUALITY_STOP),
+                use_scrapling=bool(FINANCE_HISTORICAL_CRAWLIES_USE_SCRAPLING),
+                use_playwright=bool(FINANCE_HISTORICAL_CRAWLIES_USE_PLAYWRIGHT),
+                use_llm_rerank=bool(FINANCE_HISTORICAL_CRAWLIES_USE_LLM_RERANK),
+                save_artifacts=bool(FINANCE_HISTORICAL_CRAWLIES_SAVE_ARTIFACTS),
+            )
+            engine = CrawliesEngine(cfg)
+            payload = await asyncio.wait_for(
+                engine.crawl(query),
+                timeout=max(1.0, float(FINANCE_HISTORICAL_CRAWLIES_TIMEOUT_SECONDS)),
+            )
+        except Exception as e:
+            logger.warning(f"Historical crawlies fallback failed for '{query}': {e}")
+            return []
+
+        docs = payload.get("docs") if isinstance(payload, dict) else []
+        out: List[Dict[str, Any]] = []
+        if isinstance(docs, list):
+            for d in docs[: max(1, int(FINANCE_HISTORICAL_CRAWLIES_MAX_OPEN_LINKS))]:
+                if not isinstance(d, dict):
+                    continue
+                url = str(d.get("url") or "").strip()
+                if not url:
+                    continue
+                title = str(d.get("title") or url).strip()
+                snippet = str(d.get("snippet") or "").strip()
+                content = str(d.get("content") or "").strip()
+                desc = _safe_trim(content or snippet, 1800)
+                if not desc:
+                    continue
+                method = str(d.get("method") or "crawl").strip()
+                out.append({
+                    "title": title,
+                    "url": url,
+                    "description": desc,
+                    "source": f"crawlies_{method}",
+                    "quality": float(d.get("quality") or 0.0),
+                })
+
+        return out
+
+    def _normalize_crypto_lookup_query(self, query: str) -> str:
+        q = self._normalize_for_match(query)
+
+        aliases = {
+            "bitcoin": ("bitcoin", "btc"),
+            "ethereum": ("ethereum", "eth"),
+            "solana": ("solana", "sol"),
+            "dogecoin": ("dogecoin", "doge"),
+            "ripple": ("ripple", "xrp"),
+            "cardano": ("cardano", "ada"),
+        }
+        for canonical, keys in aliases.items():
+            if any(re.search(rf"\b{re.escape(k)}\b", q) for k in keys):
+                return canonical
+
+        q = re.sub(r"\b(what|whats|what's|the|price|of|now|current|for|quote|crypto)\b", " ", q)
+        q = re.sub(r"\s+", " ", q).strip()
+        return q or (query or "").strip()
+
+
+
+    async def search_historical_price(self, query: str, context_symbol: str | None = None) -> list:
+        query = self._clean_query(query)
+        tc = self._extract_time_constraint(query)
+        symbol = self._resolve_history_symbol(query, context_symbol=context_symbol)
+
+        if symbol:
+            try:
+                kwargs: Dict[str, Any] = {
+                    "interval": "1d",
+                    "progress": False,
+                    "auto_adjust": False,
+                    "threads": False,
+                }
+                start = tc.get("start") if isinstance(tc, dict) else None
+                end = tc.get("end") if isinstance(tc, dict) else None
+                if isinstance(start, date) and isinstance(end, date):
+                    kwargs["start"] = start.isoformat()
+                    kwargs["end"] = (end + timedelta(days=1)).isoformat()
+                else:
+                    kwargs["period"] = "max"
+
+                hist = await asyncio.to_thread(yf.download, symbol, **kwargs)
+                if hasattr(hist, "empty") and not getattr(hist, "empty"):
+                    candles = self._history_to_candles(hist)
+                    if candles:
+                        summary = compute_historical_summary(candles)
+                        min_low = summary.get("min_low")
+                        max_high = summary.get("max_high")
+                        first_close = summary.get("first_close")
+                        last_close = summary.get("last_close")
+                        ret_pct = summary.get("return_pct")
+
+                        anchor = time_anchor(tc) if isinstance(tc, dict) else ""
+                        anchor_suffix = f" for {anchor}" if anchor else ""
+                        ret_text = ""
+                        if ret_pct is not None:
+                            ret_text = f" Return over window: {round(float(ret_pct), 2)}%."
+
+                        return [{
+                            "title": f"{symbol} Historical Price{anchor_suffix}",
+                            "url": f"https://finance.yahoo.com/quote/{symbol}/history",
+                            "description": (
+                                f"Historical range{anchor_suffix}: low {min_low}, high {max_high}. "
+                                f"Window started near {first_close}, latest close {last_close}.{ret_text}"
+                            ),
+                            "source": "yfinance_history",
+                            "symbol": symbol,
+                        }]
+            except Exception as e:
+                logger.warning(f"Historical yfinance query failed for '{symbol}': {e}")
+
+        fallback_query = rewrite_historical_query(query, symbol_hint=symbol, tc=tc)
+
+        crawlies_rows = await self._crawlies_historical(fallback_query, tc)
+        if crawlies_rows:
+            return crawlies_rows
+
+        try:
+            fallback = await search_finance_historical(fallback_query, min_results=3, tc=tc)
+            if fallback:
+                return fallback
+        except Exception as e:
+            logger.warning(f"Historical fallback search failed: {e}")
+
+        return self._historical_unavailable_result()
+
 
     # -----------------------------
     # Query normalization helpers
@@ -165,6 +627,20 @@ class FinanceHandler:
             seen.add(key)
             out.append(c2)
         return out
+
+    def _looks_like_forex_pair(self, query: str) -> bool:
+        ql = (query or "").lower()
+        if not ql:
+            return False
+
+        if re.search(r"\b([a-z]{3})\s*(?:/|to)\s*([a-z]{3})\b", ql):
+            return True
+
+        norm = self._normalize_for_match(ql)
+        if re.fullmatch(r"[a-z]{6}", norm):
+            return True
+
+        return False
 
     def _extract_fiat_pair(self, query: str) -> tuple[str, str] | None:
         """
@@ -449,7 +925,8 @@ class FinanceHandler:
                 if explicit and explicit.upper().endswith("USDT"):
                     crypto_response = get_crypto_price(explicit)
                 else:
-                    crypto_response = get_crypto_price(query)
+                    normalized = self._normalize_crypto_lookup_query(query)
+                    crypto_response = get_crypto_price(normalized)
 
                 result = self._format_crypto_result(crypto_response, query)
                 return [result]
@@ -582,3 +1059,13 @@ class FinanceHandler:
             "url": "",
             "description": "Rate could not be retrieved at this time.",
         }]
+
+
+
+
+
+
+
+
+
+
