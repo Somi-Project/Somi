@@ -8,6 +8,96 @@ INSTRUCT_MODEL = "stable-code:3b"
 CODING_MODEL = "stable-code:3b"
 WEBSEARCH_MODEL = INSTRUCT_MODEL
 
+# Runtime model behavior policies
+DEFAULT_THINK_FALSE = True
+MODELS_WITHOUT_THINK = [
+    "stable-code:3b",
+    "glm-ocr:latest",
+]
+MODEL_KEEP_ALIVE_SECONDS = {
+    "default": 180,
+    "general": 240,
+    "instruct": 180,
+    "websearch": 180,
+    "vision": 120,
+    "memory": 120,
+    "scraper": 120,
+}
+
+# Domain-specific SearXNG fetch profiles
+SEARXNG_DOMAIN_PROFILES = {
+    "general": {
+        "profile": "general",
+        "category": "general",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_general",
+    },
+    "science": {
+        "profile": "science",
+        "category": "science",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_research",
+    },
+    "biomed": {
+        "profile": "science_biomed",
+        "category": "science",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_biomed",
+    },
+    "engineering": {
+        "profile": "science_engineering",
+        "category": "science",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_engineering",
+    },
+    "nutrition": {
+        "profile": "science_nutrition",
+        "category": "science",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_nutrition",
+    },
+    "religion": {
+        "profile": "science_religion",
+        "category": "general",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_religion",
+    },
+    "entertainment": {
+        "profile": "science_entertainment",
+        "category": "general",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_entertainment",
+    },
+    "business_administrator": {
+        "profile": "science_business_administrator",
+        "category": "general",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_business_administrator",
+    },
+    "journalism_communication": {
+        "profile": "science_journalism_communication",
+        "category": "news",
+        "max_results": 10,
+        "max_pages": 2,
+        "source_name": "searxng_journalism_communication",
+    },
+    "news": {
+        "profile": "news",
+        "category": "news",
+        "max_results": 15,
+        "max_pages": 2,
+        "source_name": "searxng_news",
+    },
+}
+
 # Backward-compatible aliases used across older modules
 DEFAULT_MODEL = GENERAL_MODEL
 VISION_MODEL = "glm-ocr:latest"
@@ -16,6 +106,47 @@ SEARXNG_BASE_URL = "http://localhost:8080"
 DEFAULT_LOCATION = "Port of Spain, Trinidad and Tobago"
 DEFAULT_NEWS_REGION = "Trinidad and Tobago"
 
+# Playwright scraping fallback for thin/empty search results
+SCRAPER_FALLBACK_ENABLED = True
+SCRAPER_FALLBACK_MIN_RESULTS = 2
+SCRAPER_USE_PLAYWRIGHT = True
+SCRAPER_MODEL = "qwen3.5:0.8b"
+SCRAPER_LLM_RERANK = True
+SCRAPER_MAX_RESULT_LINKS = 8
+SCRAPER_MAX_PAGE_OPENS = 3
+SCRAPER_PAGE_TIMEOUT_MS = 12000
+SCRAPER_TEMP_DIR = "sessions/scrape_tmp"
+
+# Optional Dockerized Scrapling service (host:container = 9959:8000)
+SCRAPLING_SERVICE_ENABLED = False
+SCRAPLING_SERVICE_BASE_URL = "http://localhost:9959"
+SCRAPLING_SERVICE_PATH = "/fetch"
+SCRAPLING_SERVICE_TIMEOUT_SECONDS = 4.0
+
+# Research route: optional crawlies retrieval engine
+RESEARCH_CRAWLIES_ENABLED = True
+RESEARCH_CRAWLIES_TIMEOUT_SECONDS = 20.0
+RESEARCH_CRAWLIES_MAX_PAGES = 2
+RESEARCH_CRAWLIES_MAX_CANDIDATES = 12
+RESEARCH_CRAWLIES_MAX_OPEN_LINKS = 3
+RESEARCH_CRAWLIES_MIN_QUALITY_STOP = 35.0
+RESEARCH_CRAWLIES_USE_SCRAPLING = True
+RESEARCH_CRAWLIES_USE_PLAYWRIGHT = True
+RESEARCH_CRAWLIES_USE_LLM_RERANK = False
+RESEARCH_CRAWLIES_SAVE_ARTIFACTS = True
+
+# Finance historical route: crawlies fallback/augmentation
+FINANCE_HISTORICAL_CRAWLIES_ENABLED = True
+FINANCE_HISTORICAL_CRAWLIES_TIMEOUT_SECONDS = 14.0
+FINANCE_HISTORICAL_CRAWLIES_MAX_PAGES = 2
+FINANCE_HISTORICAL_CRAWLIES_MAX_CANDIDATES = 12
+FINANCE_HISTORICAL_CRAWLIES_MAX_OPEN_LINKS = 3
+FINANCE_HISTORICAL_CRAWLIES_MIN_QUALITY_STOP = 35.0
+FINANCE_HISTORICAL_CRAWLIES_USE_SCRAPLING = True
+FINANCE_HISTORICAL_CRAWLIES_USE_PLAYWRIGHT = True
+FINANCE_HISTORICAL_CRAWLIES_USE_LLM_RERANK = False
+FINANCE_HISTORICAL_CRAWLIES_SAVE_ARTIFACTS = True
+FINANCE_HISTORICAL_CRAWLIES_CATEGORY = "general"
 RAG_WEBSITES = [
     "placeholder"
 ]
@@ -221,3 +352,5 @@ RESEARCHER_BUNDLE_SHADOW_MODE = True
 AGENTPEDIA_PROMOTE_FROM_BUNDLE = False
 RESEARCH_COMPOSER_ENABLED = True
 RESEARCH_COMPOSER_DEEPREAD = True
+
+
