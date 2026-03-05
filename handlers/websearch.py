@@ -11,7 +11,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
 import httpx
-import ollama
+try:
+    import ollama
+except Exception:  # pragma: no cover
+    ollama = None  # type: ignore
 from duckduckgo_search import DDGS
 
 from config.settings import (
@@ -21,6 +24,18 @@ from config.settings import (
     RESEARCHER_BUNDLE_SHADOW_MODE,
     RESEARCH_COMPOSER_ENABLED,
     RESEARCH_COMPOSER_DEEPREAD,
+    RESEARCH_CRAWLIES_ENABLED,
+    RESEARCH_CRAWLIES_TIMEOUT_SECONDS,
+    RESEARCH_CRAWLIES_MAX_PAGES,
+    RESEARCH_CRAWLIES_MAX_CANDIDATES,
+    RESEARCH_CRAWLIES_MAX_OPEN_LINKS,
+    RESEARCH_CRAWLIES_MIN_QUALITY_STOP,
+    RESEARCH_CRAWLIES_USE_SCRAPLING,
+    RESEARCH_CRAWLIES_USE_PLAYWRIGHT,
+    RESEARCH_CRAWLIES_USE_LLM_RERANK,
+    RESEARCH_CRAWLIES_SAVE_ARTIFACTS,
+    SEARXNG_BASE_URL,
+    SEARXNG_DOMAIN_PROFILES,
 )
 from config.searchsettings import WEBSEARCH_DEBUG_RESULTS, WEBSEARCH_MAX_FORMAT_CHARS
 
@@ -39,6 +54,13 @@ from handlers.research.searxng import search_searxng
 
 logger = logging.getLogger(__name__)
 
+try:
+    from crawlies import CrawliesConfig, CrawliesEngine
+except Exception as e:
+    logger.warning(f"Crawlies not available: {e}")
+    CrawliesConfig = None  # type: ignore
+    CrawliesEngine = None  # type: ignore
+
 # --- RESEARCH (Agentpedia) safe import ---
 try:
     from handlers.research.agentpedia import Agentpedia
@@ -54,6 +76,7 @@ except Exception:
     bundle_from_results = None
 
 from handlers.research.composer import research_compose
+from runtime.ollama_options import build_ollama_chat_options
 
 
 @dataclass
@@ -276,7 +299,7 @@ def _safe_trim(text: str, limit: int) -> str:
     t = (text or "").strip()
     if len(t) <= limit:
         return t
-    return t[:limit].rstrip() + "…"
+    return t[:limit].rstrip() + "â€¦"
 
 
 def _extract_main_text(html: str) -> str:
@@ -426,6 +449,8 @@ class WebSearchHandler:
             "evidence", "literature", "clinical evidence",
             "treatment", "treatments",
             "therapy", "therapies",
+            "medication", "medications", "drug", "drugs", "pharmacology", "pharmacologic",
+            "antihypertensive", "antihypertensives", "bp medication", "blood pressure medication",
             "manage", "management",
             "dose", "dosing", "dosage",
             "finite element", "fea", "control system", "signal processing",
@@ -668,7 +693,7 @@ Query: {query}
                     ollama.chat,
                     model=WEBSEARCH_MODEL,
                     messages=[{"role": "user", "content": prompt}],
-                    options={"temperature": 0.0, "think": False},
+                    options=build_ollama_chat_options(model=WEBSEARCH_MODEL, role="websearch", temperature=0.0),
                 )
                 raw_output = (response.get("message", {}) or {}).get("content", "") or ""
                 cat = self._normalize_category(raw_output)
@@ -697,6 +722,40 @@ Query: {query}
             rr.setdefault("volatile", volatile)
             out.append(rr)
         return out
+
+    def _is_finance_historical_query(self, query: str, intent_hint: str = "") -> bool:
+        q = (query or "").strip()
+        ql = q.lower()
+        if not q:
+            return False
+        if not self.finance_handler._is_historical_query(q):
+            return False
+        if self._is_research_query(ql):
+            return False
+        if intent_hint in {"stock/commodity", "crypto", "forex"}:
+            return True
+        if self.finance_handler._has_finance_cues(ql):
+            return True
+        if self._looks_like_forex_pair(ql):
+            return True
+        explicit = self.finance_handler._extract_explicit_ticker(q)
+        return bool(explicit)
+
+    async def _search_finance_intent(self, intent: str, query: str, *, allow_historical: bool = True) -> List[Dict[str, Any]]:
+        if intent not in {"stock/commodity", "crypto", "forex"}:
+            return []
+
+        q = (query or "").strip()
+        ql = q.lower()
+
+        if allow_historical and self._is_finance_historical_query(q, intent_hint=intent):
+            return await self.finance_handler.search_historical_price(q)
+
+        if intent == "stock/commodity":
+            return await self.finance_handler.search_stocks_commodities(q)
+        if intent == "crypto":
+            return await self.finance_handler.search_crypto_yfinance(q)
+        return await self.finance_handler.search_forex_yfinance(ql)
 
     async def _ddg_text(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
         def _run():
@@ -852,46 +911,292 @@ Query: {query}
 
         return False
 
+    def _infer_research_domain(self, query: str) -> str:
+        ql = (query or "").strip().lower()
+        if not ql:
+            return "science"
+
+        if any(k in ql for k in ("pmid", "pubmed", "clinical", "guideline", "trial", "therapy", "dose", "treatment")):
+            return "biomed"
+        if any(k in ql for k in ("finite element", "fea", "signal processing", "rf", "antenna", "circuit", "mechanical", "electrical")):
+            return "engineering"
+        if any(k in ql for k in ("nutrition", "calorie", "protein", "macros", "vitamin", "diet", "food facts")):
+            return "nutrition"
+        if any(k in ql for k in ("religion", "theology", "bible", "quran", "hadith", "torah", "talmud")):
+            return "religion"
+        if any(k in ql for k in ("movie", "film", "anime", "manga", "game", "gaming", "box office", "imdb")):
+            return "entertainment"
+        if any(k in ql for k in ("business", "management", "operations", "leadership", "marketing", "accounting", "mba")):
+            return "business_administrator"
+        if any(k in ql for k in ("journalism", "media", "newsroom", "misinformation", "coverage", "public opinion")):
+            return "journalism_communication"
+        return "science"
+
+    def _searx_profile_for_domain(self, domain_key: str) -> Dict[str, Any]:
+        cfg = SEARXNG_DOMAIN_PROFILES if isinstance(SEARXNG_DOMAIN_PROFILES, dict) else {}
+        base = cfg.get("science", {}) if str(domain_key or "") != "general" else cfg.get("general", {})
+        chosen = cfg.get(str(domain_key or "science"), base)
+        return dict(chosen or base or {})
+
+    def _is_latest_clinical_query(self, query: str) -> bool:
+        ql = (query or "").strip().lower()
+        if not ql:
+            return False
+
+        has_latest = any(k in ql for k in ("latest", "most recent", "new", "updated", "current", "as of"))
+        has_clinical = any(
+            k in ql
+            for k in (
+                "guideline",
+                "guidelines",
+                "consensus",
+                "statement",
+                "recommendation",
+                "recommendations",
+                "medication",
+                "medications",
+                "drug",
+                "drugs",
+                "treatment",
+                "therapy",
+                "management",
+                "hypertension",
+            )
+        )
+        return has_latest and has_clinical
+
+    def _score_research_result(self, query: str, item: Dict[str, Any]) -> float:
+        title = str((item or {}).get("title") or "")
+        desc = str((item or {}).get("description") or "")
+        url = str((item or {}).get("url") or "")
+        blob = f"{title} {desc} {url}".lower()
+        host = (urlparse(url).netloc or "").lower()
+
+        base = float((item or {}).get("quality") or (item or {}).get("score") or 0.0)
+        score = base
+
+        guideline_markers = (
+            "guideline",
+            "guidelines",
+            "consensus",
+            "statement",
+            "recommendation",
+            "recommendations",
+            "protocol",
+        )
+        study_markers = (
+            "cohort",
+            "case-control",
+            "cross-sectional",
+            "meta-analysis",
+            "randomized",
+            "trial",
+            "study",
+        )
+
+        if any(m in blob for m in guideline_markers):
+            score += 9.0
+
+        if any(m in blob for m in ("medication", "medications", "drug", "drugs", "therapy", "treatment")):
+            score += 2.5
+
+        authority_hosts = (
+            "acc.org",
+            "escardio.org",
+            "heart.org",
+            "ahajournals.org",
+            "hypertension.ca",
+            "nice.org.uk",
+            "who.int",
+            "cdc.gov",
+            "nih.gov",
+            "gov",
+        )
+        if any(h in host for h in authority_hosts):
+            score += 8.0
+
+        if re.search(r"\b(202[4-9]|203\d)\b", blob):
+            score += 1.5
+
+        if "pubmed.ncbi.nlm.nih.gov" in host and not any(m in blob for m in guideline_markers):
+            score -= 7.0
+
+        if any(m in blob for m in study_markers) and not any(m in blob for m in guideline_markers):
+            score -= 5.0
+
+        if self._is_latest_clinical_query(query):
+            if any(m in blob for m in guideline_markers):
+                score += 5.0
+            elif any(m in blob for m in study_markers):
+                score -= 4.0
+
+        return score
+
+    def _prioritize_research_results(self, query: str, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        if not results:
+            return []
+
+        scored: List[Dict[str, Any]] = []
+        for r in results:
+            if not isinstance(r, dict):
+                continue
+            rr = dict(r)
+            rr["_research_score"] = self._score_research_result(query, rr)
+            scored.append(rr)
+
+        scored.sort(key=lambda x: float(x.get("_research_score") or 0.0), reverse=True)
+
+        if self._is_latest_clinical_query(query):
+            strong = [r for r in scored if float(r.get("_research_score") or 0.0) >= 8.0]
+            if strong:
+                scored = strong + [r for r in scored if float(r.get("_research_score") or 0.0) >= 1.0 and r not in strong]
+
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for r in scored:
+            u = str((r or {}).get("url") or "").strip().lower()
+            k = u or str((r or {}).get("title") or "").strip().lower()
+            if not k or k in seen:
+                continue
+            seen.add(k)
+            r.pop("_research_score", None)
+            deduped.append(r)
+
+        return deduped[:12]
+
+    def _build_crawlies_config(self, domain_key: str) -> Optional[Any]:
+        if not RESEARCH_CRAWLIES_ENABLED or CrawliesConfig is None:
+            return None
+
+        profile = self._searx_profile_for_domain(domain_key)
+        return CrawliesConfig(
+            searx_base_url=str(SEARXNG_BASE_URL or "http://localhost:8080"),
+            category=str(profile.get("category") or "science"),
+            max_pages=max(1, int(RESEARCH_CRAWLIES_MAX_PAGES)),
+            max_candidates=max(1, int(RESEARCH_CRAWLIES_MAX_CANDIDATES)),
+            max_open_links=max(1, int(RESEARCH_CRAWLIES_MAX_OPEN_LINKS)),
+            min_quality_stop=float(RESEARCH_CRAWLIES_MIN_QUALITY_STOP),
+            use_scrapling=bool(RESEARCH_CRAWLIES_USE_SCRAPLING),
+            use_playwright=bool(RESEARCH_CRAWLIES_USE_PLAYWRIGHT),
+            use_llm_rerank=bool(RESEARCH_CRAWLIES_USE_LLM_RERANK),
+            save_artifacts=bool(RESEARCH_CRAWLIES_SAVE_ARTIFACTS),
+        )
+
+    async def _research_crawlies(self, query: str, domain_key: str) -> List[Dict[str, Any]]:
+        if CrawliesEngine is None:
+            return []
+
+        cfg = self._build_crawlies_config(domain_key)
+        if cfg is None:
+            return []
+
+        timeout_s = max(1.0, float(RESEARCH_CRAWLIES_TIMEOUT_SECONDS))
+        try:
+            engine = CrawliesEngine(cfg)
+            payload = await asyncio.wait_for(engine.crawl(query), timeout=timeout_s)
+        except asyncio.TimeoutError:
+            logger.warning("Crawlies research timeout for '%s' after %.1fs", query, timeout_s)
+            return []
+        except Exception as e:
+            logger.warning(f"Crawlies research failed for '{query}': {e}")
+            return []
+
+        docs = payload.get("docs") if isinstance(payload, dict) else []
+        out: List[Dict[str, Any]] = []
+
+        if isinstance(docs, list):
+            for d in docs[: max(1, int(RESEARCH_CRAWLIES_MAX_OPEN_LINKS))]:
+                if not isinstance(d, dict):
+                    continue
+                url = str(d.get("url") or "").strip()
+                if not url:
+                    continue
+                title = str(d.get("title") or url).strip()
+                snippet = str(d.get("snippet") or "").strip()
+                content = str(d.get("content") or "").strip()
+                description = _safe_trim(content or snippet, 1800)
+                if not description:
+                    continue
+                method = str(d.get("method") or "crawl").strip()
+                out.append({
+                    "title": title,
+                    "url": url,
+                    "description": description,
+                    "category": "science",
+                    "source": f"crawlies_{method}",
+                    "volatile": True,
+                    "quality": float(d.get("quality") or 0.0),
+                    "status_code": int(d.get("status_code") or 0),
+                })
+
+        if not out and isinstance(payload, dict):
+            candidates = payload.get("candidates")
+            if isinstance(candidates, list):
+                for c in candidates[: max(1, int(RESEARCH_CRAWLIES_MAX_OPEN_LINKS))]:
+                    if not isinstance(c, dict):
+                        continue
+                    url = str(c.get("url") or "").strip()
+                    if not url:
+                        continue
+                    title = str(c.get("title") or url).strip()
+                    snippet = _safe_trim(str(c.get("snippet") or ""), 600)
+                    if not snippet:
+                        continue
+                    out.append({
+                        "title": title,
+                        "url": url,
+                        "description": snippet,
+                        "category": "science",
+                        "source": "crawlies_candidate",
+                        "volatile": True,
+                        "score": float(c.get("score") or 0.0),
+                    })
+
+        if out:
+            out = self._prioritize_research_results(query, out)
+            logger.info("Crawlies research results: %d for '%s' (domain=%s)", len(out), query, domain_key)
+            return self._tag(out, "science", True)
+
+        return []
+
+    async def _research_composer_fallback(self, query: str) -> List[Dict[str, Any]]:
+        if not RESEARCH_COMPOSER_ENABLED:
+            return []
+        try:
+            bundle = await research_compose(
+                query,
+                max_web_results=10,
+                max_enrich_results_per_domain=6,
+                max_deep_reads=8 if RESEARCH_COMPOSER_DEEPREAD else 0,
+                risk_mode="auto",
+            )
+            self.last_research_bundle = bundle.as_dict()
+            if not (bundle.answer or "").strip():
+                return []
+            item: Dict[str, Any] = {
+                "title": "Research composer answer" if bundle.items else "Research composer insufficient evidence",
+                "url": "",
+                "description": bundle.answer,
+                "category": "science",
+                "source": "research_composer",
+                "volatile": True,
+                "queries": bundle.queries,
+            }
+            if bundle.items:
+                item["conflicts"] = bundle.conflicts
+            return self._tag([item], "science", True)
+        except Exception as e:
+            logger.warning(f"Research composer failed for '{query}': {e}")
+            return []
+
     # --- Research stack helper ---
     async def _research_stack(self, query: str) -> List[Dict[str, Any]]:
         q = (query or "").strip()
         if not q:
             return []
 
-        if RESEARCH_COMPOSER_ENABLED:
-            try:
-                bundle = await research_compose(
-                    q,
-                    max_web_results=10,
-                    max_enrich_results_per_domain=6,
-                    max_deep_reads=8 if RESEARCH_COMPOSER_DEEPREAD else 0,
-                    risk_mode="auto",
-                )
-                self.last_research_bundle = bundle.as_dict()
-                if bundle.items:
-                    return [{
-                        "title": "Research composer answer",
-                        "url": "",
-                        "description": bundle.answer,
-                        "category": "science",
-                        "source": "research_composer",
-                        "volatile": True,
-                        "queries": bundle.queries,
-                        "conflicts": bundle.conflicts,
-                    }]
-                return [{
-                    "title": "Research composer insufficient evidence",
-                    "url": "",
-                    "description": bundle.answer,
-                    "category": "science",
-                    "source": "research_composer",
-                    "volatile": True,
-                    "queries": bundle.queries,
-                }]
-            except Exception as e:
-                logger.warning(f"Research composer failed for '{q}': {e}")
-
-        deadline_s = 12.0
+        domain_key = self._infer_research_domain(q)
+        deadline_s = min(12.0, max(6.0, float(RESEARCH_CRAWLIES_TIMEOUT_SECONDS)))
         started = time.monotonic()
 
         async def _agentpedia_task() -> List[Dict[str, Any]]:
@@ -906,6 +1211,7 @@ Query: {query}
                         if "insufficient coverage" in t or "unavailable" in t:
                             bad += 1
                     if bad < max(1, len(research_results)):
+                        research_results = self._prioritize_research_results(q, research_results)
                         logger.info(f"Agentpedia successful for '{q}' ({len(research_results)} results)")
                         return self._tag(research_results, "science", True)
             except Exception as e:
@@ -913,32 +1219,36 @@ Query: {query}
             return []
 
         async def _searx_task() -> List[Dict[str, Any]]:
+            p = self._searx_profile_for_domain(domain_key)
             try:
                 async with httpx.AsyncClient(timeout=8.0) as client:
                     searx = await search_searxng(
                         client,
                         q,
-                        max_results=8,
-                        category="science",
-                        source_name="searxng_research",
-                        domain="science",
+                        max_results=int(p.get("max_results", 10)),
+                        max_pages=int(p.get("max_pages", 2)),
+                        profile=str(p.get("profile") or "science"),
+                        category=str(p.get("category") or "science"),
+                        source_name=str(p.get("source_name") or f"searxng_{domain_key}"),
+                        domain=domain_key,
                     )
                     if searx and isinstance(searx, list):
-                        logger.info(f"SearXNG research results: {len(searx)} for '{q}'")
+                        searx = self._prioritize_research_results(q, searx)
+                        logger.info(f"SearXNG research results: {len(searx)} for '{q}' (domain={domain_key})")
                         return self._tag(searx, "science", True)
             except Exception as e:
                 logger.warning(f"SearXNG research failed for '{q}': {e}")
             return []
 
-        tasks = {
+        tasks: Dict[str, asyncio.Task[List[Dict[str, Any]]]] = {
             "agentpedia": asyncio.create_task(_agentpedia_task()),
             "searxng": asyncio.create_task(_searx_task()),
         }
+        if RESEARCH_CRAWLIES_ENABLED and CrawliesEngine is not None and CrawliesConfig is not None:
+            tasks["crawlies"] = asyncio.create_task(self._research_crawlies(q, domain_key))
 
         def _pick_best(candidates: Dict[str, List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
-            # Middle-ground determinism: prefer richer internal structured provider when both are available,
-            # otherwise return whichever viable result exists.
-            for key in ("agentpedia", "searxng"):
+            for key in ("crawlies", "searxng", "agentpedia"):
                 v = candidates.get(key) or []
                 if v:
                     return v
@@ -957,7 +1267,6 @@ Query: {query}
                 if src:
                     candidate_results[src] = res or []
 
-            # Give a very short grace window to collect second provider for deterministic preference.
             grace_s = 0.35
             if pending and candidate_results and (time.monotonic() - started + grace_s) < deadline_s:
                 done_grace, pending = await asyncio.wait(pending, timeout=grace_s)
@@ -970,14 +1279,32 @@ Query: {query}
                     if src:
                         candidate_results[src] = res or []
 
+            if "crawlies" in tasks and "crawlies" not in candidate_results:
+                crawl_task = tasks.get("crawlies")
+                if crawl_task in pending and any(candidate_results.get(k) for k in ("searxng", "agentpedia")):
+                    remaining_budget = max(0.0, deadline_s - (time.monotonic() - started))
+                    wait_crawl_s = min(2.5, remaining_budget)
+                    if wait_crawl_s > 0:
+                        logger.info(
+                            "Research stack waiting up to %.2fs for crawlies before selecting fallback provider",
+                            wait_crawl_s,
+                        )
+                        done_crawl, _ = await asyncio.wait({crawl_task}, timeout=wait_crawl_s)
+                        if crawl_task in done_crawl:
+                            pending.discard(crawl_task)
+                            try:
+                                crawl_res = crawl_task.result()
+                            except Exception:
+                                crawl_res = []
+                            candidate_results["crawlies"] = crawl_res or []
+
             picked = _pick_best(candidate_results)
             if picked:
-                self._maybe_build_shadow_bundle(q, picked, domain="science")
+                self._maybe_build_shadow_bundle(q, picked, domain=domain_key)
                 for p in pending:
                     p.cancel()
                 return picked
 
-            # No winner yet, collect remaining within budget
             remaining = max(0.0, deadline_s - (time.monotonic() - started))
             if pending and remaining > 0:
                 done2, pending2 = await asyncio.wait(pending, timeout=remaining)
@@ -990,9 +1317,10 @@ Query: {query}
                     src = next((k for k, t in tasks.items() if t is d), "")
                     if src:
                         candidate_results2[src] = res or []
+
                 picked2 = _pick_best(candidate_results2)
                 if picked2:
-                    self._maybe_build_shadow_bundle(q, picked2, domain="science")
+                    self._maybe_build_shadow_bundle(q, picked2, domain=domain_key)
                     for p in pending2:
                         p.cancel()
                     return picked2
@@ -1003,16 +1331,8 @@ Query: {query}
                 if not t.done():
                     t.cancel()
 
-        # 3) DDG web fallback (still tagged science because intent)
-        if (time.monotonic() - started) > deadline_s:
-            return []
-        try:
-            res = await self.search_web(q, retries=2, backoff_factor=0.5)
-            tagged = self._tag(res, "science", False)
-            self._maybe_build_shadow_bundle(q, tagged, domain="science")
-            return tagged
-        except Exception:
-            return []
+        # Keep science/research path free of DDG fallbacks. Prefer composer summary if retrieval fails.
+        return await self._research_composer_fallback(q)
 
     # === accept router kwargs like tool_veto/reason/signals ===
     async def search(
@@ -1074,21 +1394,21 @@ Query: {query}
                     # fall through if research stack fails
 
                 if intent_hint == "stock/commodity":
-                    res = await self.finance_handler.search_stocks_commodities(query)
+                    res = await self._search_finance_intent("stock/commodity", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
                         return self._tag(res, "stock/commodity", True)
 
                 if intent_hint == "crypto":
-                    res = await self.finance_handler.search_crypto_yfinance(query)
+                    res = await self._search_finance_intent("crypto", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
                         return self._tag(res, "crypto", True)
 
                 if intent_hint == "forex":
-                    res = await self.finance_handler.search_forex_yfinance(query_lower)
+                    res = await self._search_finance_intent("forex", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
@@ -1107,7 +1427,7 @@ Query: {query}
                 answer = await self.converter.convert(query)
                 if answer and "Error" not in answer:
                     return [{
-                        "title": f"{parsed.amount:g} {parsed.src.upper()} → {parsed.dst.upper()}",
+                        "title": f"{parsed.amount:g} {parsed.src.upper()} â†’ {parsed.dst.upper()}",
                         "url": "",
                         "description": answer,
                         "category": "forex",
@@ -1133,6 +1453,23 @@ Query: {query}
                 return res
             # If research stack fails, we continue to general web below.
 
+        if self._is_finance_historical_query(query, intent_hint=intent_hint):
+            hist_intent = intent_hint if intent_hint in {"stock/commodity", "crypto", "forex"} else ""
+            if not hist_intent:
+                forced_hist = self._force_intent_from_terms(query_lower)
+                if forced_hist in {"stock/commodity", "crypto", "forex"}:
+                    hist_intent = forced_hist
+                else:
+                    hist_intent = "stock/commodity"
+            try:
+                res = await self._search_finance_intent(hist_intent, query)
+                if self._maybe_log_deroute(res, query=query):
+                    res = []
+                if res:
+                    return self._tag(res, hist_intent, True)
+            except Exception as e:
+                logger.error(f"Historical finance routing failed for '{query}' ({hist_intent}): {e}\n{traceback.format_exc()}")
+
         # --- Forced intent heuristics (safe) ---
         forced = self._force_intent_from_terms(query_lower)
         if forced:
@@ -1143,21 +1480,21 @@ Query: {query}
                         return res
 
                 elif forced == "stock/commodity":
-                    res = await self.finance_handler.search_stocks_commodities(query_lower)
+                    res = await self._search_finance_intent("stock/commodity", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
                         return self._tag(res, "stock/commodity", True)
 
                 elif forced == "crypto":
-                    res = await self.finance_handler.search_crypto_yfinance(query)
+                    res = await self._search_finance_intent("crypto", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
                         return self._tag(res, "crypto", True)
 
                 elif forced == "forex":
-                    res = await self.finance_handler.search_forex_yfinance(query_lower)
+                    res = await self._search_finance_intent("forex", query)
                     if self._maybe_log_deroute(res, query=query):
                         res = []
                     if res:
@@ -1189,7 +1526,7 @@ Query: {query}
                 # fallthrough to general web
 
             if query_type == "stock/commodity":
-                res = await self.finance_handler.search_stocks_commodities(query)
+                res = await self._search_finance_intent("stock/commodity", query)
                 if self._maybe_log_deroute(res, query=query):
                     res = []
                 if res:
@@ -1202,7 +1539,7 @@ Query: {query}
                 return self._tag(res3, "general", False)
 
             if query_type == "crypto":
-                res = await self.finance_handler.search_crypto_yfinance(query)
+                res = await self._search_finance_intent("crypto", query)
                 if self._maybe_log_deroute(res, query=query):
                     res = []
                 if res:
@@ -1214,7 +1551,7 @@ Query: {query}
                 return self._tag(res3, "general", False)
 
             if query_type == "forex":
-                res = await self.finance_handler.search_forex_yfinance(query_lower)
+                res = await self._search_finance_intent("forex", query)
                 if self._maybe_log_deroute(res, query=query):
                     res = []
                 if res:
@@ -1260,6 +1597,8 @@ Query: {query}
         if not q:
             return []
 
+        composer_fallback: Optional[List[Dict[str, Any]]] = None
+
         query_lower = q.lower()
         fetch_fullpage = self._needs_fullpage_fetch(query_lower)
 
@@ -1291,14 +1630,17 @@ Query: {query}
 
                 # SearXNG fallback if DDG is weak
                 if len(enriched) < 3:
-                    logger.info(f"DDG weak ({len(enriched)} enriched results) for '{q}' — enriching with SearXNG")
+                    logger.info(f"DDG weak ({len(enriched)} enriched results) for '{q}' â€” enriching with SearXNG")
+                    gp = self._searx_profile_for_domain("general")
                     async with httpx.AsyncClient(timeout=12.0) as local_client:
                         extra = await search_searxng(
                             local_client,
                             q,
-                            max_results=8,
-                            category="general",
-                            source_name="searxng_fallback",
+                            max_results=int(gp.get("max_results", 10)),
+                            max_pages=int(gp.get("max_pages", 2)),
+                            profile=str(gp.get("profile") or "general"),
+                            category=str(gp.get("category") or "general"),
+                            source_name=str(gp.get("source_name") or "searxng_general"),
                             domain="general"
                         )
                         existing_urls = {r.get("url", "") for r in enriched if isinstance(r, dict)}
@@ -1390,7 +1732,7 @@ Query: {query}
             fullpage_fetch = bool(r.get("fullpage_fetch", False))
 
             source_parts = [p for p in [source, published] if p]
-            source_line = f" ({' — '.join(source_parts)})" if source_parts else ""
+            source_line = f" ({' â€” '.join(source_parts)})" if source_parts else ""
             block = (
                 f"{idx}. {title}{source_line}\n"
                 f"   URL: {url}\n"
@@ -1413,3 +1755,8 @@ Query: {query}
         formatted = "## Web/Search Context (results)\n" + "\n".join(lines)
         formatted += "\n\nReply 'expand 2' to open and summarize a story."
         return formatted[: max(500, int(WEBSEARCH_MAX_FORMAT_CHARS))]
+
+
+
+
+
