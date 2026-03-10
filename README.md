@@ -1,4 +1,5 @@
 # S.O.M.I. 🕊
+Sovereign Operation Machine Intelligence 
 ### Run your own AI
 This is an A.I. Framework that lets you deploy and control your own A.I. With added capabilities 
 
