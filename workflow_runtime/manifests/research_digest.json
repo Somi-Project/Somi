@@ -1,0 +1,16 @@
+{
+  "manifest_id": "research_digest",
+  "name": "Research Digest",
+  "description": "Fetch a compact evidence digest from the web stack.",
+  "script": "emit(\"starting research digest\")\nsearch = tool(\"web_intelligence_stack\", query=inputs[\"query\"])\nresult = {\n  \"count\": search[\"count\"],\n  \"top_result\": search[\"results\"][0][\"title\"] if search[\"results\"] else \"\",\n  \"summary\": search[\"formatted\"]\n}\n",
+  "allowed_tools": [
+    "web_intelligence_stack"
+  ],
+  "backend": "local",
+  "timeout_seconds": 60,
+  "max_tool_calls": 2,
+  "metadata": {
+    "category": "research",
+    "seeded_by_phase": 6
+  }
+}
