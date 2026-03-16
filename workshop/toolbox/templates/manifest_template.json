@@ -1,0 +1,9 @@
+{
+  "name": "{{name}}",
+  "version": "0.1.0",
+  "description": "{{description}}",
+  "aliases": ["{{name}}"],
+  "examples": ["run {{name}}"],
+  "tags": ["mvp"],
+  "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "additionalProperties": false}
+}
