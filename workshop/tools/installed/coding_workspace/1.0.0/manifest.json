@@ -1,0 +1,52 @@
+{
+  "name": "coding.workspace",
+  "version": "1.0.0",
+  "description": "Inspect coding sessions and files inside managed coding workspaces.",
+  "display_name": "Coding Workspace",
+  "aliases": ["code.workspace", "coding.session"],
+  "examples": [
+    "run coding.workspace -- action session_status user_id default_user",
+    "run coding.workspace -- action list_files session_id <id>",
+    "run coding.workspace -- action read_file workspace_root <path> relative_path main.py"
+  ],
+  "tags": ["developer", "code", "workspace", "file"],
+  "capabilities": ["developer", "code", "workspace", "file", "read"],
+  "toolsets": ["developer", "safe-chat", "ops"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "session_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "workspace_root": { "type": "string" },
+      "job_id": { "type": "string" },
+      "objective": { "type": "string" },
+      "relative_path": { "type": "string" },
+      "limit": { "type": "integer" },
+      "recursive": { "type": "boolean" },
+      "max_chars": { "type": "integer" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "name": "coding.fs",
+  "version": "1.0.0",
+  "description": "Bounded file writes and directory creation for managed coding workspaces.",
+  "display_name": "Coding File System",
+  "aliases": ["code.fs", "coding.write"],
+  "examples": [
+    "run coding.fs -- action write_text session_id <id> relative_path main.py",
+    "run coding.fs -- action mkdir workspace_root <path> relative_path package"
+  ],
+  "tags": ["developer", "code", "workspace", "file"],
+  "capabilities": ["developer", "code", "workspace", "file", "write"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "session_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "workspace_root": { "type": "string" },
+      "relative_path": { "type": "string" },
+      "content": { "type": "string" },
+      "if_exists": { "type": "string" },
+      "allow_large_write": { "type": "boolean" },
+      "create_snapshot": { "type": "boolean" },
+      "snapshot_label": { "type": "string" },
+      "label": { "type": "string" },
+      "snapshot_id": { "type": "string" },
+      "create_parents": { "type": "boolean" },
+      "parents": { "type": "boolean" },
+      "exist_ok": { "type": "boolean" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}

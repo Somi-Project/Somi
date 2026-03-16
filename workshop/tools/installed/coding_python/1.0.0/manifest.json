@@ -1,0 +1,52 @@
+{
+  "name": "coding.python",
+  "version": "1.0.0",
+  "description": "Approval-gated Python and pytest execution inside managed coding workspaces.",
+  "display_name": "Coding Python",
+  "aliases": ["code.python", "coding.pytest"],
+  "examples": [
+    "run coding.python -- action run_python session_id <id> script_path main.py",
+    "run coding.python -- action run_pytest workspace_root <path> targets [tests]"
+  ],
+  "tags": ["developer", "code", "python", "pytest", "execute"],
+  "capabilities": ["developer", "code", "python", "pytest", "execute"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "session_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "workspace_root": { "type": "string" },
+      "script_path": { "type": "string" },
+      "script_args": { "type": "array" },
+      "inline_code": { "type": "string" },
+      "targets": { "type": "array" },
+      "keyword": { "type": "string" },
+      "timeout_s": { "type": "integer" },
+      "output_cap": { "type": "integer" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}

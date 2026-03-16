@@ -1,0 +1,44 @@
+{
+  "name": "browser.runtime",
+  "version": "1.0.0",
+  "description": "Read-only browser runtime for page snapshots, screenshots, and health checks.",
+  "display_name": "Browser Runtime",
+  "aliases": ["browser.snapshot", "browser.screenshot"],
+  "examples": [
+    "run browser.runtime -- action snapshot target https://example.com",
+    "run browser.runtime -- action screenshot target index.html"
+  ],
+  "tags": ["browser", "playwright", "automation", "screenshot", "read"],
+  "capabilities": ["browser", "playwright", "automation", "screenshot", "read"],
+  "toolsets": ["research", "field", "safe-chat", "automation"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": ["playwright"],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "target": { "type": "string" },
+      "options": { "type": "object" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

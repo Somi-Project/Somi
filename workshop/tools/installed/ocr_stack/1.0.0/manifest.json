@@ -1,0 +1,49 @@
+{
+  "name": "ocr_stack",
+  "version": "1.0.0",
+  "description": "OCR extraction stack wrapper.",
+  "aliases": [
+    "ocr.extract",
+    "ocr_stack"
+  ],
+  "examples": [
+    "run ocr.extract -- action run mode structured image_paths [..]"
+  ],
+  "tags": [
+    "ocr",
+    "vision",
+    "documents"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "mode": {
+        "type": "string"
+      },
+      "image_paths": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        }
+      },
+      "schema_id": {
+        "type": "string"
+      },
+      "options": {
+        "type": "object"
+      }
+    },
+    "required": [
+      "action"
+    ],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

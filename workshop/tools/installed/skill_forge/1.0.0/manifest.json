@@ -1,0 +1,58 @@
+{
+  "name": "skill.forge",
+  "version": "1.0.0",
+  "description": "Draft, review, and approval-gate new local skills with provenance and history.",
+  "display_name": "Skill Forge",
+  "aliases": ["skill.draft", "skill.review"],
+  "examples": [
+    "run skill.forge -- action create_draft capability browser automation objective build a safe local browser helper",
+    "run skill.forge -- action review_draft draft_id <id>",
+    "run skill.forge -- action approve_install draft_id <id>"
+  ],
+  "tags": ["skills", "forge", "approval", "self-expansion"],
+  "capabilities": ["skills", "review", "approval", "provenance"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui", "telegram", "automation"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "draft_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "actor": { "type": "string" },
+      "capability": { "type": "string" },
+      "skill_name": { "type": "string" },
+      "description": { "type": "string" },
+      "objective": { "type": "string" },
+      "prompt": { "type": "string" },
+      "template_id": { "type": "string" },
+      "source": { "type": "string" },
+      "profile_key": { "type": "string" },
+      "dependencies": { "type": "object" },
+      "dispatch": { "type": "object" },
+      "reason": { "type": "string" },
+      "limit": { "type": "integer" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}

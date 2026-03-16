@@ -1,0 +1,89 @@
+{
+  "name": "research_artifact_agentpedia",
+  "version": "1.0.0",
+  "description": "Research artifact generation and Agentpedia access.",
+  "aliases": [
+    "research.artifacts",
+    "agentpedia.kit",
+    "research_stack"
+  ],
+  "examples": [
+    "run research.artifacts -- action agentpedia_search query hypertension guideline"
+  ],
+  "tags": [
+    "research",
+    "artifact",
+    "agentpedia"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "artifact_intent": {
+        "type": "string"
+      },
+      "query": {
+        "type": "string"
+      },
+      "route": {
+        "type": "string"
+      },
+      "answer_text": {
+        "type": "string"
+      },
+      "raw_search_results": {
+        "type": "array"
+      },
+      "rag_block": {
+        "type": "string"
+      },
+      "min_sources": {
+        "type": "integer"
+      },
+      "previous_plan": {
+        "type": "object"
+      },
+      "new_constraints": {
+        "type": "array"
+      },
+      "trigger_reason": {
+        "type": "object"
+      },
+      "k": {
+        "type": "integer"
+      },
+      "tags": {
+        "type": "array"
+      },
+      "topic": {
+        "type": "string"
+      },
+      "facts": {
+        "type": "array"
+      },
+      "role": {
+        "type": "string"
+      },
+      "interests": {
+        "type": "array"
+      },
+      "max_facts": {
+        "type": "integer"
+      },
+      "mode": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "action"
+    ],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

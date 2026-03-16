@@ -1,0 +1,47 @@
+{
+  "name": "image_tooling_stack",
+  "version": "1.0.0",
+  "description": "Image generation and chart tooling wrapper.",
+  "aliases": [
+    "image.tooling",
+    "image.generate",
+    "image_stack"
+  ],
+  "examples": [
+    "run image.generate -- action generate spec {...}"
+  ],
+  "tags": [
+    "image",
+    "chart",
+    "vision"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": {
+        "type": "string"
+      },
+      "spec": {
+        "type": "object"
+      },
+      "prompt": {
+        "type": "string"
+      },
+      "image_path": {
+        "type": "string"
+      },
+      "caption": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "action"
+    ],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

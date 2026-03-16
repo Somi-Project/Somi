@@ -1,0 +1,44 @@
+{
+  "name": "browser.action",
+  "version": "1.0.0",
+  "description": "Approval-gated browser action flow runner for bounded Playwright automation.",
+  "display_name": "Browser Action",
+  "aliases": ["browser.flow", "browser.click"],
+  "examples": [
+    "run browser.action -- action run_flow target https://example.com options {steps:[...]}",
+    "run browser.action -- action run_flow target form.html"
+  ],
+  "tags": ["browser", "playwright", "automation", "execute"],
+  "capabilities": ["browser", "playwright", "automation", "execute"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": ["playwright"],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "target": { "type": "string" },
+      "options": { "type": "object" }
+    },
+    "required": ["action", "target"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}

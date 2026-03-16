@@ -1,0 +1,66 @@
+{
+  "name": "coding.runtime",
+  "version": "1.0.0",
+  "description": "Approval-gated multi-runtime execution for managed coding workspaces.",
+  "display_name": "Coding Runtime",
+  "aliases": ["code.runtime", "coding.node", "coding.npm"],
+  "examples": [
+    "run coding.runtime -- action run_node_script session_id <id> relative_path index.js",
+    "run coding.runtime -- action run_npm_script workspace_root <path> script_name test",
+    "run coding.runtime -- action run_profile_check user_id default_user"
+  ],
+  "tags": ["developer", "code", "runtime", "node", "typescript", "execute"],
+  "capabilities": ["developer", "code", "runtime", "node", "typescript", "execute"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "session_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "workspace_root": { "type": "string" },
+      "job_id": { "type": "string" },
+      "objective": { "type": "string" },
+      "step_type": { "type": "string" },
+      "status": { "type": "string" },
+      "files": { "type": "array" },
+      "command": { "type": "string" },
+      "notes": { "type": "string" },
+      "score": { "type": "number" },
+      "relative_path": { "type": "string" },
+      "script_name": { "type": "string" },
+      "script_args": { "type": "array" },
+      "command_args": { "type": "array" },
+      "backend_key": { "type": "string" },
+      "label": { "type": "string" },
+      "snapshot_id": { "type": "string" },
+      "source_root": { "type": "string" },
+      "task_scope": { "type": "string" },
+      "output_root": { "type": "string" },
+      "timeout_s": { "type": "integer" },
+      "output_cap": { "type": "integer" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}

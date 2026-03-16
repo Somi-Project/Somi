@@ -1,0 +1,48 @@
+{
+  "name": "web_intelligence_stack",
+  "version": "1.0.0",
+  "description": "Wrapper tool for Somi web intelligence stack.",
+  "aliases": [
+    "web.intelligence",
+    "web_stack"
+  ],
+  "examples": [
+    "run web.intelligence -- query latest AI chip news"
+  ],
+  "tags": [
+    "web",
+    "finance",
+    "news",
+    "weather",
+    "research"
+  ],
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "tool_veto": {
+        "type": "boolean"
+      },
+      "reason": {
+        "type": "string"
+      },
+      "signals": {
+        "type": "object"
+      },
+      "route_hint": {
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

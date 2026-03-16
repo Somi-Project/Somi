@@ -1,0 +1,1620 @@
+{
+  "tools": [
+    {
+      "name": "browser.action",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/browser_action/1.0.0",
+      "description": "Approval-gated browser action flow runner for bounded Playwright automation.",
+      "display_name": "Browser Action",
+      "hashes": {
+        "manifest.json": "6128861a35a29f2615af8dc8c8718cac45403cadc532aa82f22314066bc89de1",
+        "README.md": "253059f8e48afa13f7fdeb3b9f022ef78c340e52f943773c7f0b8c9dd6b8e9cc",
+        "tool.py": "c68d605398253fed38df6b468c20ea37661a62bbef13999d800273e0562d5ad2"
+      },
+      "enabled": true,
+      "aliases": [
+        "browser.flow",
+        "browser.click"
+      ],
+      "examples": [
+        "run browser.action -- action run_flow target https://example.com options {steps:[...]}",
+        "run browser.action -- action run_flow target form.html"
+      ],
+      "tags": [
+        "browser",
+        "playwright",
+        "automation",
+        "execute"
+      ],
+      "capabilities": [
+        "browser",
+        "playwright",
+        "automation",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [
+            "playwright"
+          ],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "browser.runtime",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/browser_runtime/1.0.0",
+      "description": "Read-only browser runtime for page snapshots, screenshots, and health checks.",
+      "display_name": "Browser Runtime",
+      "hashes": {
+        "manifest.json": "9cedc6f84bc79866f527ff4b4d8f5f79f49fead2c18949d73c86b93bbbe2045b",
+        "README.md": "524b6631c04bb3f0a542a0598335d04d4f3d9610042374aa03092c6f11e37c48",
+        "tool.py": "60fa3c668fe38a3557365d56c01d152d0f25989f666d73d0117b535ad14be81d"
+      },
+      "enabled": true,
+      "aliases": [
+        "browser.snapshot",
+        "browser.screenshot"
+      ],
+      "examples": [
+        "run browser.runtime -- action snapshot target https://example.com",
+        "run browser.runtime -- action screenshot target index.html"
+      ],
+      "tags": [
+        "browser",
+        "playwright",
+        "automation",
+        "screenshot",
+        "read"
+      ],
+      "capabilities": [
+        "browser",
+        "playwright",
+        "automation",
+        "screenshot",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "field",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [
+            "playwright"
+          ],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "cli.exec",
+      "version": "0.1.0",
+      "path": "workshop/tools/installed/cli_exec/0.1.0",
+      "description": "Execute a CLI binary with argv in toolbox sandbox",
+      "display_name": "cli.exec",
+      "hashes": {
+        "manifest.json": "c46ef3204388cce02ea7d4d61358486f9dfaab616781851a3f9ef13b62550b3f",
+        "README.md": "b2780d599dfc4e5ef3b032d4a81691c52b3ae80f16a6461f52be5da1c39c66ab",
+        "tool.py": "a98e492b7def575d757e6db197477a29f7f4c9d222826e6adb7dfdf172f965f7"
+      },
+      "enabled": true,
+      "aliases": [],
+      "examples": [],
+      "tags": [],
+      "capabilities": [
+        "cli",
+        "write",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {},
+      "policy": {
+        "read_only": false,
+        "risk_tier": "LOW",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "coding.fs",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/coding_fs/1.0.0",
+      "description": "Bounded file writes and directory creation for managed coding workspaces.",
+      "display_name": "Coding File System",
+      "hashes": {
+        "manifest.json": "7291d12637e081951871a2ec51fb9a09718df64ec6090f78969f448d91522fb2",
+        "README.md": "1af0a986d664ec4a17bc1318d091365d9ebe947a4efbca2ab7dc8240fdb11d37",
+        "tool.py": "604eedf0255eb6ff7cbf26324b1bd625ce12b2da7092322e114af6312af2d964"
+      },
+      "enabled": true,
+      "aliases": [
+        "code.fs",
+        "coding.write"
+      ],
+      "examples": [
+        "run coding.fs -- action write_text session_id <id> relative_path main.py",
+        "run coding.fs -- action mkdir workspace_root <path> relative_path package"
+      ],
+      "tags": [
+        "developer",
+        "code",
+        "workspace",
+        "file"
+      ],
+      "capabilities": [
+        "developer",
+        "code",
+        "workspace",
+        "file",
+        "write"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "if_exists": {
+            "type": "string"
+          },
+          "allow_large_write": {
+            "type": "boolean"
+          },
+          "create_snapshot": {
+            "type": "boolean"
+          },
+          "snapshot_label": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "snapshot_id": {
+            "type": "string"
+          },
+          "create_parents": {
+            "type": "boolean"
+          },
+          "parents": {
+            "type": "boolean"
+          },
+          "exist_ok": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "coding.python",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/coding_python/1.0.0",
+      "description": "Approval-gated Python and pytest execution inside managed coding workspaces.",
+      "display_name": "Coding Python",
+      "hashes": {
+        "manifest.json": "4e6a1be1ea2522c8b3bbaf80ee37f3302ba829a81802a4de06032b909f647abf",
+        "README.md": "ce1dfcb8b6857ce532b0c822c9bddb0a061874dc94d92aca4857ec678859edf9",
+        "tool.py": "c6a872582f773d16e4370838c03639cd32ce7e38f009b93b7db4a7fa105afd9e"
+      },
+      "enabled": true,
+      "aliases": [
+        "code.python",
+        "coding.pytest"
+      ],
+      "examples": [
+        "run coding.python -- action run_python session_id <id> script_path main.py",
+        "run coding.python -- action run_pytest workspace_root <path> targets [tests]"
+      ],
+      "tags": [
+        "developer",
+        "code",
+        "python",
+        "pytest",
+        "execute"
+      ],
+      "capabilities": [
+        "developer",
+        "code",
+        "python",
+        "pytest",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "script_path": {
+            "type": "string"
+          },
+          "script_args": {
+            "type": "array"
+          },
+          "inline_code": {
+            "type": "string"
+          },
+          "targets": {
+            "type": "array"
+          },
+          "keyword": {
+            "type": "string"
+          },
+          "timeout_s": {
+            "type": "integer"
+          },
+          "output_cap": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "coding.runtime",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/coding_runtime/1.0.0",
+      "description": "Approval-gated multi-runtime execution for managed coding workspaces.",
+      "display_name": "Coding Runtime",
+      "hashes": {
+        "manifest.json": "3aa4f93c87a476faaee4c6c1833d273bad677de20b3a871b0a5fb16e80c580f1",
+        "README.md": "c481039cbadb65a8085b53566c408b4561e0d4bfc569ed483032551577eac157",
+        "tool.py": "e5040d1f157418d4fce7398c90fc75a4e53406876926d985dfcd0670e61d6f0a"
+      },
+      "enabled": true,
+      "aliases": [
+        "code.runtime",
+        "coding.node",
+        "coding.npm"
+      ],
+      "examples": [
+        "run coding.runtime -- action run_node_script session_id <id> relative_path index.js",
+        "run coding.runtime -- action run_npm_script workspace_root <path> script_name test",
+        "run coding.runtime -- action run_profile_check user_id default_user"
+      ],
+      "tags": [
+        "developer",
+        "code",
+        "runtime",
+        "node",
+        "typescript",
+        "execute"
+      ],
+      "capabilities": [
+        "developer",
+        "code",
+        "runtime",
+        "node",
+        "typescript",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "step_type": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array"
+          },
+          "command": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          },
+          "score": {
+            "type": "number"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "script_name": {
+            "type": "string"
+          },
+          "script_args": {
+            "type": "array"
+          },
+          "command_args": {
+            "type": "array"
+          },
+          "backend_key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "snapshot_id": {
+            "type": "string"
+          },
+          "source_root": {
+            "type": "string"
+          },
+          "task_scope": {
+            "type": "string"
+          },
+          "output_root": {
+            "type": "string"
+          },
+          "timeout_s": {
+            "type": "integer"
+          },
+          "output_cap": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "coding.scaffold",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/coding_scaffold/1.0.0",
+      "description": "Approval-gated scaffolds for coding workspaces and skill drafts.",
+      "display_name": "Coding Scaffold",
+      "hashes": {
+        "manifest.json": "8c3e89509942e4b9132e43b9c3f574d816004e56519d55bcecd7d2144240637e",
+        "README.md": "2d79f3c366b0eed6eefe2efad7f93dcfca5cc3649416fb9595b5397a83698a01",
+        "tool.py": "37e345384abbd367fcd04b729d3f89aa53c58ce4121ee45af48ed189802a0ad2"
+      },
+      "enabled": true,
+      "aliases": [
+        "code.scaffold",
+        "coding.skill"
+      ],
+      "examples": [
+        "run coding.scaffold -- action bootstrap_profile session_id <id>",
+        "run coding.scaffold -- action draft_skill workspace_root <path> capability browser automation"
+      ],
+      "tags": [
+        "developer",
+        "code",
+        "scaffold",
+        "skill",
+        "workspace"
+      ],
+      "capabilities": [
+        "developer",
+        "code",
+        "scaffold",
+        "skill",
+        "write"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "skill_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "coding.workspace",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/coding_workspace/1.0.0",
+      "description": "Inspect coding sessions and files inside managed coding workspaces.",
+      "display_name": "Coding Workspace",
+      "hashes": {
+        "manifest.json": "074d01842b04cf3af5aa0407951dec11b36362de16613e7d01229bc6fb4b6f2a",
+        "README.md": "1fb966bdf330a9c755789676dfc7a02b88092baa34b22e67e73b1b8ab5791f4f",
+        "tool.py": "0ba914ab128db7cde58b6b62b3d76153acc59823abd43e60b875d559dd3ad22a"
+      },
+      "enabled": true,
+      "aliases": [
+        "code.workspace",
+        "coding.session"
+      ],
+      "examples": [
+        "run coding.workspace -- action session_status user_id default_user",
+        "run coding.workspace -- action list_files session_id <id>",
+        "run coding.workspace -- action read_file workspace_root <path> relative_path main.py"
+      ],
+      "tags": [
+        "developer",
+        "code",
+        "workspace",
+        "file"
+      ],
+      "capabilities": [
+        "developer",
+        "code",
+        "workspace",
+        "file",
+        "read"
+      ],
+      "toolsets": [
+        "developer",
+        "safe-chat",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "workspace_root": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "relative_path": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "recursive": {
+            "type": "boolean"
+          },
+          "max_chars": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "dummy",
+      "version": "0.1.0",
+      "path": "workshop/tools/installed/dummy/0.1.0",
+      "description": "",
+      "display_name": "dummy",
+      "hashes": {
+        "manifest.json": "7b023c9238d48f74cf0d7872c23408363bfc9cfa654e709c66998836c39c6ca1",
+        "tool.py": "1ba73990f39928fefad103e7a04e96f46221fc09b365dc420b43e95ec962747b"
+      },
+      "enabled": true,
+      "aliases": [],
+      "examples": [],
+      "tags": [],
+      "capabilities": [
+        "dummy",
+        "write",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {},
+      "policy": {
+        "read_only": false,
+        "risk_tier": "LOW",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "hello_tool",
+      "version": "0.1.0",
+      "path": "workshop/tools/installed/hello_tool/0.1.0",
+      "description": "Returns greeting + system time",
+      "display_name": "hello_tool",
+      "hashes": {
+        "manifest.json": "74564b483435492fc56ef75ea659c55008368e4e37b1da6489dee63b01c21a2f",
+        "README.md": "d68c3d44c7d52263bbc8aaa704751c97bb3d6a2ada53255360c114af3980da34",
+        "test_tool.py": "70da1e5d0748c36da4937e0cc3187d5e99e90d523b1686a9d0c2b444e48b8f9f",
+        "tool.py": "87608720cc2c9c73f1cefdb561d7580b9a43fc139b4ccb331b6adf159aa35135"
+      },
+      "enabled": true,
+      "aliases": [
+        "hello_tool"
+      ],
+      "examples": [
+        "run hello_tool"
+      ],
+      "tags": [
+        "mvp"
+      ],
+      "capabilities": [
+        "mvp",
+        "hello_tool",
+        "write",
+        "execute"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": false
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "LOW",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "image_tooling_stack",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/image_tooling_stack/1.0.0",
+      "description": "Image generation and chart tooling wrapper.",
+      "display_name": "image_tooling_stack",
+      "hashes": {
+        "manifest.json": "f3d4f6f3327364b2eaa77223e12a96652c39fd56e15368b7af2b0b5a2edd6d38",
+        "README.md": "28c17d0db9b358b9ab974ca045b8728298834359643fe93d03ca0948cea54b27",
+        "tool.py": "91e2634a58cc47df24d4bc78f3fafd660efae1e23e498d7d4cc759fcd67e7b38"
+      },
+      "enabled": true,
+      "aliases": [
+        "image.tooling",
+        "image.generate",
+        "image_stack"
+      ],
+      "examples": [
+        "run image.generate -- action generate spec {...}"
+      ],
+      "tags": [
+        "image",
+        "chart",
+        "vision"
+      ],
+      "capabilities": [
+        "image",
+        "chart",
+        "vision",
+        "image_tooling_stack",
+        "image_stack",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "creator",
+        "field",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "spec": {
+            "type": "object"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "image_path": {
+            "type": "string"
+          },
+          "caption": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "ocr_stack",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/ocr_stack/1.0.0",
+      "description": "OCR extraction stack wrapper.",
+      "display_name": "ocr_stack",
+      "hashes": {
+        "manifest.json": "405557a06986ad740264913ed334b07eae2037b286c8a39fd200e0407e73b95c",
+        "README.md": "94d905a3e2a0e96a010b5d27acc8b4034d3bd3808194a6616f283e7fde12e4ce",
+        "tool.py": "df0b732c8691798c6f1981920abbcf20b01db9a3d2897c4e60421d11887351a8"
+      },
+      "enabled": true,
+      "aliases": [
+        "ocr.extract",
+        "ocr_stack"
+      ],
+      "examples": [
+        "run ocr.extract -- action run mode structured image_paths [..]"
+      ],
+      "tags": [
+        "ocr",
+        "vision",
+        "documents"
+      ],
+      "capabilities": [
+        "ocr",
+        "vision",
+        "documents",
+        "ocr_stack",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "creator",
+        "field",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "image_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "schema_id": {
+            "type": "string"
+          },
+          "options": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "research_artifact_agentpedia",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/research_artifact_agentpedia/1.0.0",
+      "description": "Research artifact generation and Agentpedia access.",
+      "display_name": "research_artifact_agentpedia",
+      "hashes": {
+        "manifest.json": "c86543baf5070629ce8781ca26494c8a9bbeca6d5200f471ad43d5e2113bf68b",
+        "README.md": "73912219b38c281860f8ed773e90b32a6296b40bdfdf52d5d7ceb59e5833bcf5",
+        "tool.py": "ac77549fa15d87e4b5229a950fa17e34c045fd9d0844ca09d0e6b077efbb498f"
+      },
+      "enabled": true,
+      "aliases": [
+        "research.artifacts",
+        "agentpedia.kit",
+        "research_stack"
+      ],
+      "examples": [
+        "run research.artifacts -- action agentpedia_search query hypertension guideline"
+      ],
+      "tags": [
+        "research",
+        "artifact",
+        "agentpedia"
+      ],
+      "capabilities": [
+        "research",
+        "artifact",
+        "agentpedia",
+        "research_artifact_agentpedia",
+        "research_stack",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "creator",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "artifact_intent": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "route": {
+            "type": "string"
+          },
+          "answer_text": {
+            "type": "string"
+          },
+          "raw_search_results": {
+            "type": "array"
+          },
+          "rag_block": {
+            "type": "string"
+          },
+          "min_sources": {
+            "type": "integer"
+          },
+          "previous_plan": {
+            "type": "object"
+          },
+          "new_constraints": {
+            "type": "array"
+          },
+          "trigger_reason": {
+            "type": "object"
+          },
+          "k": {
+            "type": "integer"
+          },
+          "tags": {
+            "type": "array"
+          },
+          "topic": {
+            "type": "string"
+          },
+          "facts": {
+            "type": "array"
+          },
+          "role": {
+            "type": "string"
+          },
+          "interests": {
+            "type": "array"
+          },
+          "max_facts": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "research.supermode",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/research_supermode/1.0.0",
+      "description": "Persisted research jobs with source scoring, contradiction checks, and coverage tracking.",
+      "display_name": "Research Supermode",
+      "hashes": {
+        "manifest.json": "41428764c3e7a536f780451732b3211c0ef47d9948ce5b57c746168d400f8dde",
+        "README.md": "7f04c110f8c7ebac8e4af27d82dd16ffa7d1cf6f1eaf0b50e62180636c344fa4",
+        "tool.py": "2878facf862bf42f02590915c8c7a52c88f636590dd21ae202f6351d08a0dba0"
+      },
+      "enabled": true,
+      "aliases": [
+        "research.job",
+        "research.deep"
+      ],
+      "examples": [
+        "run research.supermode -- action start_job query local ai frameworks",
+        "run research.supermode -- action status job_id <id>",
+        "run research.supermode -- action list_jobs user_id default_user"
+      ],
+      "tags": [
+        "research",
+        "evidence",
+        "sources",
+        "compare"
+      ],
+      "capabilities": [
+        "research",
+        "evidence",
+        "sources",
+        "compare",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [
+            "httpx"
+          ],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "signals": {
+            "type": "object"
+          },
+          "document_inputs": {
+            "type": "array"
+          },
+          "route_hint": {
+            "type": "string"
+          },
+          "deep_read": {
+            "type": "boolean"
+          },
+          "max_reads": {
+            "type": "integer"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "export_type": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    },
+    {
+      "name": "skill.forge",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/skill_forge/1.0.0",
+      "description": "Draft, review, and approval-gate new local skills with provenance and history.",
+      "display_name": "Skill Forge",
+      "hashes": {
+        "manifest.json": "b652347909bd145985ec43019273e2b263f0a6b0f70f872a23515b2972a44015",
+        "README.md": "8bcd5aa6cb0f08fee3e77960a048b66fb6bebccda81884e0e866936a925b5023",
+        "tool.py": "c604e2d463254d61772054cb7c687f038d64cdec551429d37f4bca01e67aa6d8"
+      },
+      "enabled": true,
+      "aliases": [
+        "skill.draft",
+        "skill.review"
+      ],
+      "examples": [
+        "run skill.forge -- action create_draft capability browser automation objective build a safe local browser helper",
+        "run skill.forge -- action review_draft draft_id <id>",
+        "run skill.forge -- action approve_install draft_id <id>"
+      ],
+      "tags": [
+        "skills",
+        "forge",
+        "approval",
+        "self-expansion"
+      ],
+      "capabilities": [
+        "skills",
+        "review",
+        "approval",
+        "provenance"
+      ],
+      "toolsets": [
+        "developer",
+        "ops"
+      ],
+      "channels": [
+        "chat",
+        "gui",
+        "telegram",
+        "automation"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "draft_id": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          },
+          "actor": {
+            "type": "string"
+          },
+          "capability": {
+            "type": "string"
+          },
+          "skill_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "template_id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "profile_key": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "object"
+          },
+          "dispatch": {
+            "type": "object"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": false,
+        "risk_tier": "MEDIUM",
+        "requires_approval": true,
+        "mutates_state": true
+      }
+    },
+    {
+      "name": "web_intelligence_stack",
+      "version": "1.0.0",
+      "path": "workshop/tools/installed/web_intelligence_stack/1.0.0",
+      "description": "Wrapper tool for Somi web intelligence stack.",
+      "display_name": "web_intelligence_stack",
+      "hashes": {
+        "manifest.json": "cd7ad2b6fa35ff944050c0458363869d6db6ec941a77e316baf8c837e7edc376",
+        "README.md": "c05a3dce74931fcaf04fbd2d9aa4bdf6ee3064f859d44e8a81b8dd74b33c30c3",
+        "tool.py": "493455d42ffa2366b4bde92e1d0bf7b444569abb88409ca75a01f11f38c32b09"
+      },
+      "enabled": true,
+      "aliases": [
+        "web.intelligence",
+        "web_stack"
+      ],
+      "examples": [
+        "run web.intelligence -- query latest AI chip news"
+      ],
+      "tags": [
+        "web",
+        "finance",
+        "news",
+        "weather",
+        "research"
+      ],
+      "capabilities": [
+        "web",
+        "finance",
+        "news",
+        "weather",
+        "research",
+        "web_intelligence_stack",
+        "web_stack",
+        "read"
+      ],
+      "toolsets": [
+        "research",
+        "field",
+        "safe-chat",
+        "automation"
+      ],
+      "channels": [
+        "chat",
+        "gui"
+      ],
+      "backends": [
+        "local"
+      ],
+      "runtime": {
+        "backends": [
+          "local"
+        ],
+        "default_backend": "local",
+        "healthcheck": {
+          "python_modules": [],
+          "executables": [],
+          "paths_exist": []
+        }
+      },
+      "exposure": {
+        "ui": true,
+        "agent": true,
+        "automation": true
+      },
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "tool_veto": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "signals": {
+            "type": "object"
+          },
+          "route_hint": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "policy": {
+        "read_only": true,
+        "risk_tier": "LOW",
+        "requires_approval": false,
+        "mutates_state": false
+      }
+    }
+  ]
+}

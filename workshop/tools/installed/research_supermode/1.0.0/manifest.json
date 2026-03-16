@@ -1,0 +1,53 @@
+{
+  "name": "research.supermode",
+  "version": "1.0.0",
+  "description": "Persisted research jobs with source scoring, contradiction checks, and coverage tracking.",
+  "display_name": "Research Supermode",
+  "aliases": ["research.job", "research.deep"],
+  "examples": [
+    "run research.supermode -- action start_job query local ai frameworks",
+    "run research.supermode -- action status job_id <id>",
+    "run research.supermode -- action list_jobs user_id default_user"
+  ],
+  "tags": ["research", "evidence", "sources", "compare"],
+  "capabilities": ["research", "evidence", "sources", "compare", "read"],
+  "toolsets": ["research", "safe-chat", "automation"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": ["httpx"],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": true
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "job_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "query": { "type": "string" },
+      "signals": { "type": "object" },
+      "document_inputs": { "type": "array" },
+      "route_hint": { "type": "string" },
+      "deep_read": { "type": "boolean" },
+      "max_reads": { "type": "integer" },
+      "limit": { "type": "integer" },
+      "export_type": { "type": "string" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": true,
+    "risk_tier": "LOW",
+    "requires_approval": false
+  }
+}

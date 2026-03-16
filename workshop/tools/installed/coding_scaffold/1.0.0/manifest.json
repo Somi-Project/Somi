@@ -1,0 +1,49 @@
+{
+  "name": "coding.scaffold",
+  "version": "1.0.0",
+  "description": "Approval-gated scaffolds for coding workspaces and skill drafts.",
+  "display_name": "Coding Scaffold",
+  "aliases": ["code.scaffold", "coding.skill"],
+  "examples": [
+    "run coding.scaffold -- action bootstrap_profile session_id <id>",
+    "run coding.scaffold -- action draft_skill workspace_root <path> capability browser automation"
+  ],
+  "tags": ["developer", "code", "scaffold", "skill", "workspace"],
+  "capabilities": ["developer", "code", "scaffold", "skill", "write"],
+  "toolsets": ["developer", "ops"],
+  "channels": ["chat", "gui", "telegram"],
+  "backends": ["local"],
+  "runtime": {
+    "default_backend": "local",
+    "healthcheck": {
+      "python_modules": [],
+      "executables": [],
+      "paths_exist": []
+    }
+  },
+  "exposure": {
+    "ui": true,
+    "agent": true,
+    "automation": false
+  },
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string" },
+      "session_id": { "type": "string" },
+      "user_id": { "type": "string" },
+      "workspace_root": { "type": "string" },
+      "skill_name": { "type": "string" },
+      "description": { "type": "string" },
+      "capability": { "type": "string" },
+      "objective": { "type": "string" }
+    },
+    "required": ["action"],
+    "additionalProperties": false
+  },
+  "policy": {
+    "read_only": false,
+    "risk_tier": "MEDIUM",
+    "requires_approval": true
+  }
+}
