@@ -1,0 +1,28 @@
+{
+  "schema_id": "medical_intake",
+  "version": "1.0",
+  "fields": [
+    { "name": "Patient Name", "type": "text", "required": true, "aliases": ["Name", "Full Name"] },
+    { "name": "Date of Birth", "type": "date", "required": true, "aliases": ["DOB", "Birth Date"] },
+    { "name": "Phone Number", "type": "phone", "required": false, "aliases": ["Phone", "Contact Number"] },
+    { "name": "ID Number", "type": "text", "required": false, "aliases": ["National ID", "Identifier"] },
+    { "name": "Diagnosis", "type": "text", "required": false, "aliases": ["Condition", "Primary Diagnosis"] },
+    { "name": "Current Medications", "type": "text", "required": false, "aliases": ["Medications", "Medication"] }
+  ],
+  "output_columns": [
+    "Patient Name",
+    "Date of Birth",
+    "Phone Number",
+    "ID Number",
+    "Diagnosis",
+    "Current Medications"
+  ],
+  "example": {
+    "Patient Name": "Jane Doe",
+    "Date of Birth": "1990-01-01",
+    "Phone Number": "+1 555 0101",
+    "ID Number": "A123456",
+    "Diagnosis": "Focal epilepsy",
+    "Current Medications": "Levetiracetam"
+  }
+}

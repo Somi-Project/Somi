@@ -1,0 +1,33 @@
+{
+  "schema_id": "default",
+  "version": "1.0",
+  "fields": [
+    {"name": "Name", "type": "text", "required": false},
+    {"name": "Date of Birth", "type": "text", "required": false},
+    {"name": "ID Number", "type": "text", "required": false},
+    {"name": "Seizure Type", "type": "text", "required": false},
+    {"name": "CT", "type": "text", "required": false},
+    {"name": "MRI", "type": "text", "required": false},
+    {"name": "EEG", "type": "text", "required": false},
+    {"name": "Previous Surgeries", "type": "text", "required": false},
+    {"name": "Current Medications", "type": "text", "required": false},
+    {"name": "Complications", "type": "text", "required": false},
+    {"name": "Phone Number", "type": "text", "required": false},
+    {"name": "Age at Diagnosis", "type": "text", "required": false}
+  ],
+  "output_columns": ["Name", "Date of Birth", "ID Number", "Seizure Type", "CT", "MRI", "EEG", "Previous Surgeries", "Current Medications", "Complications", "Phone Number", "Age at Diagnosis"],
+  "example": {
+    "Name": "John Doe",
+    "Date of Birth": "01/01/2001",
+    "ID Number": "123456789",
+    "Seizure Type": "Focal Aware Motor",
+    "CT": "Nil Findings",
+    "MRI": "Frontal Lobe Anomaly",
+    "EEG": "Frontal Lobe Inter-Epileptiform Discharges",
+    "Previous Surgeries": "Front Lobe Venous Lesion Resection",
+    "Current Medications": "CBZ",
+    "Complications": "Language Impairment",
+    "Phone Number": "00000000",
+    "Age at Diagnosis": "01"
+  }
+}

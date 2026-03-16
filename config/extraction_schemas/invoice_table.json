@@ -1,0 +1,34 @@
+{
+  "schema_id": "invoice_table",
+  "version": "1.0",
+  "fields": [
+    { "name": "Invoice Number", "type": "text", "required": true, "aliases": ["Invoice #", "Invoice No"] },
+    { "name": "Invoice Date", "type": "date", "required": true, "aliases": ["Date"] },
+    { "name": "Vendor", "type": "text", "required": true, "aliases": ["Supplier", "Merchant"] },
+    { "name": "Line Description", "type": "text", "required": true, "aliases": ["Description", "Item"] },
+    { "name": "Quantity", "type": "number", "required": false, "aliases": ["Qty"] },
+    { "name": "Unit Price", "type": "number", "required": false, "aliases": ["Price", "Rate"] },
+    { "name": "Line Total", "type": "number", "required": false, "aliases": ["Amount"] },
+    { "name": "Grand Total", "type": "number", "required": false, "aliases": ["Total"] }
+  ],
+  "output_columns": [
+    "Invoice Number",
+    "Invoice Date",
+    "Vendor",
+    "Line Description",
+    "Quantity",
+    "Unit Price",
+    "Line Total",
+    "Grand Total"
+  ],
+  "example": {
+    "Invoice Number": "INV-001",
+    "Invoice Date": "2026-03-01",
+    "Vendor": "Somi Labs",
+    "Line Description": "GPU Fan",
+    "Quantity": "2",
+    "Unit Price": "15.50",
+    "Line Total": "31.00",
+    "Grand Total": "36.00"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema_id": "receipt_totals",
+  "version": "1.0",
+  "fields": [
+    { "name": "Merchant", "type": "text", "required": true, "aliases": ["Store", "Vendor"] },
+    { "name": "Receipt Date", "type": "date", "required": true, "aliases": ["Date"] },
+    { "name": "Subtotal", "type": "number", "required": false, "aliases": ["Sub Total"] },
+    { "name": "Tax", "type": "number", "required": false, "aliases": ["VAT", "Sales Tax"] },
+    { "name": "Total", "type": "number", "required": true, "aliases": ["Grand Total"] },
+    { "name": "Payment Method", "type": "text", "required": false, "aliases": ["Tender", "Paid Via"] }
+  ],
+  "output_columns": [
+    "Merchant",
+    "Receipt Date",
+    "Subtotal",
+    "Tax",
+    "Total",
+    "Payment Method"
+  ],
+  "example": {
+    "Merchant": "Byte Cafe",
+    "Receipt Date": "2026-03-05",
+    "Subtotal": "12.50",
+    "Tax": "1.25",
+    "Total": "13.75",
+    "Payment Method": "Card"
+  }
+}

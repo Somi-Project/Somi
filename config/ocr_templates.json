@@ -1,0 +1,20 @@
+{
+  "medical_intake_form": {
+    "label": "Medical Intake Form",
+    "preset_id": "medical_intake",
+    "schema_id": "medical_intake",
+    "layout_type": "form"
+  },
+  "invoice_table_v1": {
+    "label": "Invoice Table",
+    "preset_id": "invoice_table",
+    "schema_id": "invoice_table",
+    "layout_type": "table"
+  },
+  "receipt_totals_v1": {
+    "label": "Receipt Totals",
+    "preset_id": "receipt_totals",
+    "schema_id": "receipt_totals",
+    "layout_type": "form"
+  }
+}
