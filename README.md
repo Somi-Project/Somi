@@ -1,334 +1,400 @@
-# S.O.M.I. 🕊
-Sovereign Operation Machine Intelligence 
-### Run your own AI
-This is an A.I. Framework that lets you deploy and control your own A.I. With added capabilities 
+# SOMI 🕊️
+## Sovereign Operation Machine Intelligence
 
-⚡ Runs on your own hardware  
+<p align="center"><strong>Run your own AI operating system on your own machine.</strong></p>
 
-🔒 No cloud/sign-up required
+<p align="center">
+  <img alt="Local First" src="https://img.shields.io/badge/Local--First-Yes-0f766e?style=for-the-badge">
+  <img alt="Self Hosted" src="https://img.shields.io/badge/Self--Hosted-100%25-1d4ed8?style=for-the-badge">
+  <img alt="Desktop" src="https://img.shields.io/badge/Desktop-PySide6-16a34a?style=for-the-badge">
+  <img alt="Runtime" src="https://img.shields.io/badge/Runtime-Ollama-111827?style=for-the-badge">
+  <img alt="Focus" src="https://img.shields.io/badge/Focus-Coding%20%7C%20Research%20%7C%20Speech-f59e0b?style=for-the-badge">
+</p>
 
-🪪 Privacy first 
+SOMI is a fully self-hosted, local-first AI agent framework built for people who want real capability without handing their data, workflows, or identity to a cloud platform.
 
-💃 Personality construct
+It is designed to feel powerful for everyday users and credible for developers:
 
-🧠 Memory storage 
+- local chat, memory, research, coding, OCR, speech, and automation
+- desktop-first operator experience with dedicated studios and control surfaces
+- approval-aware tools, sandboxed execution paths, and auditable actions
+- modular architecture that still runs on consumer-grade hardware
 
-📷 Image analysis 
-
-🛠️ Digital tools/skills/contracts
-
-💬 Mainframe panel interface 
-
-📲  Telegram interface 
-
-🔉 Speech capable
-
-🌎 Web searching
-
-✍️ Research
-
-🧑‍💻 Coding
-
-🧸 Daily helper
-
-🖼️ Digitalize data to excel
-
+No subscriptions. No forced SaaS. No hidden dependency on a remote agent service.
 
 ---
 
-⭐ If Somi saves you time or inspires you, consider starring the repo.
+> [!IMPORTANT]
+> SOMI is built for people who want an AI they can actually live with: local, capable, auditable, and enjoyable to use.
 
-Below gets really technical (for my non-developer audience) so if you're not used to it you can skip to install and learn alot by just setting it up. 
+> [!TIP]
+> If you are new to this kind of project, jump straight to [Quick Start](#quick-start). If you are evaluating it as a framework, head to [Repo Tour For Developers](#developer-view).
 
----
+## 🧭 Choose Your Path
 
-## What Is Somi?
-
-Somi is a **fully self-hosted AI agent framework** designed to run entirely on your own machine using local models via Ollama.
-
-No SaaS.  
-No hidden API calls.  
-No data leaving your system.  
-
-All modular. All hardware-aware. All under your control.
-
----
-
-# Why Somi Exists
-
-Most “AI agents” today are:
-
-- Cloud dependent  
-- Prompt wrappers  
-- Unstable automation chains  
-- Overengineered research experiments  
-
-Somi focuses on something different:
-
-> A practical, local, extensible AI operating layer for everyday automation.
+| If you are here to... | Start here |
+| --- | --- |
+| try SOMI quickly | [Quick Start](#quick-start) |
+| see what it can do | [Flagship Capabilities](#flagship-capabilities) |
+| understand the architecture | [What The Architecture Looks Like](#architecture) |
+| inspect the codebase | [Repo Tour For Developers](#developer-view) |
+| join the community | [Community](#community) |
 
 ---
 
-# Quick Start
+## ✨ Why People Get Excited About SOMI
 
-## Requirements
+Most "AI agents" are one of these:
+
+- a chatbot with a few extra buttons
+- a cloud workflow dressed up as autonomy
+- a research demo that is hard to live with every day
+- a coding shell with no real operating layer around it
+
+SOMI aims higher.
+
+SOMI is a local AI workstation and agent framework that gives you:
+
+- a desktop command center
+- a coding workspace
+- a research workspace
+- speech input and output
+- local memory and session recall
+- OCR and document extraction
+- automations and workflows
+- a tool and skill system that can grow over time
+- a secure path toward remote nodes and distributed execution
+
+The goal is simple:
+
+> make self-hosted AI feel practical, capable, safe, and genuinely enjoyable to use
+
+---
+
+## 🧠 What You Can Do With It
+
+Use SOMI as:
+
+- your local AI assistant
+- your coding partner
+- your research analyst
+- your OCR and document extraction tool
+- your voice-enabled desktop helper
+- your Telegram-connected agent
+- your automation engine
+- your modular AI framework for building new tools and skills
+
+---
+
+## 👀 At A Glance
+
+### For Everyday Users
+
+- Run AI on your own hardware
+- Keep your data local
+- Talk to SOMI through the desktop, chat, Telegram, or speech
+- Research, summarize, extract, organize, and automate from one system
+- Use a futuristic but practical GUI instead of living in a terminal
+
+### For Developers
+
+- PySide6 desktop shell
+- modular agent runtime
+- tool registry and execution backends
+- coding workspaces and guarded execution
+- workflow runtime and subagents
+- ontology, state plane, and control room
+- local-first speech, OCR, browser automation, and research stacks
+- release gate, freeze artifacts, replay harness, and security audit tooling
+
+---
+
+<a id="flagship-capabilities"></a>
+
+## 🚀 Flagship Capabilities
+
+### Desktop AI Workstation
+
+SOMI is not just a CLI project. It includes a desktop shell with dedicated operator surfaces such as:
+
+- Control Room
+- Coding Studio
+- Research Studio
+- Speech controls
+- Node Manager
+
+### Self-Hosted Chat And Memory
+
+- continuous local chat sessions
+- persistent memory and recall
+- compaction-aware history handling
+- configurable personas and model routing
+
+### Coding Mode
+
+- managed coding workspaces
+- Python-first, multi-language capable workflow
+- guarded file operations and runtime actions
+- benchmark and verify loops
+- coding-focused studio UI
+
+### Research And Evidence Workflows
+
+- web and document research
+- evidence graphs
+- export bundles
+- contradiction-aware synthesis
+- local-first research orchestration
+
+### OCR And Structured Extraction
+
+- document OCR
+- schema-based extraction
+- table and form heuristics
+- export-ready results for spreadsheets and downstream workflows
+
+### Speech
+
+- local TTS and STT pipeline
+- pyttsx3 and local whisper-based flow
+- desktop speech controls and test tooling
+
+### Skills, Tools, And Automation
+
+- modular tool registry
+- skill marketplace and trust metadata
+- workflow manifests
+- automation runtime
+- self-expansion path through skill drafting and approval
+
+### Security And Control
+
+- approval-aware execution
+- audit trails
+- scoped remote behavior
+- gateway and node mesh foundations
+- security audit and release gate tooling
+
+---
+
+<a id="quick-start"></a>
+
+## ⚡ Quick Start
+
+### Requirements
 
 - Python 3.11+
 - Git
 - Ollama running locally at `http://127.0.0.1:11434`
 
-Optional:
-- CUDA GPU (recommended for performance)
-- Node.js (for advanced automation modules)
+Recommended:
 
----
+- a modern CPU and at least 16 GB RAM
+- an NVIDIA GPU for faster local inference
+- Node.js for some advanced coding and browser workflows
 
-## Install
+### Install
 
 ```bash
 git clone https://github.com/Somi-Project/Somi.git
 cd Somi
-pip install -r requirements.txt
-pip install torch torchvision #for pure cpu loading
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 #for gpu loading (faster) - please change cu121 to match your cuda compatible version
+python -m venv .venv
 ```
 
-Pull models:
+Windows:
 
 ```bash
-ollama pull dolphin3:latest #General 
-ollama pull stable-code:3b #Instructor
-ollama pull glm-ocr:latest #Vision 
-ollama pull qwen2.5-coder:3b #Coding
+.venv\Scripts\activate
+pip install -r requirements.txt
 ```
 
-Launch GUI:
+Linux / macOS:
+
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+Optional PyTorch install for your hardware:
+
+CPU:
+
+```bash
+pip install torch torchvision
+```
+
+CUDA example:
+
+```bash
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+```
+
+Replace `cu121` with the build that matches your CUDA version.
+
+### Pull Recommended Models
+
+```bash
+ollama pull dolphin3:latest
+ollama pull stable-code:3b
+ollama pull glm-ocr:latest
+ollama pull qwen2.5-coder:3b
+```
+
+### Launch The Desktop App
 
 ```bash
 python somicontroller.py
 ```
 
-You now have a sovereign AI agent running locally.
+> [!NOTE]
+> If you just want the main experience, start with the desktop app. It is the easiest way to feel what SOMI is supposed to be.
+
+If you prefer CLI utilities:
+
+```bash
+python somi.py doctor
+python somi.py release gate
+python somi.py freeze
+```
 
 ---
 
-# Core Capabilities
+<a id="architecture"></a>
 
-## 💬 AI Chat (CLI + GUI)
-- Continuous sessions
-- Agent personality switching
-- Memory injection
-- Study (RAG) toggle
+## 🏗️ What The Architecture Looks Like
 
-## 🧠 Persistent Memory
-- Structured memory storage
-- Injected per session
-- Bounded for performance
-
-## 📚 Study Injection (RAG)
-- Drop PDFs into `/PDFs`
-- Ingest websites
-- FAISS vector search backend
-- Bitcoin Whitepaper included
-
-## 🔎 Websearch Tools
-- Asset prices
-- News headlines
-- Weather
-- General search queries
-
-## 📱 Telegram Agent
-- Conversational bot
-- Image analysis support
-- Configurable aliases
-- Group compatible
-
-## 🎙️ Speech Interface (Experimental)
-- Audio input/output
-- Model-based pipeline
-- Hardware dependent
-
-## 🛠️ Modular Architecture
-- Swap models freely
-- Extend handlers
-- Add tools
-- Expand jobs
-
----
-
-# Architecture Overview
+SOMI is built as a local AI operating stack, not a single monolithic agent loop.
 
 ```text
-User Input
-   ↓
-agents.py (Routing + Memory + Tool Decision)
-   ↓
-Handler / Tool / RAG / LLM
-   ↓
-Response
+Desktop / Chat / Telegram / Speech / Nodes
+                  |
+               Gateway
+                  |
+          Agent Runtime + Executive Layer
+                  |
+    Tools / Skills / Workflows / Subagents
+                  |
+      State Plane / Ontology / Memory / Audit
+                  |
+     Coding / Research / OCR / Browser / Speech
 ```
 
-Design principles:
+Core design pillars:
 
-- Deterministic routing  
-- Bounded context usage  
-- Local-first execution  
-- Consumer hardware compatibility  
-- Modular extensibility  
+- best possible user experience for ordinary humans
+- security-aware by default
+- reliable on consumer hardware
+- fast enough to feel usable every day
+- modular enough to extend without rewriting the core
 
 ---
 
-# Configuration
+<a id="developer-view"></a>
 
-Primary settings:
+<details>
+<summary><strong>🧩 Want the developer view?</strong></summary>
 
-```
-config/settings.py
-```
+## 🧩 Repo Tour For Developers
 
-Control:
-- Default model
-- Vision model
-- Temperature
-- Memory limits
-- RAG toggles
-- Websearch settings
+If you are evaluating SOMI as a framework, these are the most important entry points:
 
-Persona configuration:
-
-```
-config/personalC.json
-```
-
-Define:
-- Agent name
-- Tone
-- Constraints
-- Behavioral traits
+- [`somicontroller.py`](somicontroller.py) - desktop application entry
+- [`somi.py`](somi.py) - doctor, security, release, replay, and freeze CLI
+- [`agents.py`](agents.py) - agent compatibility wrapper and runtime binding
+- [`agent_methods`](agent_methods) - split agent behavior modules
+- [`gui`](gui) - PySide6 application surfaces
+- [`workshop/toolbox`](workshop/toolbox) - tool stacks and runtime capabilities
+- [`workshop/skills`](workshop/skills) - skills, marketplace, trust, and self-expansion
+- [`execution_backends`](execution_backends) - execution routing and backend contracts
+- [`workflow_runtime`](workflow_runtime) - bounded workflow runner
+- [`ontology`](ontology) - typed operational graph
+- [`gateway`](gateway) - channel and node-facing control surface
+- [`speech`](speech) - local speech runtime
+- [`docs/architecture/SYSTEM_MAP.md`](docs/architecture/SYSTEM_MAP.md) - architecture backbone
+- [`docs/release/FRAMEWORK_FREEZE.md`](docs/release/FRAMEWORK_FREEZE.md) - current readiness snapshot
 
 ---
 
-# CLI Commands
+</details>
 
-Basic usage:
-Launch the GUI for ease of use
-```bash
-python somicontroller.py 
-```
-or direct commands in cmd
-```bash
-python somi.py <command> --name <agent_name>
-```
+## ✅ Real Features, Not Just Claims
 
-Example:
+SOMI currently includes:
 
-```bash
-python somi.py aichat --name somi
-```
-
-Available commands:
-
-```
-aichat       Continuous chat
-telegram     Start Telegram bot
---study pdfs
---study websites
---clearstudies
---use-studies
-```
-
-Independent scripts:
-
-```
-python speech.py
-python persona.py
-```
+- local desktop GUI built on PySide6
+- coding workspaces and guarded code execution
+- research supermode with evidence graph exports
+- OCR presets and structured extraction
+- local speech pipeline with doctoring tools
+- workflow runtime and subagents
+- control room and observability surfaces
+- skill forge, skill marketplace, and trust labeling
+- node mesh and pairing foundations
+- ontology-backed actions and human oversight
+- release gate, framework freeze, replay harness, and security audit tooling
 
 ---
 
-# Telegram Setup
+## 🔒 Security Philosophy
 
-1. Message `@BotFather`
-2. Create a new bot
-3. Copy bot token
-4. Paste into settings
-5. Add bot to group with admin rights
+SOMI is built to be powerful without pretending power has no cost.
 
----
+That means:
 
-# GPU Acceleration (Optional)
+- approvals for sensitive execution paths
+- explicit trust states for remote behavior
+- auditable operations
+- modular isolation boundaries
+- local-first defaults whenever practical
 
-Install CUDA from NVIDIA.
-
-Then install matching PyTorch build:
-
-```bash
-pip install torch==2.4.1+cu121 torchvision==0.19.1+cu121 --index-url https://download.pytorch.org/whl/cu121
-```
-
-Replace `cu121` with your CUDA version.
+SOMI is not trying to be reckless autonomy.
+It is trying to be usable sovereignty.
 
 ---
 
-# Known Minor Limitations
+## 🎮 Consumer Hardware Focus
 
-- CLI chat currently does not support image uploads  
-- GUI settings may repopulate after save  
-- Initial model warmup ~3 seconds  
-- Latency issues
----
+SOMI is built for real machines people actually own.
 
-# Philosophy
+That means the framework is designed around:
 
-Somi is built around:
+- local Ollama-hosted models
+- bounded memory and context handling
+- modular components you can enable gradually
+- practical performance on prosumer and gamer-class hardware
 
-- Local sovereignty  
-- Modularity  
-- Human control  
-- Practical autonomy  
-- Hardware realism  
-
-It is not a cloud wrapper.  
-It is not a subscription service.  
-
-It is a framework you control.
+You do not need a rack of servers to benefit from SOMI.
 
 ---
 
-# Roadmap
+## 🌍 Cross-Platform Direction
 
-- Faster routing
-- Deterministic memory system
-- Skill registry
-- Tool sandboxing
-- Improved voice latency
-- Enterprise-grade execution layer
+SOMI is being built as a cross-platform framework with a local desktop-first experience.
+
+Current development has been exercised most heavily on Windows, with architecture and packaging direction aimed at Windows, Linux, and macOS support.
 
 ---
 
-# Contributing
+<a id="community"></a>
 
-Ways to help:
+## 🤝 Community
 
-- Improve quickstart clarity  
-- Add demo screenshots  
-- Submit modular tools  
-- Improve routing reliability  
-- Expand test coverage  
-
-PRs welcome.
+- Telegram: [https://t.me/+0ug5tDcPBXNjMTMx](https://t.me/+0ug5tDcPBXNjMTMx)
+- Twitter / X: [https://x.com/SomiProject](https://x.com/SomiProject)
 
 ---
 
-# Community
+## 🛠️ Contributing
 
-Telegram:
-https://t.me/+0ug5tDcPBXNjMTMx
+Contributions that help most:
 
-Twitter:
-https://x.com/SomiProject
+- better onboarding and docs
+- stronger modular tools and skills
+- benchmark improvements
+- performance and hardware tuning
+- UI polish
+- platform packaging and installer work
 
----
+If SOMI saves you time, inspires a project, or feels like the kind of AI future you want to exist, star the repo and share it.
 
-Enjoy your sovereign AI companion.  
-Built locally. Controlled locally. Extended locally.
+SOMI is meant to be something people can actually live with.
