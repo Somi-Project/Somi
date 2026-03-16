@@ -1,0 +1,26 @@
+{
+  "files": {
+    "C:\\Users\\sdmoh\\AppData\\Local\\Temp\\pytest-of-sdmoh\\pytest-23\\test_runner_dedupes_previous_c0\\artifacts\\u.jsonl": {
+      "size": 394,
+      "count": 2,
+      "last_row": {
+        "artifact_id": "a2",
+        "artifact_type": "task_state",
+        "timestamp": "2026-03-04T01:34:50.100944+00:00",
+        "tags": [
+          "ops"
+        ],
+        "content": {
+          "tasks": [
+            {
+              "task_id": "t2",
+              "title": "Two",
+              "status": "open"
+            }
+          ]
+        }
+      },
+      "last_line_hash": "8480ee25c0b721a712130c7f92f955eeaada4914"
+    }
+  }
+}

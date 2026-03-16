@@ -1,0 +1,14 @@
+{
+  "items": [
+    {
+      "path": "C:\\Users\\sdmoh\\AppData\\Local\\Temp\\pytest-of-sdmoh\\pytest-23\\test_runner_dedupes_previous_c0\\artifacts\\u.jsonl",
+      "artifact_type": "task_state",
+      "thread_id": null,
+      "tags": [
+        "ops"
+      ],
+      "updated_at": "2026-03-04T01:34:50.100944+00:00",
+      "count": 2
+    }
+  ]
+}

@@ -1,0 +1,525 @@
+{
+  "item_assignments": {
+    "x0": {
+      "project_id": "proj_ed89715ea3",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x1": {
+      "project_id": "proj_d8b98100e5",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x10": {
+      "project_id": "proj_43f2a6f15e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x11": {
+      "project_id": "proj_c73b36f135",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x12": {
+      "project_id": "proj_999a30af0d",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x13": {
+      "project_id": "proj_d388d9a83b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x14": {
+      "project_id": "proj_75c98499a6",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x15": {
+      "project_id": "proj_7037fd7145",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x16": {
+      "project_id": "proj_08d1affab8",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x17": {
+      "project_id": "proj_050693ca2c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x18": {
+      "project_id": "proj_b2d53ea200",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x19": {
+      "project_id": "proj_b60bcc109b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x2": {
+      "project_id": "proj_e34af3d3da",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x20": {
+      "project_id": "proj_2aaca7681c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x21": {
+      "project_id": "proj_3326c5277e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x22": {
+      "project_id": "proj_170a2550b7",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x23": {
+      "project_id": "proj_1696487e9a",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x24": {
+      "project_id": "proj_137d328fae",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x25": {
+      "project_id": "proj_9eaaff64ea",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x26": {
+      "project_id": "proj_5ef87ac52e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x27": {
+      "project_id": "proj_4bbe421b0b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x28": {
+      "project_id": "proj_b05fd0dadd",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x29": {
+      "project_id": "proj_854f290217",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x3": {
+      "project_id": "proj_611246acda",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x30": {
+      "project_id": "proj_96cf6750c9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x31": {
+      "project_id": "proj_355ca20c7c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x32": {
+      "project_id": "proj_2d776ea142",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x33": {
+      "project_id": "proj_aff216a2b2",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x34": {
+      "project_id": "proj_cdd0205ccb",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x35": {
+      "project_id": "proj_9044eda22e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x36": {
+      "project_id": "proj_0053c0c349",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x37": {
+      "project_id": "proj_68f69eadcf",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x38": {
+      "project_id": "proj_fbdbff0fb2",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x39": {
+      "project_id": "proj_c0f4adc206",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x4": {
+      "project_id": "proj_865b545a8c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x40": {
+      "project_id": "proj_3173f51c8d",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x41": {
+      "project_id": "proj_d189ca31e1",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x42": {
+      "project_id": "proj_1a036e7917",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x43": {
+      "project_id": "proj_fbe339b568",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x44": {
+      "project_id": "proj_2406002dea",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x45": {
+      "project_id": "proj_91b31f2ce1",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x46": {
+      "project_id": "proj_e91340c47c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x47": {
+      "project_id": "proj_12772c6337",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x48": {
+      "project_id": "proj_12d2e10b0b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x49": {
+      "project_id": "proj_4cf7adf5a6",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x5": {
+      "project_id": "proj_e5de477de1",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x50": {
+      "project_id": "proj_8dcfc21812",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x51": {
+      "project_id": "proj_245a1729f4",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x52": {
+      "project_id": "proj_5978d7eb8f",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x53": {
+      "project_id": "proj_aa1640fa22",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x54": {
+      "project_id": "proj_fde383d0e9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x55": {
+      "project_id": "proj_db9ddbde41",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x56": {
+      "project_id": "proj_afecf7f583",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x57": {
+      "project_id": "proj_34c6dd465b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x58": {
+      "project_id": "proj_6f7a3637af",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x59": {
+      "project_id": "proj_61602d2be5",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x6": {
+      "project_id": "proj_a5ce79af32",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x60": {
+      "project_id": "proj_1daf837336",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x61": {
+      "project_id": "proj_1d825ea1ee",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x62": {
+      "project_id": "proj_870f703854",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x63": {
+      "project_id": "proj_1086bc692a",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x64": {
+      "project_id": "proj_7f7ffd9516",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x65": {
+      "project_id": "proj_2351ec1d95",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x66": {
+      "project_id": "proj_3a91f5253c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x67": {
+      "project_id": "proj_61df5e9e34",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x68": {
+      "project_id": "proj_4a7a97b642",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x69": {
+      "project_id": "proj_59ab5b36d1",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x7": {
+      "project_id": "proj_c7708bbdb9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x70": {
+      "project_id": "proj_4473335750",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x71": {
+      "project_id": "proj_ec22b9c5f5",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x72": {
+      "project_id": "proj_c41f387bb8",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x73": {
+      "project_id": "proj_fc57adced7",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x74": {
+      "project_id": "proj_0030f54401",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x75": {
+      "project_id": "proj_1c6cd799d6",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x76": {
+      "project_id": "proj_1a9e8efda9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x77": {
+      "project_id": "proj_4483f47c65",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x78": {
+      "project_id": "proj_b948aecf4e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x79": {
+      "project_id": "proj_026f2b529f",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x8": {
+      "project_id": "proj_266fb1e412",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x80": {
+      "project_id": "proj_8cf8ba9b6c",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x81": {
+      "project_id": "proj_0128842bda",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x82": {
+      "project_id": "proj_4f1f80f0d7",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x83": {
+      "project_id": "proj_d8cccca391",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x84": {
+      "project_id": "proj_4f8d6453f0",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x85": {
+      "project_id": "proj_ceb6891396",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x86": {
+      "project_id": "proj_ad2d48f965",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x87": {
+      "project_id": "proj_7f5ae7898f",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x88": {
+      "project_id": "proj_8277ba0df4",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x89": {
+      "project_id": "proj_6d8a0e26a9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x9": {
+      "project_id": "proj_dc94220abd",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x90": {
+      "project_id": "proj_674b37586e",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x91": {
+      "project_id": "proj_16afc567d9",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x92": {
+      "project_id": "proj_eaf14789ff",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x93": {
+      "project_id": "proj_f392d71f68",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x94": {
+      "project_id": "proj_4c34c48b44",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x95": {
+      "project_id": "proj_ce5170382b",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x96": {
+      "project_id": "proj_f89d584445",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x97": {
+      "project_id": "proj_5fb95df025",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x98": {
+      "project_id": "proj_d7fe8bbc00",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "x99": {
+      "project_id": "proj_1cce6bb0ab",
+      "last_switch_at": "2026-03-05T01:34:50.035305+00:00",
+      "last_score": 1.0
+    },
+    "t0": {
+      "project_id": "proj_1c7a5846d7",
+      "last_switch_at": "2026-03-05T01:34:50.057352+00:00",
+      "last_score": 1.0
+    },
+    "t1": {
+      "project_id": "proj_788a7a999c",
+      "last_switch_at": "2026-03-05T01:34:50.114457+00:00",
+      "last_score": 0.693
+    },
+    "t2": {
+      "project_id": "proj_788a7a999c",
+      "last_switch_at": "2026-03-05T01:34:50.114457+00:00",
+      "last_score": 0.693
+    },
+    "t3": {
+      "project_id": "proj_1c7a5846d7",
+      "last_switch_at": "2026-03-05T01:34:50.057352+00:00",
+      "last_score": 0.68
+    }
+  },
+  "updated_at": "2026-03-05T01:34:50.114457+00:00"
+}

@@ -1,0 +1,18 @@
+{
+  "updated_at": "2026-03-05T01:34:50.129495+00:00",
+  "queue": {
+    "current_depth": 0,
+    "max_depth_seen": 1,
+    "depth_samples": 128,
+    "rejected_count": 11,
+    "approved_count": 22,
+    "approval_latency_total_s": 0.08727300000000002,
+    "approval_latency_samples": 22,
+    "approval_latency_avg_s": 0.003966954545454546
+  },
+  "shards": {
+    "current_files": 1,
+    "max_files_seen": 1,
+    "samples": 22
+  }
+}
