@@ -1,0 +1,286 @@
+{
+  "phase": 12,
+  "name": "somi-release-gate-framework-freeze",
+  "pillars": [
+    "User experience",
+    "Security",
+    "Flawless functions on consumer grade hardware",
+    "Fast",
+    "Modular"
+  ],
+  "domains": [
+    {
+      "id": "ui_shell",
+      "owner_paths": [
+        "somicontroller.py",
+        "somicontroller_parts",
+        "gui"
+      ],
+      "compatibility_wrappers": [
+        "somicontroller.py"
+      ],
+      "responsibilities": [
+        "desktop operator experience",
+        "widgets and visual state",
+        "user-triggered orchestration",
+        "agent studio and control-room inspection surfaces"
+      ]
+    },
+    {
+      "id": "agent_runtime",
+      "owner_paths": [
+        "agents.py",
+        "agent_methods",
+        "runtime",
+        "workshop/toolbox/agent_core"
+      ],
+      "compatibility_wrappers": [
+        "agents.py"
+      ],
+      "responsibilities": [
+        "turn handling",
+        "routing",
+        "model failover",
+        "response generation",
+        "history shaping"
+      ]
+    },
+    {
+      "id": "state_plane",
+      "owner_paths": [
+        "state",
+        "sessions/state"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "canonical session store",
+        "turn and event timelines",
+        "searchable operational history",
+        "reconstruction of runtime state transitions"
+      ]
+    },
+    {
+      "id": "executive_layer",
+      "owner_paths": [
+        "executive"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "memory",
+        "strategic planning",
+        "prompting",
+        "proactivity",
+        "life-modeling"
+      ]
+    },
+    {
+      "id": "tool_plane",
+      "owner_paths": [
+        "workshop/toolbox",
+        "workshop/skills"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "tool loading",
+        "tool registry",
+        "toolsets",
+        "capability metadata",
+        "tool runtime",
+        "skills",
+        "stack composition"
+      ]
+    },
+    {
+      "id": "execution_backends",
+      "owner_paths": [
+        "execution_backends",
+        "runtime/sandbox.py",
+        "runtime/shell.py",
+        "runtime/tool_execution.py"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "backend abstraction",
+        "sandbox boundaries",
+        "local execution routing",
+        "future docker and ssh execution paths"
+      ]
+    },
+    {
+      "id": "subagent_plane",
+      "owner_paths": [
+        "subagents",
+        "runtime/task_graph.py",
+        "executive/strategic",
+        "workshop/toolbox/agent_core"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "isolated child-agent execution",
+        "delegation profiles and selection",
+        "background status snapshots",
+        "parent-child trace continuity"
+      ]
+    },
+    {
+      "id": "workflow_plane",
+      "owner_paths": [
+        "workflow_runtime",
+        "runtime/tool_orchestrator.py",
+        "workshop/toolbox/runtime.py"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "restricted workflow execution",
+        "manifest-backed repeatable scripts",
+        "tool RPC orchestration",
+        "durable workflow run snapshots"
+      ]
+    },
+    {
+      "id": "memory_search_plane",
+      "owner_paths": [
+        "search",
+        "executive/memory",
+        "runtime/history_compaction.py",
+        "heartbeat/tasks"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "session search across turns, artifacts, and jobs",
+        "curated memory blocks and frozen prompt snapshots",
+        "memory injection hygiene and safety scanning",
+        "operational recall for compaction and follow-up continuity"
+      ]
+    },
+    {
+      "id": "ontology_plane",
+      "owner_paths": [
+        "ontology",
+        "runtime/task_graph.py",
+        "executive/life_modeling",
+        "state"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "typed operational graph",
+        "projection of conversations, tasks, goals, reminders, artifacts, jobs, systems, and channels",
+        "shared search surface for operator state",
+        "stable object and relationship model for later automations and control-room work"
+      ]
+    },
+    {
+      "id": "gateway_plane",
+      "owner_paths": [
+        "gateway",
+        "workshop/integrations",
+        "sessions/delivery"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "delivery channel registry",
+        "desktop and queued channel adapters",
+        "delivery inbox and outbox logs",
+        "multi-surface message dispatch contracts",
+        "typed session, presence, health, and event stream contracts",
+        "pairing and remote session trust rules"
+      ]
+    },
+    {
+      "id": "delivery_and_automation",
+      "owner_paths": [
+        "automations",
+        "heartbeat",
+        "jobs",
+        "workshop/integrations"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "delivery",
+        "heartbeat",
+        "reminders",
+        "jobs",
+        "integrations",
+        "automation scheduling",
+        "automation run state"
+      ]
+    },
+    {
+      "id": "config_and_policy",
+      "owner_paths": [
+        "config"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "settings",
+        "budgets",
+        "profiles",
+        "defaults"
+      ]
+    },
+    {
+      "id": "ops_control_plane",
+      "owner_paths": [
+        "ops",
+        "deploy",
+        "runtime/policy.py",
+        "executive/approvals.py"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "runtime profiles and rollout gates",
+        "policy decision logging",
+        "tool and model metrics",
+        "local observability and governance",
+        "release scorecards and readiness gates",
+        "benchmark diffing and replay diagnostics",
+        "framework-freeze and packaging handoff artifacts"
+      ]
+    },
+    {
+      "id": "learning_plane",
+      "owner_paths": [
+        "learning",
+        "audit",
+        "tests",
+        "runtime/eval_harness.py"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "trajectory capture and replay",
+        "scorecards and evaluation reports",
+        "workflow-derived skill suggestions",
+        "regression pack inventory",
+        "benchmark baseline coverage for major framework branches"
+      ]
+    },
+    {
+      "id": "session_storage",
+      "owner_paths": [
+        "sessions"
+      ],
+      "compatibility_wrappers": [],
+      "responsibilities": [
+        "logs",
+        "artifacts",
+        "plan snapshots",
+        "task graphs",
+        "cached outputs"
+      ]
+    }
+  ],
+  "wrapper_thresholds": {
+    "agents.py": {
+      "max_lines": 900,
+      "max_bytes": 50000
+    },
+    "somicontroller.py": {
+      "max_lines": 900,
+      "max_bytes": 50000
+    }
+  },
+  "reserved_future_packages": [
+    "platform_registry",
+    "packaging"
+  ]
+}
