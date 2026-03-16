@@ -240,6 +240,10 @@ ollama pull glm-ocr:latest
 ollama pull qwen2.5-coder:3b
 ```
 
+> [!TIP]
+> For better private web search and research performance, pair SOMI with a properly configured SearXNG instance.
+> Community setup guide: [SearXNG guide](https://x.com/frostyflak3s/status/2023202944397541418?s=20)
+
 ### Launch The Desktop App
 
 ```bash
