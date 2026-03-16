@@ -1,0 +1,24 @@
+{
+  "id": "coding_builder",
+  "name": "Coding Builder",
+  "description": "Recommended surfaces for repo work, code generation, verification, and local skill growth.",
+  "skills": [],
+  "toolsets": ["developer", "ops"],
+  "tools": ["coding.workspace", "coding.fs", "coding.python", "coding.runtime", "coding.scaffold"],
+  "featured": true,
+  "starter_prompt": "/code build a Python utility that solves a real local task and verify it before finishing",
+  "guide_steps": [
+    "Open Coding Studio for the managed workspace and runtime health view.",
+    "Send a coding task in natural language and let Somi scaffold a safe workspace.",
+    "Run the verify loop before trusting the result."
+  ],
+  "agent_template_id": "coding_builder",
+  "workflow_template_id": "workspace_bootstrap",
+  "bundle_id": "coding_core",
+  "quick_actions": [
+    "/code build a Python utility",
+    "/skill list",
+    "run coding.runtime -- action run_verify_loop"
+  ],
+  "primary_surface": "coding_studio"
+}

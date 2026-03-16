@@ -1,0 +1,32 @@
+Twitter
+
+the script does the following:
+-Autotweets using agenified tweet at a given interval in settings
+-Autoreplies using agenified responses at a given interval in settings
+-DevPost for direct dev posting from terminal e.g. for advertising 
+
+It employs tweepy to initialize the resting points with a manual browser fallback 
+
+To setup:
+
+Go to https://developer.x.com/en 
+Choose the free tier option and apply for it
+Go to projects page and edit the project to obtain 
+
+   api_key
+    api_secret
+     access_token
+      access_token_secret
+       bearer_token
+        client_id
+         client_secret
+
+and your username and password
+
+place them into the relevant fields in settings tab or settings.py if doing it manually
+(while not entirely necessary it does aid with compliance of twitter new rules that nuke graphql users accounts)
+
+Also please do the following
+-if the twitter account is new post 12 tweets and 6 replies to reduce filter loads to agents
+-Switch to bot mode account to reduce bans
+

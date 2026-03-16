@@ -1,0 +1,24 @@
+{
+  "id": "assistant_operator",
+  "name": "Assistant Operator",
+  "description": "A gentle starting path for everyday chat, reminders, automations, and control-room visibility.",
+  "skills": [],
+  "toolsets": ["safe-chat", "automation", "ops"],
+  "tools": ["browser.runtime"],
+  "featured": true,
+  "starter_prompt": "Show me the best way to organize my next tasks, reminders, and follow-up work inside Somi",
+  "guide_steps": [
+    "Begin in chat with a natural request instead of memorizing commands.",
+    "Use the Control Room to inspect open work, automations, and memory when you want more visibility.",
+    "Promote repeated routines into automations once the flow feels right."
+  ],
+  "agent_template_id": "assistant_operator",
+  "workflow_template_id": "research_digest",
+  "bundle_id": "operator_core",
+  "quick_actions": [
+    "/starthere",
+    "Open the Control Room",
+    "Create an automation after the task repeats"
+  ],
+  "primary_surface": "chat"
+}

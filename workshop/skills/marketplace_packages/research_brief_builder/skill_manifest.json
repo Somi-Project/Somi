@@ -1,0 +1,12 @@
+{
+  "package_id": "research_brief_builder",
+  "skill_key": "research_brief_builder",
+  "name": "Research Brief Builder",
+  "description": "Premium research briefs and decision-ready output patterns.",
+  "version": "1.0.0",
+  "trust_badge": "first_party",
+  "update_channel": "stable",
+  "persona_tags": ["research_operator"],
+  "workflow_tags": ["research", "evidence"],
+  "bundle_ids": ["research_core"]
+}

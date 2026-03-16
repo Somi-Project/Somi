@@ -1,0 +1,919 @@
+C:\\somex
+|-- [D] config
+|   |-- [D] extraction_schemas
+|   |   \-- [F] default.json
+|   |-- [F] __init__.py
+|   |-- [F] assistant_profile.json
+|   |-- [F] assistantsettings.py
+|   |-- [F] audio_texts.py
+|   |-- [F] audiosettings.py
+|   |-- [F] capability_registry.json
+|   |-- [F] extraction_schema.py
+|   |-- [F] gui_settings.json
+|   |-- [F] heartbeatsettings.py
+|   |-- [F] loader.py
+|   |-- [F] memorysettings.py
+|   |-- [F] ocr_templates.json
+|   |-- [F] personalC.json
+|   |-- [F] README.md
+|   |-- [F] searchsettings.py
+|   |-- [F] settings.py
+|   |-- [F] skillssettings.py
+|   |-- [F] time_utils.py
+|   |-- [F] toolboxsettings.py
+|   \-- [F] twittersettings.py
+|-- [D] database
+|   |-- [D] agentpedia
+|   |   |-- [D] pages
+|   |   |-- [F] agentpedia.sqlite
+|   |   |-- [F] README.md
+|   |   \-- [F] state.json
+|   |-- [D] memory_store
+|   |   |-- [F] memory.db
+|   |   |-- [F] MEMORY_default_user.md
+|   |   |-- [F] MEMORY_u_async_test.md
+|   |   |-- [F] MEMORY_u-corr.md
+|   |   |-- [F] MEMORY_u-corr2.md
+|   |   |-- [F] MEMORY_u-corr3.md
+|   |   |-- [F] MEMORY_u-timeout.md
+|   |   \-- [F] README.md
+|   |-- [D] rag_data
+|   |   \-- [F] README.md
+|   \-- [F] README.md
+|-- [D] executive
+|   |-- [D] index
+|   |   |-- [F] artifact_index.json
+|   |   |-- [F] calendar_cache.json
+|   |   |-- [F] cluster_state.json
+|   |   |-- [F] goal_link_queue.json
+|   |   |-- [F] index_state.json
+|   |   |-- [F] montague_context_debounce.json
+|   |   \-- [F] montague_context_telemetry.json
+|   |-- [D] life_modeling
+|   |   |-- [F] __init__.py
+|   |   |-- [F] artifact_store.py
+|   |   |-- [F] calendar_snapshot.py
+|   |   |-- [F] confirmation_queue.py
+|   |   |-- [F] context_pack.py
+|   |   |-- [F] enrichment.py
+|   |   |-- [F] goal_models.py
+|   |   |-- [F] heartbeat_v2.py
+|   |   |-- [F] indexer.py
+|   |   |-- [F] normalizers.py
+|   |   |-- [F] patterns.py
+|   |   |-- [F] project_clustering.py
+|   |   |-- [F] schemas.py
+|   |   \-- [F] telemetry.py
+|   |-- [D] memory
+|   |   |-- [D] tests
+|   |   |   \-- [F] test_memory.py
+|   |   |-- [F] __init__.py
+|   |   |-- [F] compiler.py
+|   |   |-- [F] doctor.py
+|   |   |-- [F] embedder.py
+|   |   |-- [F] extract.py
+|   |   |-- [F] injection.py
+|   |   |-- [F] manager.py
+|   |   |-- [F] retrieval.py
+|   |   |-- [F] retrieve.py
+|   |   |-- [F] schema.py
+|   |   |-- [F] session_summary.py
+|   |   |-- [F] store.py
+|   |   \-- [F] vector_index.py
+|   |-- [D] proactivity
+|   |   |-- [F] __init__.py
+|   |   |-- [F] alerts.py
+|   |   |-- [F] briefs.py
+|   |   |-- [F] cache.py
+|   |   |-- [F] feedback_intent.py
+|   |   |-- [F] metrics.py
+|   |   |-- [F] notifier.py
+|   |   |-- [F] preferences.py
+|   |   |-- [F] router.py
+|   |   |-- [F] signal_engine.py
+|   |   |-- [F] ssi.py
+|   |   \-- [F] validators.py
+|   |-- [D] prompting
+|   |   |-- [F] __init__.py
+|   |   |-- [F] blocks.py
+|   |   |-- [F] budget.py
+|   |   |-- [F] builder.py
+|   |   |-- [F] firewall.py
+|   |   |-- [F] kernel.py
+|   |   |-- [F] persona.py
+|   |   |-- [F] policies.py
+|   |   \-- [F] snapshot.py
+|   |-- [D] strategic
+|   |   |-- [F] __init__.py
+|   |   |-- [F] human_summary.py
+|   |   |-- [F] json_contract.py
+|   |   |-- [F] plan_revision.py
+|   |   |-- [F] planner.py
+|   |   |-- [F] policies.py
+|   |   |-- [F] proposal_hint.py
+|   |   |-- [F] routing_adapter.py
+|   |   |-- [F] strategic_analysis.py
+|   |   |-- [F] tradeoff_evaluation.py
+|   |   |-- [F] tradeoffs.py
+|   |   \-- [F] validators.py
+|   |-- [D] synthesis
+|   |   \-- [F] answer_mixer.py
+|   |-- [F] .gitkeep
+|   |-- [F] __init__.py
+|   |-- [F] approvals.py
+|   |-- [F] budgets.py
+|   |-- [F] engine.py
+|   |-- [F] istari.py
+|   |-- [F] istari_runtime.py
+|   |-- [F] models.py
+|   |-- [F] promptforge.py
+|   |-- [F] queue.json
+|   |-- [F] queue.py
+|   |-- [F] README.md
+|   |-- [F] signals.py
+|   \-- [F] summarizer.py
+|-- [D] gui
+|   |-- [D] themes
+|   |   |-- [F] __init__.py
+|   |   |-- [F] default_dark.py
+|   |   |-- [F] jirai_kei.py
+|   |   \-- [F] light_modern.py
+|   |-- [F] .gitkeep
+|   |-- [F] aicoregui.py
+|   |-- [F] chatpanel.py
+|   |-- [F] chatpopout.py
+|   |-- [F] dataagentgui.py
+|   |-- [F] executivegui.py
+|   |-- [F] README.md
+|   |-- [F] speechgui.py
+|   |-- [F] stepstream.py
+|   |-- [F] telegramgui.py
+|   |-- [F] toolboxgui.py
+|   \-- [F] twittergui.py
+|-- [D] handlers
+|   |-- [D] audio
+|   |   |-- [F] playback.py
+|   |   \-- [F] vad.py
+|   |-- [D] contracts
+|   |   |-- [D] pipelines
+|   |   |   |-- [F] __init__.py
+|   |   |   |-- [F] action_status.py
+|   |   |   |-- [F] decision.py
+|   |   |   |-- [F] doc_intel.py
+|   |   |   |-- [F] meeting_notes.py
+|   |   |   |-- [F] planning.py
+|   |   |   \-- [F] research_triage.py
+|   |   |-- [F] __init__.py
+|   |   |-- [F] base.py
+|   |   |-- [F] envelopes.py
+|   |   |-- [F] fact_distiller.py
+|   |   |-- [F] intent.py
+|   |   |-- [F] orchestrator.py
+|   |   |-- [F] policy.py
+|   |   |-- [F] schemas.py
+|   |   \-- [F] store.py
+|   |-- [D] image_tools
+|   |   |-- [F] __init__.py
+|   |   |-- [F] charts.py
+|   |   |-- [F] comfyui.py
+|   |   \-- [F] image_generate.py
+|   |-- [D] ocr
+|   |   |-- [F] __init__.py
+|   |   |-- [F] cache.py
+|   |   |-- [F] contracts.py
+|   |   |-- [F] exports.py
+|   |   |-- [F] extract_general.py
+|   |   |-- [F] extract_structured.py
+|   |   |-- [F] pipeline.py
+|   |   |-- [F] preprocess.py
+|   |   |-- [F] prompts.py
+|   |   |-- [F] quality.py
+|   |   |-- [F] schema.py
+|   |   |-- [F] templates.py
+|   |   |-- [F] utils.py
+|   |   \-- [F] vision_backend.py
+|   |-- [D] research
+|   |   |-- [D] domains
+|   |   |   |-- [F] biomed.py
+|   |   |   |-- [F] business_administrator.py
+|   |   |   |-- [F] engineering.py
+|   |   |   |-- [F] entertainment.py
+|   |   |   |-- [F] journalism_communication.py
+|   |   |   |-- [F] nutrition.py
+|   |   |   \-- [F] religion.py
+|   |   |-- [D] tests
+|   |   |   \-- [F] test_research_composer.py
+|   |   |-- [F] agentpedia.py
+|   |   |-- [F] agentpedia_kb.py
+|   |   |-- [F] base.py
+|   |   |-- [F] career_profiles.py
+|   |   |-- [F] composer.py
+|   |   |-- [F] evidence_bundle.py
+|   |   |-- [F] evidence_claims.py
+|   |   |-- [F] evidence_reconcile.py
+|   |   |-- [F] evidence_schema.py
+|   |   |-- [F] evidence_scoring.py
+|   |   |-- [F] rag_handler.py
+|   |   |-- [F] reader.py
+|   |   |-- [F] role_overlay.py
+|   |   |-- [F] router.py
+|   |   |-- [F] science_ingest.py
+|   |   |-- [F] science_stores.py
+|   |   |-- [F] scrape_fallback.py
+|   |   \-- [F] searxng.py
+|   |-- [D] tts
+|   |   |-- [F] __init__.py
+|   |   |-- [F] base.py
+|   |   |-- [F] piper_engine.py
+|   |   \-- [F] pyttsx3_engine.py
+|   |-- [D] twitter
+|   |   |-- [F] __init__.py
+|   |   |-- [F] api_client.py
+|   |   |-- [F] content.py
+|   |   |-- [F] engine.py
+|   |   |-- [F] growth.py
+|   |   |-- [F] metrics.py
+|   |   |-- [F] playwright_client.py
+|   |   |-- [F] policy.py
+|   |   |-- [F] selectors.py
+|   |   |-- [F] state_store.py
+|   |   |-- [F] trends.py
+|   |   \-- [F] utils.py
+|   |-- [D] websearch_tools
+|   |   |-- [D] finance_data
+|   |   |   |-- [F] __init__.py
+|   |   |   |-- [F] compute_summary.py
+|   |   |   |-- [F] format_query.py
+|   |   |   \-- [F] README.md
+|   |   |-- [D] tests
+|   |   |   \-- [F] test_followup_and_fallbacks.py
+|   |   |-- [F] bcrypto.py
+|   |   |-- [F] conversion.py
+|   |   |-- [F] ctickers.py
+|   |   |-- [F] ddg_fallback.py
+|   |   |-- [F] finance.py
+|   |   |-- [F] finance_historical_search.py
+|   |   |-- [F] formatting.py
+|   |   |-- [F] ftickers.py
+|   |   |-- [F] generalsearch.py
+|   |   |-- [F] help.txt
+|   |   |-- [F] historical_search.py
+|   |   |-- [F] itickers.py
+|   |   |-- [F] news.py
+|   |   |-- [F] ocr_registry.py
+|   |   |-- [F] README.md
+|   |   |-- [F] routing.py
+|   |   |-- [F] search_common.py
+|   |   |-- [F] stickers.py
+|   |   |-- [F] utils.py
+|   |   \-- [F] weather.py
+|   |-- [F] .gitkeep
+|   |-- [F] __init__.py
+|   |-- [F] continuity.py
+|   |-- [F] followup_resolver.py
+|   |-- [F] followup_sanitizer.py
+|   |-- [F] heartbeat.py
+|   |-- [F] ocr_registry.py
+|   |-- [F] README.md
+|   |-- [F] routing.py
+|   |-- [F] search_bundle.py
+|   |-- [F] stickers.py
+|   |-- [F] telegram.py
+|   |-- [F] time_handler.py
+|   |-- [F] tool_context.py
+|   |-- [F] toolbox_handler.py
+|   |-- [F] websearch.py
+|   \-- [F] wordgame.py
+|-- [D] heartbeat
+|   |-- [D] integrations
+|   |   |-- [F] __init__.py
+|   |   \-- [F] gui_bridge.py
+|   |-- [D] tasks
+|   |   |-- [F] __init__.py
+|   |   |-- [F] agentpedia_growth.py
+|   |   |-- [F] base.py
+|   |   |-- [F] daily_greeting.py
+|   |   |-- [F] delight.py
+|   |   |-- [F] goal_nudge.py
+|   |   |-- [F] reminder_check.py
+|   |   \-- [F] weather_warn.py
+|   |-- [F] __init__.py
+|   |-- [F] events.py
+|   |-- [F] policy.py
+|   |-- [F] README.md
+|   |-- [F] service.py
+|   \-- [F] state.py
+|-- [D] jobs
+|   |-- [D] history
+|   |   |-- [F] 0419844a.json
+|   |   |-- [F] 09709c0f.json
+|   |   |-- [F] 65cab7a7.json
+|   |   |-- [F] 68ba34d5.json
+|   |   |-- [F] 70ebbaec.json
+|   |   |-- [F] 75478972.json
+|   |   |-- [F] 7a61a7a5.json
+|   |   |-- [F] 7e060f32.json
+|   |   |-- [F] 98ffb93c.json
+|   |   |-- [F] a05a05b6.json
+|   |   |-- [F] a400a6fc.json
+|   |   |-- [F] bfafc693.json
+|   |   |-- [F] d2d8ee43.json
+|   |   |-- [F] f0765058.json
+|   |   \-- [F] f2abcb45.json
+|   |-- [D] journal
+|   |   |-- [F] 0419844a.jsonl
+|   |   |-- [F] 09709c0f.jsonl
+|   |   |-- [F] 65cab7a7.jsonl
+|   |   |-- [F] 68ba34d5.jsonl
+|   |   |-- [F] 70ebbaec.jsonl
+|   |   |-- [F] 75478972.jsonl
+|   |   |-- [F] 7a61a7a5.jsonl
+|   |   |-- [F] 7e060f32.jsonl
+|   |   |-- [F] 98ffb93c.jsonl
+|   |   |-- [F] a05a05b6.jsonl
+|   |   |-- [F] a400a6fc.jsonl
+|   |   |-- [F] bfafc693.jsonl
+|   |   |-- [F] d2d8ee43.jsonl
+|   |   |-- [F] f0765058.jsonl
+|   |   \-- [F] f2abcb45.jsonl
+|   |-- [F] .gitkeep
+|   |-- [F] __init__.py
+|   |-- [F] engine.py
+|   |-- [F] models.py
+|   |-- [F] README.md
+|   \-- [F] summarizer.py
+|-- [D] research
+|   |-- [D] textbooks
+|   |   |-- [F] bitcoin whitepaper.pdf
+|   |   \-- [F] README.md
+|   \-- [F] README.md
+|-- [D] routing
+|   |-- [F] __init__.py
+|   |-- [F] domain.py
+|   |-- [F] followup.py
+|   |-- [F] planner.py
+|   |-- [F] README.md
+|   |-- [F] signals.py
+|   |-- [F] timeparse.py
+|   \-- [F] types.py
+|-- [D] runtime
+|   |-- [D] cache
+|   |   \-- [F] skills_snapshot.json
+|   |-- [F] .gitkeep
+|   |-- [F] __init__.py
+|   |-- [F] approval.py
+|   |-- [F] audit.py
+|   |-- [F] bulk.py
+|   |-- [F] cancel.py
+|   |-- [F] capabilities.py
+|   |-- [F] controller.py
+|   |-- [F] ctx.py
+|   |-- [F] errors.py
+|   |-- [F] fs_ops.py
+|   |-- [F] hashing.py
+|   |-- [F] job_state.py
+|   |-- [F] journal.py
+|   |-- [F] ollama_compat.py
+|   |-- [F] ollama_options.py
+|   |-- [F] plan_lint.py
+|   |-- [F] policy.py
+|   |-- [F] privilege.py
+|   |-- [F] ratelimit.py
+|   |-- [F] README.md
+|   |-- [F] risk.py
+|   |-- [F] sandbox.py
+|   |-- [F] shell.py
+|   |-- [F] staging.py
+|   |-- [F] stream.py
+|   |-- [F] ticketing.py
+|   |-- [F] tuning.py
+|   |-- [F] user_state.py
+|   \-- [F] verifier.py
+|-- [D] sessions
+|   |-- [D] artifacts
+|   |   |-- [D] index
+|   |   |   |-- [F] status_index.json
+|   |   |   |-- [F] tag_index.json
+|   |   |   \-- [F] thread_index.json
+|   |   |-- [D] life_modeling
+|   |   |   |-- [F] calendar_snapshot.jsonl
+|   |   |   |-- [F] context_pack_v1.jsonl
+|   |   |   |-- [F] heartbeat_v2.jsonl
+|   |   |   \-- [F] project_cluster.jsonl
+|   |   \-- [D] shards
+|   |-- [D] chat
+|   |   \-- [F] default_user.jsonl
+|   |-- [D] default_user
+|   |-- [D] jobs
+|   |   |-- [D] 0419844a
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 09709c0f
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 65cab7a7
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 68ba34d5
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 70ebbaec
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 75478972
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 7a61a7a5
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 7e060f32
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] 98ffb93c
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] a05a05b6
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] a400a6fc
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] bfafc693
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] d2d8ee43
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] f0765058
+|   |   |   \-- [F] audit.jsonl
+|   |   |-- [D] f2abcb45
+|   |   |   \-- [F] audit.jsonl
+|   |   \-- [D] j7
+|   |       \-- [F] audit.jsonl
+|   |-- [D] logs
+|   |   |-- [D] prompt_snapshots
+|   |   |   |-- [F] prompt_snapshot_20260304T193219294491.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219322491.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219336491.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219378497.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219382499.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219384496.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219407005.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219428008.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219431007.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219435007.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219438008.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219440008.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219443007.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219446007.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219449007.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219452008.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193219455010.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707657959.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707685961.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707707960.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707838989.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707841995.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707844995.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707883002.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707911005.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707914972.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707917973.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707943720.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707947718.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707951719.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707954720.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707956720.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707959721.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193707962720.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193925881872.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193925882872.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193952984867.json
+|   |   |   |-- [F] prompt_snapshot_20260304T193952985868.json
+|   |   |   |-- [F] prompt_snapshot_20260304T194534265495.json
+|   |   |   |-- [F] prompt_snapshot_20260304T194534266494.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538517594.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538544594.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538558597.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538616538.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538619538.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538623539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538636538.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538650539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538653539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538655539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538659539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538661539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538665540.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538668541.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538670539.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195538673542.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727488572.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727518573.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727539574.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727593827.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727597826.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727602827.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727620827.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727639828.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727642828.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727646828.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727649829.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727652828.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727657829.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727660829.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727664831.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195727667832.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736804537.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736836153.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736863154.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736945671.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736949561.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736952560.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195736978567.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737004078.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737008076.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737011076.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737014075.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737017079.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737023077.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737026079.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737029078.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737032076.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737327522.json
+|   |   |   |-- [F] prompt_snapshot_20260304T195737329522.json
+|   |   |   |-- [F] prompt_snapshot_20260304T200324157926.json
+|   |   |   |-- [F] prompt_snapshot_20260304T200340772156.json
+|   |   |   |-- [F] prompt_snapshot_20260304T200358698213.json
+|   |   |   |-- [F] prompt_snapshot_20260304T200420819224.json
+|   |   |   |-- [F] prompt_snapshot_20260304T200457669134.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417363130.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417399129.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417421132.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417486128.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417489128.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417492713.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417509557.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417525858.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417528858.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417531859.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417533858.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417536859.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417540858.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417543856.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417546856.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232417548856.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433846708.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433876248.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433891777.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433939071.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433942075.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433946074.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433981949.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232433997445.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434000681.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434003686.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434005832.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434008831.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434013111.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434015113.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434018615.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232434021621.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445503508.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445530966.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445553963.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445627127.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445632127.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445637127.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445663127.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445686131.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445689131.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445694159.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445697159.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445700161.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445705161.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445708160.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445710161.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445713161.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445997791.json
+|   |   |   |-- [F] prompt_snapshot_20260304T232445999791.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233023621206.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311213628.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311240629.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311257629.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311305386.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311308386.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311313383.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311328383.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311344386.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311347383.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311349385.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311352383.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311354383.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311359384.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311362387.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311365765.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233311367764.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319130578.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319159578.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319181588.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319249579.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319252577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319255576.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319276579.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319297579.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319300577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319302577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319305579.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319308577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319313576.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319315577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319318577.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319320579.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319582083.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233319583083.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233541511519.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233749930353.json
+|   |   |   |-- [F] prompt_snapshot_20260304T233802942629.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915110306.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915165598.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915186518.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915239889.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915242888.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915248887.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915265368.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915284369.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915288368.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915291371.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915294367.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915297371.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915302405.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915305405.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915309404.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234915311405.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923438591.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923467593.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923492391.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923570395.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923573299.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923576299.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923599556.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923623557.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923627557.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923630558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923632558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923635558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923640558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923643558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923646558.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923649559.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923924162.json
+|   |   |   |-- [F] prompt_snapshot_20260304T234923926163.json
+|   |   |   |-- [F] prompt_snapshot_20260305T002347456667.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019611060.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019644585.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019670412.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019753709.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019757403.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019760412.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019786859.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019813794.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019817498.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019820998.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019824002.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019827000.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019832303.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019836306.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019840438.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005019843952.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005020140212.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005020141573.json
+|   |   |   |-- [F] prompt_snapshot_20260305T005343679375.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612290341.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612373926.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612436239.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612634583.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612643778.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612652792.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612715513.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612778710.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612788729.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612798245.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612807785.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612814810.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612831358.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612840386.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612848898.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012612858922.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012613578961.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012613582462.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012857667123.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012857744083.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012857807856.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012857996510.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858005071.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858012103.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858068241.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858133915.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858145957.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858154490.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858160998.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858168047.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858182077.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858190092.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858198110.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858208141.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858906491.json
+|   |   |   |-- [F] prompt_snapshot_20260305T012858909506.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449025422.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449106084.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449172740.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449409246.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449420273.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449430797.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449496944.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449565570.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449576093.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449586111.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449597648.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449606162.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449623528.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449633553.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449642579.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013449652596.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013450245738.json
+|   |   |   |-- [F] prompt_snapshot_20260305T013450249753.json
+|   |   |   |-- [F] prompt_snapshot_20260305T015227319735.json
+|   |   |   |-- [F] prompt_snapshot_20260305T015320124843.json
+|   |   |   |-- [F] prompt_snapshot_20260305T020144620698.json
+|   |   |   |-- [F] prompt_snapshot_20260305T021900421630.json
+|   |   |   |-- [F] prompt_snapshot_20260305T024019804308.json
+|   |   |   |-- [F] prompt_snapshot_20260305T024148518336.json
+|   |   |   |-- [F] prompt_snapshot_20260305T024529377102.json
+|   |   |   |-- [F] prompt_snapshot_20260305T024644607392.json
+|   |   |   |-- [F] prompt_snapshot_20260305T025016832987.json
+|   |   |   |-- [F] prompt_snapshot_20260305T033606836881.json
+|   |   |   |-- [F] prompt_snapshot_20260305T033649153569.json
+|   |   |   |-- [F] prompt_snapshot_20260305T034029860696.json
+|   |   |   |-- [F] prompt_snapshot_20260305T092013158248.json
+|   |   |   |-- [F] prompt_snapshot_20260305T092051405507.json
+|   |   |   |-- [F] prompt_snapshot_20260305T092138409133.json
+|   |   |   |-- [F] prompt_snapshot_20260305T092709055775.json
+|   |   |   |-- [F] prompt_snapshot_20260305T170134216023.json
+|   |   |   \-- [F] prompt_snapshot_20260305T170837001686.json
+|   |   |-- [F] agent.log
+|   |   |-- [F] agentpedia.log
+|   |   |-- [F] bot.log
+|   |   |-- [F] heartbeat.log
+|   |   \-- [F] speech.log
+|   |-- [D] media
+|   |   \-- [F] .gitkeep
+|   |-- [D] memory_queue
+|   |   \-- [F] default_user.jsonl
+|   |-- [D] pending_tickets
+|   |-- [D] scrape_tmp
+|   |   |-- [F] crawlies_20260305T013327Z_218d9290ce.json
+|   |   |-- [F] crawlies_20260305T013327Z_dc193ee66d.json
+|   |   |-- [F] crawlies_20260305T013429Z_3eb05e3b68.json
+|   |   |-- [F] crawlies_20260305T013429Z_cdec0d718b.json
+|   |   |-- [F] crawlies_20260305T013558Z_54a768212d.json
+|   |   |-- [F] crawlies_20260305T013620Z_54eecfd24f.json
+|   |   |-- [F] crawlies_20260305T013839Z_4a85fc8e7a.json
+|   |   |-- [F] crawlies_20260305T013855Z_ab75419de1.json
+|   |   |-- [F] crawlies_20260305T021900Z_06adc10f77.json
+|   |   |-- [F] crawlies_20260305T024148Z_2f47bf54a5.json
+|   |   |-- [F] crawlies_20260305T024644Z_7a58ffd020.json
+|   |   |-- [F] crawlies_20260305T042415Z_80c7528c21.json
+|   |   |-- [F] crawlies_20260305T042418Z_cd8b2d6a6b.json
+|   |   |-- [F] crawlies_20260305T042905Z_9abeb7f9f5.json
+|   |   |-- [F] crawlies_20260305T042908Z_82705aeb81.json
+|   |   |-- [F] crawlies_20260305T042938Z_34b1e32425.json
+|   |   |-- [F] crawlies_20260305T042941Z_628540bb38.json
+|   |   |-- [F] crawlies_20260305T043034Z_b3377e37d2.json
+|   |   |-- [F] crawlies_20260305T043040Z_27231f006d.json
+|   |   |-- [F] crawlies_20260305T092013Z_f017a221ba.json
+|   |   |-- [F] crawlies_20260305T094442Z_98320e5303.json
+|   |   |-- [F] crawlies_20260305T094452Z_d435b17914.json
+|   |   |-- [F] crawlies_20260305T094602Z_9e5b9f36af.json
+|   |   |-- [F] crawlies_20260305T094607Z_36bd348b2f.json
+|   |   |-- [F] crawlies_page_1_20260305T024148Z.png
+|   |   \-- [F] crawlies_page_3_20260305T013620Z.png
+|   |-- [D] u_async_test
+|   |-- [D] u-corr
+|   |-- [D] u-corr2
+|   |-- [D] u-corr3
+|   |-- [D] u-timeout
+|   \-- [F] README.md
+|-- [D] speech
+|   |-- [D] brain
+|   |   |-- [F] agent_bridge.py
+|   |   \-- [F] text_clean.py
+|   |-- [D] detect
+|   |   |-- [F] bargein.py
+|   |   |-- [F] echo.py
+|   |   \-- [F] vad.py
+|   |-- [D] io
+|   |   |-- [F] audio_in.py
+|   |   |-- [F] audio_out.py
+|   |   \-- [F] devices.py
+|   |-- [D] metrics
+|   |   |-- [F] log.py
+|   |   \-- [F] timings.py
+|   |-- [D] stt
+|   |   \-- [F] stt_whisper.py
+|   |-- [D] tools
+|   |   |-- [F] list_audio_devices.py
+|   |   |-- [F] run_speech.py
+|   |   |-- [F] test_audio_out_resample.py
+|   |   |-- [F] test_audio_player.py
+|   |   |-- [F] test_bargein.py
+|   |   |-- [F] test_devices_compat.py
+|   |   |-- [F] test_echo.py
+|   |   |-- [F] test_latency.py
+|   |   |-- [F] test_orchestrator_sim.py
+|   |   |-- [F] test_simulation.py
+|   |   \-- [F] test_tts_pocket_server.py
+|   |-- [D] tts
+|   |   |-- [F] factory.py
+|   |   |-- [F] text_chunker.py
+|   |   \-- [F] tts_pocket_server.py
+|   |-- [F] __init__.py
+|   |-- [F] config.py
+|   |-- [F] events.py
+|   |-- [F] orchestrator.py
+|   |-- [F] README.md
+|   \-- [F] somistate.py
+|-- [D] workshop
+|   |-- [D] assets
+|   |   |-- [F] default_bg.jpg
+|   |   |-- [F] icon.ico
+|   |   \-- [F] README.md
+|   |-- [D] cli
+|   |   |-- [F] __init__.py
+|   |   |-- [F] cli_toolbox.py
+|   |   |-- [F] README.md
+|   |   \-- [F] somi.py
+|   |-- [D] docs
+|   |   |-- [F] artifacts_phase2.md
+|   |   |-- [F] artifacts_phase3.md
+|   |   |-- [F] artifacts_phase4.md
+|   |   |-- [F] followup_audit_and_surface_map.md
+|   |   |-- [F] phase1_audit_report.md
+|   |   |-- [F] phase1_contracts_assessment.md
+|   |   |-- [F] phase5_guardrails.md
+|   |   |-- [F] phase6_hookpoints.md
+|   |   |-- [F] project_tree.txt
+|   |   |-- [F] README.md
+|   |   |-- [F] repo_cleanup_audit.md
+|   |   \-- [F] voices.md
+|   |-- [D] help
+|   |   |-- [F] aicore.txt
+|   |   |-- [F] README.md
+|   |   |-- [F] Telegram.txt
+|   |   \-- [F] Twitter.txt
+|   |-- [D] skills
+|   |   |-- [F] __init__.py
+|   |   |-- [F] dispatch.py
+|   |   |-- [F] gating.py
+|   |   |-- [F] parser.py
+|   |   |-- [F] public_api.py
+|   |   |-- [F] README.md
+|   |   |-- [F] registry.py
+|   |   \-- [F] types.py
+|   |-- [D] toolbox
+|   |   |-- [D] templates
+|   |   |   |-- [F] manifest_template.json
+|   |   |   |-- [F] readme_template.md
+|   |   |   |-- [F] test_template.py
+|   |   |   \-- [F] tool_skeleton.py
+|   |   |-- [F] .gitkeep
+|   |   |-- [F] __init__.py
+|   |   |-- [F] builder.py
+|   |   |-- [F] dispatch.py
+|   |   |-- [F] installer.py
+|   |   |-- [F] loader.py
+|   |   |-- [F] README.md
+|   |   |-- [F] registry.py
+|   |   \-- [F] skills_loader.py
+|   |-- [D] tools
+|   |   |-- [D] .staging
+|   |   |   \-- [F] .gitkeep
+|   |   |-- [D] diagnostics
+|   |   |   |-- [F] testcrawlies.py
+|   |   |   \-- [F] testcrawlies_real.py
+|   |   |-- [D] installed
+|   |   |   |-- [D] cli_exec
+|   |   |   |   \-- [D] 0.1.0
+|   |   |   |-- [D] dummy
+|   |   |   |   \-- [D] 0.1.0
+|   |   |   |-- [D] hello_tool
+|   |   |   |   \-- [D] 0.1.0
+|   |   |   \-- [F] .gitkeep
+|   |   |-- [D] workspace
+|   |   |   |-- [D] safe_autonomy_tool
+|   |   |   |   |-- [F] manifest.json
+|   |   |   |   |-- [F] README.md
+|   |   |   |   |-- [F] test_tool.py
+|   |   |   |   \-- [F] tool.py
+|   |   |   \-- [F] .gitkeep
+|   |   |-- [F] .gitkeep
+|   |   |-- [F] __init__.py
+|   |   |-- [F] crawlies.py
+|   |   |-- [F] ocr_quick_test.py
+|   |   |-- [F] README.md
+|   |   \-- [F] registry.json
+|   |-- [F] __init__.py
+|   \-- [F] README.md
+|-- [F] .gitignore
+|-- [F] agents.py
+|-- [F] persona.py
+|-- [F] README.md
+|-- [F] requirements.txt
+\-- [F] somicontroller.py

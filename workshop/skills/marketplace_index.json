@@ -1,0 +1,16 @@
+{
+  "packages": [
+    {
+      "package_id": "browser_snapshot_helper",
+      "source_dir": "marketplace_packages/browser_snapshot_helper"
+    },
+    {
+      "package_id": "research_brief_builder",
+      "source_dir": "marketplace_packages/research_brief_builder"
+    },
+    {
+      "package_id": "automation_operator_helper",
+      "source_dir": "marketplace_packages/automation_operator_helper"
+    }
+  ]
+}

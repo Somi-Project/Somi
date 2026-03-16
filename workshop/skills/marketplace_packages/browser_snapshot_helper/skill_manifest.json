@@ -1,0 +1,12 @@
+{
+  "package_id": "browser_snapshot_helper",
+  "skill_key": "browser_snapshot_helper",
+  "name": "Browser Snapshot Helper",
+  "description": "Safe local browser evidence capture and snapshot guidance.",
+  "version": "1.0.0",
+  "trust_badge": "first_party",
+  "update_channel": "stable",
+  "persona_tags": ["research_operator", "assistant_operator"],
+  "workflow_tags": ["browser", "research"],
+  "bundle_ids": ["research_core", "operator_core"]
+}

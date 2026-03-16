@@ -1,0 +1,23 @@
+{
+  "id": "document_intake",
+  "name": "Document Intake",
+  "description": "OCR, extraction, and document classification surfaces for local intake workflows.",
+  "skills": [],
+  "toolsets": ["research", "field"],
+  "tools": ["ocr.extract"],
+  "featured": true,
+  "starter_prompt": "Help me extract the key fields from this document and tell me if anything needs manual review",
+  "guide_steps": [
+    "Use the OCR route or image intake surface to process the file locally.",
+    "Pick the closest schema or preset before extracting structured fields.",
+    "Check the confidence and escalation notes before acting on the result."
+  ],
+  "agent_template_id": "document_intake",
+  "workflow_template_id": "research_digest",
+  "bundle_id": "document_core",
+  "quick_actions": [
+    "run ocr.extract -- action run mode auto image_paths [...]",
+    "Open the speech or Telegram image route for intake"
+  ],
+  "primary_surface": "gui"
+}

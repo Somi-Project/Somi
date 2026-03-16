@@ -1,0 +1,23 @@
+{
+  "id": "research_operator",
+  "name": "Research Operator",
+  "description": "Grounded research, evidence gathering, and operator-facing synthesis surfaces.",
+  "skills": [],
+  "toolsets": ["research", "safe-chat", "automation"],
+  "tools": ["web.intelligence", "research.artifact"],
+  "featured": true,
+  "starter_prompt": "Research this topic with current sources, then give me the grounded answer and the key links",
+  "guide_steps": [
+    "Ask the question directly in chat and let Somi decide the evidence path.",
+    "Open the Control Room if you want to inspect artifacts, follow-up context, and workflow state.",
+    "Reuse the research digest workflow when the task repeats."
+  ],
+  "agent_template_id": "research_operator",
+  "workflow_template_id": "research_digest",
+  "bundle_id": "research_core",
+  "quick_actions": [
+    "Ask a latest/research question in chat",
+    "Run the research digest workflow"
+  ],
+  "primary_surface": "control_room"
+}

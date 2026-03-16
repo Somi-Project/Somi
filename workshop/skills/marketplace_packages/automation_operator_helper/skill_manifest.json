@@ -1,0 +1,12 @@
+{
+  "package_id": "automation_operator_helper",
+  "skill_key": "automation_operator_helper",
+  "name": "Automation Operator Helper",
+  "description": "Safer automation planning and operator-facing follow-through.",
+  "version": "1.0.0",
+  "trust_badge": "first_party",
+  "update_channel": "stable",
+  "persona_tags": ["assistant_operator"],
+  "workflow_tags": ["automation", "ops"],
+  "bundle_ids": ["operator_core"]
+}
