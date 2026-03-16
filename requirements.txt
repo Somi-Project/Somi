@@ -1,37 +1,53 @@
-﻿ollama
+# Core runtime and CLI
+ollama
 requests>=2.32.3,<3.0
 httpx==0.28.1
 psutil==7.2.2
 click>=8.1.8,<9.0
 python-dateutil==2.9.0.post0
-pytz==2025.2
+pytz>=2025.2,<2027.0
 timezonefinder==8.2.1
+
+# Data, retrieval, and local reasoning
 numpy>=2.0,<3.0
 scipy==1.17.1
 pandas>=2.2.2,<4.0
 scikit-learn>=1.5.2,<2.0
 sentence-transformers==5.2.3
-transformers==5.2.0
+transformers>=5.2.0,<6.0
 faiss-cpu==1.13.2
+
+# Research, OCR, and web extraction
 pdfplumber==0.11.9
-beautifulsoup4==4.12.3
-lxml==5.3.0
-readability-lxml==0.8.1
+beautifulsoup4>=4.12.3,<5.0
+lxml>=5.3.0,<7.0
+readability-lxml>=0.8.1,<1.0
 trafilatura==2.0.0
 duckduckgo-search==8.1.1
 yfinance==1.2.0
 yahooquery==2.4.1
+Pillow==12.1.1
+matplotlib>=3.10.0,<4.0
+spacy>=3.8,<4.0
+
+# Desktop UI and browser tooling
 PySide6==6.10.2
+playwright==1.58.0
+
+# Speech
 sounddevice==0.5.5
 soundfile==0.13.1
-pyttsx3==2.90
-librosa==0.11.0
-ffmpeg-python==0.2.0
+pyttsx3>=2.90,<3.0
 faster-whisper==1.2.1
-whisper==1.1.10
-coqui-tts==0.27.5
-onnxruntime==1.24.2
-pyannote.audio==4.0.4
+
+# Notes:
+# - Install torch separately to match the target CPU/GPU hardware.
+# - If you use config/time_utils.py directly, also install the spaCy model:
+#   python -m spacy download en_core_web_sm
+# - openai-whisper, piper/coqui TTS, and diarization packages are intentionally
+#   left out of the core install because the active Somi runtime does not depend
+#   on them for its default local-first path.
+
 playwright==1.58.0
 Pillow==12.1.1
 piper-tts==1.4.1
