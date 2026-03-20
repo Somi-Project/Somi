@@ -31,8 +31,9 @@ class OpsDiagnosticsPhase134Tests(unittest.TestCase):
         checkpoint = self.temp_dir / "audit" / "backups" / name
         checkpoint.mkdir(parents=True, exist_ok=True)
         (checkpoint / "doctor.py").write_text("print('doctor')\n", encoding="utf-8")
-        (checkpoint / "update.md").write_text("# Update\n", encoding="utf-8")
-        (checkpoint / "phase_upgrade.md").write_text("# Phase\n", encoding="utf-8")
+        (checkpoint / "docs" / "release").mkdir(parents=True, exist_ok=True)
+        (checkpoint / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md").write_text("# Update\n", encoding="utf-8")
+        (checkpoint / "docs" / "release" / "UPGRADE_PATH_VERIFIED.md").write_text("# Phase\n", encoding="utf-8")
         return checkpoint
 
     def test_verify_recent_backups_accepts_phase_checkpoints_from_audit_root(self) -> None:

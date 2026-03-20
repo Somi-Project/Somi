@@ -31,10 +31,9 @@ DEFAULT_AUTO_EXCLUDED_TOP_LEVEL = {
 }
 DEFAULT_ROOT_FILES = (
     "README.md",
-    "update.md",
-    "phase_upgrade.md",
-    "agentupgrade.md",
-    "searchupgrade.md",
+    "docs/release/FRAMEWORK_RELEASE_NOTES.md",
+    "docs/release/UPGRADE_PATH_VERIFIED.md",
+    "docs/release/FRAMEWORK_FREEZE.md",
     "requirements.txt",
     "somi.py",
     "agents.py",

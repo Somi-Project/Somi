@@ -59,15 +59,16 @@ def _read_json(path: Path) -> dict[str, Any] | None:
 
 def _phase_config(root: Path) -> dict[str, Any]:
     backups_root = root / "backups"
+    release_notes = root / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md"
     if (root / "neoupgrade.md").exists() or any(backups_root.glob("neoupgrade_phase*_start_*")):
         return {
             "prefix": "neoupgrade",
-            "roadmap_path": root / "neoupgrade.md",
+            "roadmap_path": release_notes,
             "titles": PHASE_SETS["neoupgrade"],
         }
     return {
         "prefix": "upgrade",
-        "roadmap_path": root / "upgrade.md",
+        "roadmap_path": release_notes,
         "titles": PHASE_SETS["upgrade"],
     }
 
@@ -75,7 +76,7 @@ def _phase_config(root: Path) -> dict[str, Any]:
 def _phase_rows(root: Path) -> list[dict[str, Any]]:
     config = _phase_config(root)
     prefix = str(config.get("prefix") or "upgrade")
-    roadmap_path = Path(config.get("roadmap_path") or (root / "upgrade.md"))
+    roadmap_path = Path(config.get("roadmap_path") or (root / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md"))
     phase_titles = tuple(config.get("titles") or ())
     rows: list[dict[str, Any]] = []
     for phase, title in enumerate(phase_titles, start=1):

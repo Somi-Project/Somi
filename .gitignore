@@ -32,6 +32,8 @@ database/**/*.db-shm
 database/**/*.db-wal
 database/**/*.sqlite
 database/**/*.sqlite3
+database/**/*.sqlite-shm
+database/**/*.sqlite-wal
 database/memory_store/MEMORY_*.md
 database/agentpedia/state.json
 database/agentpedia/pages/
