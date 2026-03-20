@@ -1,0 +1,20 @@
+{
+  "manifest_id": "continuity_power_recovery",
+  "name": "Continuity Power Recovery Checklist",
+  "description": "Build a startup order for restoring a minimal stable shelter power loop.",
+  "script": "critical_loads = ['lighting', 'radios', 'water']\nif 'critical_loads' in inputs:\n  critical_loads = list(inputs['critical_loads'])\nchecklist = [\n  'Inspect cables, fuses, battery temperature, and grounds before energizing.',\n  'Bring up only the smallest essential load set first.',\n  'Log voltage and state-of-charge after each load change.',\n  'Keep a rollback order ready before reconnecting noncritical circuits.'\n]\nemit('built power recovery checklist')\nresult = {\n  'critical_loads': critical_loads,\n  'summary': 'Power recovery checklist prepared.',\n  'checklist': checklist,\n}\n",
+  "allowed_tools": [],
+  "backend": "local",
+  "timeout_seconds": 20,
+  "max_tool_calls": 1,
+  "metadata": {
+    "category": "continuity",
+    "domain": "power",
+    "tags": [
+      "power",
+      "battery",
+      "microgrid",
+      "solar"
+    ]
+  }
+}

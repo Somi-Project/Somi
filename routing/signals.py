@@ -9,7 +9,7 @@ from routing.types import QuerySignals
 _EXPLICIT = re.compile(r"\b(search|look up|google|find online|check online|sources?|cite|link|verify|confirm)\b", re.I)
 _RECENCY = re.compile(r"\b(latest|current|today|now|right now|this week|updated|breaking|live|recent)\b", re.I)
 _VOLATILE = re.compile(r"\b(price|quote|market|stock|shares|bitcoin|btc|eth|oil|wti|brent|fx|exchange rate|weather|forecast|temperature|rain|humidity|wind|news|headline|current events)\b", re.I)
-_RESEARCH = re.compile(r"\b(paper|study|pubmed|pmid|doi|arxiv|guideline|systematic review|meta-analysis|clinical trial|nct\d*)\b", re.I)
+_RESEARCH = re.compile(r"\b(paper|study|pubmed|pmid|doi|arxiv|guideline|systematic review|meta-analysis|clinical trial|nct\d*|github|repo|repository|readme|documentation|docs|release notes|changelog|open source|package|library|framework)\b", re.I)
 _EXACTNESS = re.compile(r"\b(exact|precisely|closing|close|open|high|low|with sources|cite|on\s+\d{4}-\d{2}-\d{2})\b", re.I)
 _PERSONAL = re.compile(r"\b(what'?s my|my goals?|my reminders?|remind me|what do you remember about me|my state|my memory)\b", re.I)
 

@@ -1,0 +1,19 @@
+{
+  "id": "survival_basics",
+  "name": "Survival Basics",
+  "category": "survival",
+  "summary": "Local defensive notes for water safety, sanitation, shelter, and low-resource daily operations.",
+  "schema_version": 1,
+  "variant": "compact",
+  "tags": [
+    "survival",
+    "water",
+    "sanitation",
+    "shelter",
+    "health",
+    "readiness"
+  ],
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19",
+  "status": "seeded"
+}

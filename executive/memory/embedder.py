@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import hashlib
 from collections import OrderedDict
+from contextlib import asynccontextmanager
 from typing import List
 
-from runtime.ollama_compat import create_async_client
+from runtime.ollama_compat import close_async_client, create_async_client
 
 from config.memorysettings import EMBEDDING_MODEL
 
@@ -15,7 +16,7 @@ class EmbeddingUnavailable(RuntimeError):
 
 class OllamaEmbedder:
     def __init__(self, client=None, model: str = EMBEDDING_MODEL, dim: int = 768, cache_size: int = 1024):
-        self.client = client or create_async_client()
+        self.client = client
         self.model = model
         self.dim = int(dim)
         self.cache: OrderedDict[str, List[float]] = OrderedDict()
@@ -34,16 +35,28 @@ class OllamaEmbedder:
         while len(self.cache) > self.cache_size:
             self.cache.popitem(last=False)
 
+    @asynccontextmanager
+    async def _client_scope(self):
+        if self.client is not None:
+            yield self.client
+            return
+        client = create_async_client()
+        try:
+            yield client
+        finally:
+            await close_async_client(client)
+
     async def embed(self, text: str) -> List[float]:
         s = (text or "")[:2000]
         h = hashlib.sha256(s.encode("utf-8", errors="ignore")).hexdigest()
         got = self._cache_get(h)
         if got is not None:
             return got
-        if self.client is None:
-            raise EmbeddingUnavailable("ollama client unavailable")
         try:
-            resp = await self.client.embeddings(model=self.model, prompt=s)
+            async with self._client_scope() as client:
+                if client is None:
+                    raise EmbeddingUnavailable("ollama client unavailable")
+                resp = await client.embeddings(model=self.model, prompt=s)
             emb = resp.get("embedding") or resp.get("embeddings")
             if isinstance(emb, list) and emb and isinstance(emb[0], (float, int)):
                 vec = [float(x) for x in emb[: self.dim]]

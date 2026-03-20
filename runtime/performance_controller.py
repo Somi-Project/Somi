@@ -4,6 +4,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List
 
+from runtime.background_tasks import build_background_resource_budget
+
 
 @dataclass
 class PerfPolicy:
@@ -57,6 +59,9 @@ class PerformanceController:
             return "medium"
         return "normal"
 
+    def current_load_level(self) -> str:
+        return self._load_level()
+
     def policy_for_turn(self, *, requested_max_tokens: int, should_search: bool) -> PerfPolicy:
         level = self._load_level()
 
@@ -85,6 +90,9 @@ class PerformanceController:
             response_timeout_seconds=timeout,
             allow_parallel_tools=parallel,
         )
+
+    def background_budget_hint(self) -> dict[str, Any]:
+        return build_background_resource_budget(load_level=self._load_level())
 
     def reorder_models_for_load(self, models: List[str]) -> List[str]:
         rows = [str(m or "").strip() for m in list(models or []) if str(m or "").strip()]

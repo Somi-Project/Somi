@@ -2,6 +2,117 @@ from __future__ import annotations
 
 """Extracted SomiAIGUI methods from somicontroller.py (settings_methods.py)."""
 
+def _theme_mode_definitions(self):
+    return (
+        ("☀️", "premium_light", "Daydrive"),
+        ("🌆", "premium_shadowed", "Cockpit"),
+        ("🌙", "premium_dark", "Nightfall"),
+    )
+
+def _theme_mode_label(self, theme_key):
+    for emoji, key, label in self._theme_mode_definitions():
+        if key == str(theme_key or ""):
+            return f"{emoji} {label}"
+    return "🌆 Cockpit"
+
+def _theme_mode_emoji(self, theme_key):
+    return {
+        "premium_light": "☀️",
+        "premium_shadowed": "🌆",
+        "premium_dark": "🌙",
+    }.get(str(theme_key or ""), "🌆")
+
+def _theme_mode_label(self, theme_key):
+    labels = {
+        "premium_light": "Daydrive",
+        "premium_shadowed": "Cockpit",
+        "premium_dark": "Nightfall",
+    }
+    current = str(theme_key or "premium_shadowed")
+    return f"{self._theme_mode_emoji(current)} {labels.get(current, 'Cockpit')}"
+
+# Rebind the theme glyph helpers with ASCII-safe escapes so the premium shell
+# keeps stable symbols even if an earlier edit introduced mojibake bytes.
+def _theme_mode_definitions(self):
+    return (
+        ("\u2600", "premium_light", "Daydrive"),
+        ("\u25d0", "premium_shadowed", "Cockpit"),
+        ("\u263e", "premium_dark", "Nightfall"),
+    )
+
+def _theme_mode_emoji(self, theme_key):
+    return {
+        "premium_light": "\u2600",
+        "premium_shadowed": "\u25d0",
+        "premium_dark": "\u263e",
+    }.get(str(theme_key or ""), "\u25d0")
+
+def _theme_mode_label(self, theme_key):
+    labels = {
+        "premium_light": "Daydrive",
+        "premium_shadowed": "Cockpit",
+        "premium_dark": "Nightfall",
+    }
+    current = str(theme_key or "premium_shadowed")
+    return f"{self._theme_mode_emoji(current)} {labels.get(current, 'Cockpit')}"
+
+def _theme_slider_index(self, theme_key):
+    current = str(theme_key or "premium_shadowed")
+    for index, (_emoji, key, _label) in enumerate(self._theme_mode_definitions()):
+        if key == current:
+            return index
+    return 1
+
+def _theme_key_from_slider(self, value):
+    modes = self._theme_mode_definitions()
+    try:
+        index = int(value)
+    except Exception:
+        index = 1
+    index = max(0, min(len(modes) - 1, index))
+    return modes[index][1]
+
+def _sync_theme_mode_controls(self, theme_key=None):
+    current = str(theme_key or get_theme_name() or "premium_shadowed")
+    self.theme_mode_syncing = True
+    try:
+        for _emoji, key, _label in self._theme_mode_definitions():
+            button = dict(getattr(self, "theme_mode_buttons", {}) or {}).get(key)
+            if button is None:
+                continue
+            try:
+                button.setChecked(key == current)
+            except Exception:
+                pass
+        slider = getattr(self, "theme_mode_slider", None)
+        if slider is not None:
+            try:
+                slider.setValue(self._theme_slider_index(current))
+            except Exception:
+                pass
+        caption = getattr(self, "theme_mode_caption", None)
+        if caption is not None:
+            try:
+                caption.setText(self._theme_mode_emoji(current))
+                caption.setToolTip(self._theme_mode_label(current))
+            except Exception:
+                pass
+    finally:
+        self.theme_mode_syncing = False
+
+def _apply_theme_mode(self, theme_key, *, announce=True):
+    selected_name = str(theme_key or "premium_shadowed")
+    current = str(get_theme_name() or "")
+    changed = current != selected_name
+    set_theme(selected_name)
+    data = self.read_gui_settings()
+    data["theme"] = selected_name
+    self.write_gui_settings(data)
+    self.apply_theme()
+    self._sync_theme_mode_controls(selected_name)
+    if announce and changed:
+        self.push_activity("system", f"Display mood set to {self._theme_mode_label(selected_name)}")
+
 def read_gui_settings(self):
     if not GUI_SETTINGS_PATH.exists():
         return {}
@@ -19,7 +130,8 @@ def write_gui_settings(self, payload):
 
 def load_gui_theme_preference(self):
     data = self.read_gui_settings()
-    set_theme(str(data.get("theme", "cockpit_balanced")))
+    set_theme(str(data.get("theme", "premium_shadowed")))
+    self._sync_theme_mode_controls(get_theme_name())
 
 def _model_profile_options(self):
     defaults = ["low", "medium", "high", "very_high", "ultra"]
@@ -127,16 +239,16 @@ def _runtime_model_snapshot(self):
 
 def open_theme_selector(self):
     dialog = QDialog(self)
-    dialog.setWindowTitle("Theme")
-    dialog.resize(360, 170)
+    dialog.setWindowTitle("Display Mode")
+    dialog.resize(360, 180)
     dialog.setStyleSheet(dialog_stylesheet())
 
     layout = QVBoxLayout(dialog)
-    layout.addWidget(QLabel("Select interface theme:"))
+    layout.addWidget(QLabel("Select display mode:"))
     combo = QComboBox()
     options = list_themes()
-    for key, label in options:
-        combo.addItem(label, key)
+    for key, _label in options:
+        combo.addItem(self._theme_mode_emoji(key), key)
 
     current = get_theme_name()
     for i, (key, _label) in enumerate(options):
@@ -154,13 +266,9 @@ def open_theme_selector(self):
 
     def apply_theme_change():
         selected = combo.currentData()
-        selected_name = str(selected or "default_dark")
-        set_theme(selected_name)
-        data = self.read_gui_settings()
-        data["theme"] = selected_name
-        self.write_gui_settings(data)
-        self.apply_theme()
-        self.push_activity("system", f"Theme changed to {combo.currentText()}")
+        selected_name = str(selected or "premium_shadowed")
+        self._apply_theme_mode(selected_name, announce=False)
+        self.push_activity("system", f"Theme changed to {self._theme_mode_label(selected_name)}")
         dialog.accept()
 
     apply_btn.clicked.connect(apply_theme_change)

@@ -49,9 +49,21 @@ from workshop.toolbox.runtime import InternalToolRuntime
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
-handler = logging.handlers.TimedRotatingFileHandler('agent.log', when='midnight', interval=1, backupCount=7)
-handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-logger.handlers = [handler]
+
+
+def _ensure_gui_rotating_logger() -> None:
+    target = os.path.abspath("agent.log")
+    for existing in list(logger.handlers):
+        base = getattr(existing, "baseFilename", "")
+        if isinstance(existing, logging.handlers.TimedRotatingFileHandler) and base and os.path.abspath(str(base)) == target:
+            return
+
+    handler = logging.handlers.TimedRotatingFileHandler("agent.log", when="midnight", interval=1, backupCount=7)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    logger.addHandler(handler)
+
+
+_ensure_gui_rotating_logger()
 
 
 
@@ -67,6 +79,73 @@ def _themed_input_style(font_pt: int = 12) -> str:
         f"font-size: {font_pt}pt; color: {COLORS['text']}; "
         f"background-color: {COLORS['bg_input']}; border: 1px solid {COLORS['border']};"
     )
+
+
+def _compact_research_report(report) -> dict:
+    payload = dict(report or {}) if isinstance(report, dict) else {}
+    query = " ".join(str(payload.get("query") or "").split()).strip()
+    mode = str(payload.get("mode") or "").strip().lower()
+    summary = " ".join(str(payload.get("summary") or "").split()).strip()
+    progress_headline = " ".join(str(payload.get("progress_headline") or "").split()).strip()
+    execution_summary = " ".join(str(payload.get("execution_summary") or "").split()).strip()
+    if not any((query, summary, progress_headline, execution_summary)):
+        return {}
+
+    trace = []
+    timeline = []
+    for item in list(payload.get("execution_steps") or []):
+        clean = " ".join(str(item or "").split()).strip()
+        if clean:
+            trace.append(clean[:160])
+            timeline.append(f"STEP | {clean[:150]}")
+    if not trace:
+        for item in list(payload.get("execution_events") or []):
+            if not isinstance(item, dict):
+                continue
+            label = " ".join(str(item.get("label") or item.get("step") or "").split()).strip()
+            detail = " ".join(str(item.get("detail") or "").split()).strip()
+            status = str(item.get("status") or "").strip().lower()
+            if label and detail:
+                trace.append(f"{label} -> {detail}"[:160])
+                prefix = {
+                    "recovery": "RECOVERY",
+                    "error": "ALERT",
+                    "warn": "WATCH",
+                    "done": "DONE",
+                    "success": "DONE",
+                    "working": "LIVE",
+                    "active": "LIVE",
+                }.get(status, "STEP")
+                timeline.append(f"{prefix} | {label} -> {detail}"[:150])
+    limitations = [str(item).strip() for item in list(payload.get("limitations") or []) if str(item).strip()]
+    sources = [str(item).strip() for item in list(payload.get("sources") or []) if str(item).strip()]
+    source_preview = []
+    for item in list(payload.get("sources") or []):
+        if isinstance(item, dict):
+            label = " ".join(str(item.get("title") or item.get("label") or item.get("url") or "").split()).strip()
+        else:
+            label = " ".join(str(item or "").split()).strip()
+        if not label:
+            continue
+        label = re.sub(r"^https?://", "", label, flags=re.IGNORECASE)
+        label = label.split("?", 1)[0].split("#", 1)[0].strip("/")
+        source_preview.append(label[:92])
+    return {
+        "query": query[:180],
+        "mode": mode or "deep",
+        "summary": summary[:260],
+        "progress_headline": progress_headline[:180],
+        "execution_summary": execution_summary[:220],
+        "trace": trace[:3],
+        "timeline": timeline[:4],
+        "source_preview": source_preview[:3],
+        "sources_count": len(sources),
+        "limitations_count": len(limitations),
+        "trust_level": str(payload.get("trust_level") or "").strip().lower(),
+        "trust_summary": " ".join(str(payload.get("trust_summary") or "").split()).strip()[:220],
+        "validator_issue_count": int(payload.get("validator_issue_count") or 0),
+        "updated_at": datetime.now().strftime("%H:%M"),
+    }
 
 class RagWorker(QThread):
     update_signal = pyqtSignal(str)
@@ -208,6 +287,7 @@ class ChatWorker(QThread):
             self.agent.model = settings.DEFAULT_MODEL
             self.agent.temperature = settings.DEFAULT_TEMP
             self.running = True
+            self.status_signal.emit("Ready")
             self.loop.run_forever()
         except Exception as e:
             self.error_signal.emit(f"Failed to start chat worker: {str(e)}")
@@ -251,7 +331,12 @@ class ChatWorker(QThread):
             def _done(fut):
                 try:
                     response, attachments = fut.result()
-                    attachments = attachments or []
+                    attachments = list(attachments or [])
+                    compact_report = _compact_research_report(
+                        getattr(getattr(self.agent, "websearch", None), "last_browse_report", None)
+                    )
+                    if compact_report:
+                        attachments.append({"type": "research_report", "payload": compact_report})
                     shown_prompt = display_prompt if isinstance(display_prompt, str) and display_prompt.strip() else prompt
                     self.response_signal.emit(shown_prompt, (response or "No response received.") + "\n", attachments)
                     self.status_signal.emit("Done")
@@ -279,6 +364,9 @@ class ChatWorker(QThread):
 
     def is_busy(self) -> bool:
         return bool(self.pending_future and not self.pending_future.done())
+
+    def is_ready(self) -> bool:
+        return bool(self.running and self.agent is not None and self.isRunning())
 
     def stop(self):
         self.running = False

@@ -1,4 +1,13 @@
 from workshop.toolbox.coding.benchmarks import get_repo_task_benchmark_pack, list_repo_task_benchmarks
+from workshop.toolbox.coding.change_plan import build_change_plan, score_edit_risk
+from workshop.toolbox.coding.control_plane import CodexControlPlane
+from workshop.toolbox.coding.git_ops import (
+    workspace_git_commit,
+    workspace_git_diff,
+    workspace_git_publish_status,
+    workspace_git_push,
+    workspace_git_status,
+)
 from workshop.toolbox.coding.jobs import CodingJobStore
 from workshop.toolbox.coding.models import CodingSessionSnapshot, CodingWorkspaceSnapshot
 from workshop.toolbox.coding.profiles import filter_suggested_commands, get_language_profile, infer_language_profile, list_language_profiles
@@ -16,6 +25,7 @@ from workshop.toolbox.coding.sandbox import (
     sandbox_status,
     seed_manifest_sandbox_fields,
 )
+from workshop.toolbox.coding.scratchpad import build_coding_compaction_summary, build_coding_scratchpad
 from workshop.toolbox.coding.scorecards import build_coding_run_scorecard, build_environment_health
 from workshop.toolbox.coding.service import CodingSessionService
 from workshop.toolbox.coding.skill_drafts import build_skill_gap_prompt, detect_skill_gap, draft_skill_scaffold
@@ -49,9 +59,11 @@ from workshop.toolbox.coding.workspace import CodingWorkspaceManager
 
 __all__ = [
     "build_runtime_inventory",
+    "build_change_plan",
     "build_coding_run_scorecard",
     "build_environment_health",
     "build_skill_gap_prompt",
+    "CodexControlPlane",
     "CodingSessionService",
     "CodingSessionSnapshot",
     "CodingSessionStore",
@@ -96,9 +108,17 @@ __all__ = [
     "run_workspace_command",
     "sandbox_status",
     "sandbox_status_report",
+    "score_edit_risk",
     "seed_manifest_sandbox_fields",
+    "build_coding_compaction_summary",
+    "build_coding_scratchpad",
     "workspace_backend_key",
     "workspace_health_report",
+    "workspace_git_commit",
+    "workspace_git_diff",
+    "workspace_git_publish_status",
+    "workspace_git_push",
+    "workspace_git_status",
     "workspace_profile_key",
     "write_workspace_text_file",
 ]

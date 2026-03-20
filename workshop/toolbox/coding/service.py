@@ -20,6 +20,7 @@ from workshop.toolbox.coding.models import CodingSessionSnapshot, CodingWorkspac
 from workshop.toolbox.coding.profiles import get_language_profile, infer_language_profile, list_language_profiles
 from workshop.toolbox.coding.repo_map import build_project_context_memory, build_repo_map
 from workshop.toolbox.coding.scorecards import build_environment_health
+from workshop.toolbox.coding.scratchpad import build_coding_compaction_summary, build_coding_scratchpad
 from workshop.toolbox.coding.skill_drafts import build_skill_gap_prompt, detect_skill_gap
 from workshop.toolbox.coding.store import CodingSessionStore
 from workshop.toolbox.coding.workspace import CodingWorkspaceManager
@@ -57,6 +58,29 @@ class CodingSessionService:
         self.skill_forge = skill_forge or SkillForgeService()
         self.coding_model = str(coding_model or CODING_MODEL or "").strip()
         self.agent_profile = str(agent_profile or CODING_AGENT_PROFILE or "coding_worker").strip()
+
+    def _build_compaction_state(
+        self,
+        session_payload: dict[str, Any],
+        *,
+        repo_map: dict[str, Any],
+        health: dict[str, Any],
+        active_job: dict[str, Any],
+        coding_memory: dict[str, Any],
+        last_scorecard: dict[str, Any] | None = None,
+    ) -> tuple[dict[str, Any], str]:
+        metadata = dict(session_payload.get("metadata") or {})
+        scratchpad = build_coding_scratchpad(
+            session_payload,
+            repo_map=repo_map,
+            health=health,
+            active_job=active_job,
+            coding_memory=coding_memory,
+            last_scorecard=dict(last_scorecard or metadata.get("last_scorecard") or {}),
+            prior=dict(metadata.get("scratchpad") or {}),
+        )
+        summary = build_coding_compaction_summary(session_payload, scratchpad)
+        return scratchpad, summary
 
     def detect_trigger(self, prompt: str) -> dict[str, Any]:
         raw = str(prompt or "").strip()
@@ -314,6 +338,15 @@ class CodingSessionService:
                         repo_map=repo_map,
                         active_job=active_job,
                     )
+                    scratchpad, compaction_summary = self._build_compaction_state(
+                        active,
+                        repo_map=repo_map,
+                        health=health,
+                        active_job=active_job,
+                        coding_memory=coding_memory,
+                    )
+                    active["metadata"]["scratchpad"] = scratchpad
+                    active["metadata"]["compaction_summary"] = compaction_summary
                     active["welcome_text"] = self.build_welcome_text(active)
                     self.store.write_session(active)
                 return active
@@ -392,6 +425,16 @@ class CodingSessionService:
         session.metadata["active_job"] = active_job or {}
         session.metadata["coding_memory"] = coding_memory or {}
         payload = session.to_dict()
+        scratchpad, compaction_summary = self._build_compaction_state(
+            payload,
+            repo_map=repo_map,
+            health=health,
+            active_job=active_job,
+            coding_memory=coding_memory,
+        )
+        payload.setdefault("metadata", {})
+        payload["metadata"]["scratchpad"] = scratchpad
+        payload["metadata"]["compaction_summary"] = compaction_summary
         payload["welcome_text"] = self.build_welcome_text(payload)
         self.store.write_session(payload)
         return payload

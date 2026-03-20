@@ -323,7 +323,7 @@ def _should_websearch(self, prompt: str) -> bool:
     if self._is_personal_memory_query(pl) or re.search(r"\bwhat(?:'|\u2019)?s\s+my\b", pl):
         return False
     explicit = any(k in pl for k in (
-        "search", "look up", "google", "find online", "check online",
+        "search", "look up", "google", "find online", "check online", "check out",
         "source", "sources", "cite", "citation", "link", "verify", "confirm online",
     ))
     recency = any(k in pl for k in (
@@ -344,6 +344,8 @@ def _should_websearch(self, prompt: str) -> bool:
         "guideline", "practice guideline", "consensus", "position statement",
         "pmid", "pubmed", "doi", "arxiv", "openalex", "semantic scholar", "crossref",
         "clinicaltrials", "clinicaltrials.gov", "nct",
+        "github", "repo", "repository", "readme", "documentation", "docs",
+        "release notes", "changelog", "open source", "package", "library", "framework",
     )
     research = any(k in pl for k in research_keywords) or bool(
         re.search(r"\b(10\.\d{4,9}/\S+|pmid\s*\d{6,9}|nct\s*\d{8}|arxiv\s*:\s*\d{4}\.\d{4,5})\b", pl)

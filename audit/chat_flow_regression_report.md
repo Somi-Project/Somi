@@ -1,8 +1,8 @@
 # Chat Flow Regression Report
 
-- timestamp: 2026-03-15 20:02:29
+- timestamp: 2026-03-18 21:59:43
 - total_turns: 10
-- total_elapsed_ms: 54830
+- total_elapsed_ms: 77348
 - overall_ok: true
 - history_messages_checked: 7
 - selected_url: https://news.example/npu
@@ -15,16 +15,16 @@
 - history_compaction_triggered: pass
 
 ## Turn Samples
-- 1. Give me the latest AI chip news. -> (3477 ms) The latest AI chip news is that IBM has developed a new type of quantum computer, known as a "topological quantum comput
-- 2. open 2 -> (1297 ms) The given URL (https://news.example/npu) appears to be a news article related to "Neural Processing Unit" (NPU).   Based
-- 3. what were the key claims in that story? -> (2239 ms) The given URL (https://news.example/npu) appears to be a news article related to "Neural Processing Unit" (NPU). Here's 
-- 4. compare that with result 1 -> (2065 ms) The given URL (https://news.example/npu) appears to be a news article discussing the latest developments in neural proce
-- 5. summarize this URL https://example.com/analysis -> (1575 ms) The given URL (https://example.com/analysis) appears to be a webpage related to "example.com/analysis". Based on the str
-- 6. switch topic: what is a good python study plan? -> (3958 ms) To help you with your Python study plan, here's a suggested structure and topics to cover:  1. Introduction to Python:  
-- 7. make that into 3 steps -> (11743 ms) Here’s a **3-step framework** for your Python study plan, prioritizing clarity and actionable progress:  ---  ### **Step
-- 8. add one warning about burnout -> (8779 ms) Here’s your updated plan with a **burnout warning** integrated for balance:    ---  ### **Step 3: Expand & Optimize**   
-- 9. quick recap of our chat so far -> (8736 ms) Here’s a quick recap of our chat so far:    1. **AI Chip News**: Discussed IBM’s topological quantum computer and compar
-- 10. what should i ask next? -> (10956 ms) Here’s a curated list of **actionable next questions** based on your current momentum and unresolved interests:    ### 🚀
+- 1. Give me the latest AI chip news. -> (23363 ms) Latest AI Chip News: 1. TSMC Announces Production of 5nm High-Performance Transistor Arrays by 2022 2. IBM and Fraunhofe
+- 2. open 2 -> (2267 ms) The given URL (https://news.example/npu) appears to be a news article page about "Neural Processing Unit" related to som
+- 3. what were the key claims in that story? -> (1202 ms) The given URL (https://news.example/npu) appears to be a news article discussing the latest advancements in Neural Proce
+- 4. compare that with result 1 -> (1389 ms) The given URL (https://news.example/npu) appears to be a news article about Neural Processing Units (NPUs)).   From the 
+- 5. summarize this URL https://example.com/analysis -> (1222 ms) The given URL (https://example.com/analysis) appears to be a webpage about "Analysis" on the domain "example.com".   Bas
+- 6. switch topic: what is a good python study plan? -> (2479 ms) A good Python study plan would involve several key areas that you want to focus on. Here's an example of how you might s
+- 7. make that into 3 steps -> (17105 ms) Here’s a condensed 3-step Python study plan tailored for efficiency and mastery:  ---  ### **Step 1: Core Concepts & Fun
+- 8. add one warning about burnout -> (14642 ms) Here’s your updated 3-step plan with a burnout warning integrated for balance:  ---  ### **Step 1: Core Concepts & Funda
+- 9. quick recap of our chat so far -> (6237 ms) Here’s a quick recap of our chat so far:    1. **AI Chip News**: You asked for updates on AI chips, and I shared details
+- 10. what should i ask next? -> (7439 ms) Here are a few suggestions for your next question, based on our chat so far:    1. **Python Deep Dive**: "What’s a good 
 
 ## Tool Query Trace
 - Give me the latest AI chip news.

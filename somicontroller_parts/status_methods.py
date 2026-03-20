@@ -31,6 +31,218 @@ def push_activity(self, kind, message, ts=None, level="info"):
     if getattr(self, "idle_label", None) is not None:
         self.idle_label.setVisible(False)
 
+def _research_mode_badge(self, mode):
+    mapping = {
+        "quick": "QUICK",
+        "quick_web": "QUICK",
+        "deep": "DEEP",
+        "deep_browse": "DEEP",
+        "github": "GITHUB",
+        "direct_url": "URL",
+        "official": "OFFICIAL",
+        "official_direct": "OFFICIAL",
+        "standby": "STANDBY",
+    }
+    return mapping.get(str(mode or "").strip().lower(), str(mode or "standby").strip().upper() or "STANDBY")
+
+def _research_trace_preview(self, report, *, limit=2):
+    trace = []
+    for entry in list(dict(report or {}).get("trace") or []):
+        clean = re.sub(r"^\d+\.\s*", "", " ".join(str(entry or "").split()).strip())
+        if clean:
+            trace.append(clean)
+    if trace:
+        return trace[: max(1, int(limit or 2))]
+
+    progress = re.sub(r"^\d+\.\s*", "", " ".join(str(dict(report or {}).get("progress_headline") or "").split()).strip())
+    if progress:
+        return [progress[:160]]
+
+    summary = " ".join(str(dict(report or {}).get("execution_summary") or "").split()).strip()
+    if summary:
+        return [summary[:160]]
+    return []
+
+def _research_timeline_preview(self, report, *, limit=4):
+    timeline = []
+    payload = dict(report or {})
+    for item in list(payload.get("execution_events") or []):
+        if not isinstance(item, dict):
+            continue
+        label = " ".join(str(item.get("label") or item.get("step") or "").split()).strip()
+        detail = " ".join(str(item.get("detail") or item.get("summary") or "").split()).strip()
+        status = str(item.get("status") or "").strip().lower()
+        if not label and not detail:
+            continue
+        prefix = {
+            "recovery": "RECOVERY",
+            "error": "ALERT",
+            "warn": "WATCH",
+            "done": "DONE",
+            "success": "DONE",
+            "working": "LIVE",
+            "active": "LIVE",
+        }.get(status, "STEP")
+        body = f"{label} -> {detail}" if label and detail else (label or detail)
+        body = re.sub(r"^\d+\.\s*", "", body).strip()
+        if body:
+            timeline.append(f"{prefix} | {body[:150]}")
+    if timeline:
+        return timeline[: max(1, int(limit or 4))]
+
+    for item in list(payload.get("execution_steps") or []):
+        clean = re.sub(r"^\d+\.\s*", "", " ".join(str(item or "").split()).strip())
+        if clean:
+            timeline.append(f"STEP | {clean[:150]}")
+    if timeline:
+        return timeline[: max(1, int(limit or 4))]
+
+    for item in list(payload.get("trace") or []):
+        clean = re.sub(r"^\d+\.\s*", "", " ".join(str(item or "").split()).strip())
+        if clean:
+            timeline.append(f"TRACE | {clean[:150]}")
+    if timeline:
+        return timeline[: max(1, int(limit or 4))]
+
+    progress = re.sub(r"^\d+\.\s*", "", " ".join(str(payload.get("progress_headline") or "").split()).strip())
+    if progress:
+        return [f"LIVE | {progress[:150]}"]
+    return []
+
+def _research_source_preview(self, report, *, limit=3):
+    preview = []
+    payload = dict(report or {})
+    for item in list(payload.get("source_preview") or []):
+        clean = " ".join(str(item or "").split()).strip()
+        if clean:
+            preview.append(clean[:92])
+    if preview:
+        return preview[: max(1, int(limit or 3))]
+
+    for item in list(payload.get("sources") or []):
+        if isinstance(item, dict):
+            label = " ".join(str(item.get("title") or item.get("label") or item.get("url") or "").split()).strip()
+        else:
+            label = " ".join(str(item or "").split()).strip()
+        if not label:
+            continue
+        label = re.sub(r"^https?://", "", label, flags=re.IGNORECASE)
+        label = label.split("?", 1)[0].split("#", 1)[0].strip("/")
+        preview.append(label[:92])
+    return preview[: max(1, int(limit or 3))]
+
+def update_research_pulse(self, report=None, *, announce=False):
+    state = dict(self.state.get("research_pulse") or {})
+    previous_query = str(state.get("query") or "").strip()
+    incoming = dict(report or {}) if isinstance(report, dict) else {}
+
+    if incoming:
+        query = " ".join(str(incoming.get("query") or "").split()).strip()
+        mode = str(incoming.get("mode") or state.get("mode") or "standby").strip().lower() or "standby"
+        summary = " ".join(str(incoming.get("summary") or "").split()).strip()
+        progress_headline = " ".join(str(incoming.get("progress_headline") or "").split()).strip()
+        execution_summary = " ".join(str(incoming.get("execution_summary") or "").split()).strip()
+        trust_level = str(incoming.get("trust_level") or state.get("trust_level") or "").strip().lower()
+        trust_summary = " ".join(str(incoming.get("trust_summary") or state.get("trust_summary") or "").split()).strip()
+        trace = self._research_trace_preview(incoming, limit=2)
+        timeline = self._research_timeline_preview(incoming, limit=4)
+        source_preview = self._research_source_preview(incoming, limit=3)
+        try:
+            sources_count = max(0, int(incoming.get("sources_count") or len(list(incoming.get("sources") or [])) or 0))
+        except Exception:
+            sources_count = 0
+        try:
+            limitations_count = max(0, int(incoming.get("limitations_count") or len(list(incoming.get("limitations") or [])) or 0))
+        except Exception:
+            limitations_count = 0
+        updated_at = str(incoming.get("updated_at") or datetime.now().strftime("%H:%M")).strip() or datetime.now().strftime("%H:%M")
+        state = {
+            "query": query,
+            "mode": mode,
+            "summary": summary or trust_summary or progress_headline or execution_summary or "Somi finished a browse pass and condensed the evidence.",
+            "progress_headline": progress_headline,
+            "trace": trace,
+            "timeline": timeline,
+            "source_preview": source_preview,
+            "sources_count": sources_count,
+            "limitations_count": limitations_count,
+            "trust_level": trust_level,
+            "trust_summary": trust_summary,
+            "updated_at": updated_at,
+            "updated_epoch": datetime.now().timestamp(),
+        }
+        self.state["research_pulse"] = state
+        if announce and query:
+            if query != previous_query:
+                compact_query = query if len(query) <= 72 else f"{query[:69].rstrip()}..."
+                self.push_activity("research", f"Research pulse updated: {self._research_mode_badge(mode)} | {compact_query}")
+            elif progress_headline:
+                compact_headline = progress_headline if len(progress_headline) <= 84 else f"{progress_headline[:81].rstrip()}..."
+                self.push_activity("research", f"Research trace refined: {compact_headline}")
+    else:
+        self.state["research_pulse"] = state
+
+    pulse = dict(self.state.get("research_pulse") or {})
+    badge = self._research_mode_badge(pulse.get("mode"))
+    sources_count = int(pulse.get("sources_count") or 0)
+    limitations_count = int(pulse.get("limitations_count") or 0)
+    query_text = str(pulse.get("query") or "").strip() or "No research pulse yet."
+    summary_text = str(pulse.get("summary") or "").strip() or "Somi will surface search traces here during deeper browsing."
+    trace_rows = [str(item).strip() for item in list(pulse.get("trace") or []) if str(item).strip()]
+    trace_text = "\n".join(f"{idx}. {item}" for idx, item in enumerate(trace_rows[:2], start=1))
+    timeline_rows = [str(item).strip() for item in list(pulse.get("timeline") or []) if str(item).strip()]
+    source_rows = [str(item).strip() for item in list(pulse.get("source_preview") or []) if str(item).strip()]
+    if not trace_text:
+        progress = str(pulse.get("progress_headline") or "").strip()
+        trace_text = progress or "Trace will appear once Somi plans and reads sources."
+    feed_rows = []
+    for row in timeline_rows[:3]:
+        feed_rows.append(row)
+    for row in source_rows[:2]:
+        feed_rows.append(f"SOURCE | {row}")
+    if not feed_rows:
+        feed_rows = ["STANDBY | Awaiting a browse pass to shortlist sources."]
+
+    if getattr(self, "research_mode_label", None) is not None:
+        self.research_mode_label.setText(f"{badge} | {sources_count} src")
+    if getattr(self, "research_query_label", None) is not None:
+        self.research_query_label.setText(query_text)
+    if getattr(self, "research_summary_label", None) is not None:
+        self.research_summary_label.setText(summary_text)
+    if getattr(self, "research_trace_label", None) is not None:
+        compact_trace = trace_text
+        if compact_trace and compact_trace == summary_text:
+            compact_trace = ""
+        if compact_trace and len(trace_rows) == 1 and trace_rows[0] == summary_text:
+            compact_trace = ""
+        self.research_trace_label.setVisible(bool(compact_trace))
+        self.research_trace_label.setText(compact_trace)
+    if getattr(self, "research_feed_list", None) is not None:
+        self.research_feed_list.clear()
+        for row in feed_rows[:4]:
+            self.research_feed_list.addItem(QListWidgetItem(row))
+    if getattr(self, "research_meta_label", None) is not None:
+        trust_level = str(pulse.get("trust_level") or "").strip().lower()
+        if trust_level:
+            self.research_meta_label.setText(
+                f"Updated {pulse.get('updated_at') or '--'} | trust {trust_level.upper()} | cautions {limitations_count}"
+            )
+        else:
+            self.research_meta_label.setText(f"Updated {pulse.get('updated_at') or '--'} | cautions {limitations_count}")
+    if getattr(self, "research_signal_meter", None) is not None:
+        self.research_signal_meter.set_report(
+            mode=str(pulse.get("mode") or "standby"),
+            sources_count=sources_count,
+            limitations_count=limitations_count,
+        )
+    if hasattr(self, "refresh_research_studio"):
+        try:
+            self.refresh_research_studio()
+        except Exception:
+            pass
+    if getattr(self, "metrics_label", None) is not None:
+        self.update_top_strip()
+
 def update_clock(self):
     now = datetime.now().astimezone()
     self.state["system_time_str"] = now.strftime("%a %d %b %Y | %H:%M:%S")
@@ -194,8 +406,14 @@ def update_top_strip(self):
     n = self.state["news"]
     f = self.state["finance_news"]
     r = self.state["reminders"]
+    pulse = dict(self.state.get("research_pulse") or {})
+    browse_badge = self._research_mode_badge(pulse.get("mode"))
+    browse_sources = int(pulse.get("sources_count") or 0)
+    pulse_epoch = float(pulse.get("updated_epoch") or 0.0)
+    pulse_recent = pulse_epoch and (datetime.now().timestamp() - pulse_epoch) < (15 * 60)
+    browse_segment = f"Browse {browse_badge}/{browse_sources}" if pulse_recent and browse_badge != "STANDBY" else "Browse standby"
     self.metrics_label.setText(
-        f"Weather {w['emoji']} {w['temp']} | News {n['count']} | Markets {f['count']} | Reminders {r['due_count']}"
+        f"Weather {w['emoji']} {w['temp']} | News {n['count']} | Markets {f['count']} | {browse_segment} | Reminders {r['due_count']}"
     )
 
 def update_presence(self):
@@ -241,6 +459,14 @@ def _build_intel_items(self):
     focus_domains = [str(x).strip() for x in profile.get("focus_domains", []) if str(x).strip()]
     if focus_domains:
         items.append(f"Focus: {random.choice(focus_domains)}")
+
+    pulse = dict(self.state.get("research_pulse") or {})
+    pulse_query = str(pulse.get("query") or "").strip()
+    if pulse_query:
+        badge = self._research_mode_badge(pulse.get("mode"))
+        items.append(f"Research {badge}: {pulse_query}")
+        if pulse.get("progress_headline"):
+            items.append(f"Research trace: {pulse['progress_headline']}")
 
     items.append(f"Fact: {random.choice(FACTS)}")
     items.append(f"{random.choice(JOKES)}")
@@ -319,7 +545,12 @@ def update_stream_meters(self):
     if self.state.get("developments", {}).get("headlines"):
         signal_sources += 1
 
-    search_mode = "LIVE" if signal_sources >= 2 else "HYBRID" if signal_sources == 1 else "LOCAL"
+    pulse = dict(self.state.get("research_pulse") or {})
+    pulse_epoch = float(pulse.get("updated_epoch") or 0.0)
+    if pulse_epoch and (datetime.now().timestamp() - pulse_epoch) < (15 * 60):
+        search_mode = self._research_mode_badge(pulse.get("mode"))
+    else:
+        search_mode = "LIVE" if signal_sources >= 2 else "HYBRID" if signal_sources == 1 else "LOCAL"
 
     task_mode = "MONITOR"
     try:

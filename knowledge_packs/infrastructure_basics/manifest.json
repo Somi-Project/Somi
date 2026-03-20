@@ -1,0 +1,19 @@
+{
+  "id": "infrastructure_basics",
+  "name": "Infrastructure Basics",
+  "category": "infrastructure",
+  "summary": "Compact local references for communications, power distribution, caching, and small-node operations.",
+  "schema_version": 1,
+  "variant": "compact",
+  "tags": [
+    "infrastructure",
+    "communications",
+    "radio",
+    "mesh",
+    "power",
+    "caching"
+  ],
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19",
+  "status": "seeded"
+}

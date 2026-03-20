@@ -10,6 +10,8 @@ async def generate_response(
     long_form: bool = False,
     forced_skill_keys: Optional[List[str]] = None,
     image_spec: Optional[Dict[str, Any]] = None,
+    thread_id_override: Optional[str] = None,
+    trace_metadata: Optional[Dict[str, Any]] = None,
 ) -> str:
     start_total = time.time()
     self.turn_counter += 1
@@ -23,15 +25,17 @@ async def generate_response(
     tool_events: List[Dict[str, Any]] = []
     search_citation_map: List[Dict[str, Any]] = []
     search_evidence_contract: Dict[str, Any] = {}
+    search_execution_trace: List[str] = []
+    search_execution_summary = ""
     correction_note, corrected_intent_text = self._extract_user_correction(prompt)
     routing_prompt = corrected_intent_text or prompt
-    thread_id = derive_thread_id(routing_prompt)
+    thread_id = str(thread_id_override or derive_thread_id(routing_prompt) or "general")
     turn_trace = self._start_turn_trace(
         prompt=prompt,
         active_user_id=active_user_id,
         thread_id=thread_id,
         routing_prompt=routing_prompt,
-        metadata={"entrypoint": "generate_response"},
+        metadata={"entrypoint": "generate_response", **dict(trace_metadata or {})},
     )
     decision_route = ""
 
@@ -586,12 +590,30 @@ async def generate_response(
                 results = list(primary_out.get("results") or [])
                 search_citation_map = list(primary_out.get("citation_map") or [])
                 search_evidence_contract = dict(primary_out.get("evidence_contract") or {})
+                search_execution_trace = [str(item).strip() for item in list(primary_out.get("execution_trace") or []) if str(item).strip()]
+                search_execution_summary = str(primary_out.get("execution_summary") or "").strip()
                 formatted = str(primary_out.get("formatted") or "")
                 volatile_search, volatile_category = self._is_volatile_results(results)
                 tool_type = str((decision.signals or {}).get("intent") or volatile_category or "general")
                 if tool_type in {"crypto", "forex", "stock/commodity"}:
                     tool_type = "finance"
                 self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results)
+                if search_execution_trace:
+                    emit_state_event(
+                        "web_execution_trace",
+                        "web_execution_trace",
+                        {
+                            "summary": search_execution_summary,
+                            "steps": search_execution_trace[:8],
+                        },
+                    )
+                    tool_events.append(
+                        {
+                            "tool": "web.execution",
+                            "status": "ok",
+                            "detail": search_execution_summary or f"steps={len(search_execution_trace)}",
+                        }
+                    )
                 if formatted and "Error" not in formatted:
                     search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
                     search_context = formatted[:search_cap] if plan.evidence_enabled else ""
@@ -614,10 +636,28 @@ async def generate_response(
                 volatile_search, volatile_category = self._is_volatile_results(results)
                 bundle = self.websearch.to_search_bundle(planned_query, results, time_anchor=plan.time_anchor, exactness_requested=plan.evidence_enabled)
                 formatted = render_search_bundle(bundle, max_results=5, max_snippet_chars=320)
+                search_execution_trace = [str(item).strip() for item in list(getattr(bundle, "execution_trace", []) or []) if str(item).strip()]
+                search_execution_summary = " | ".join(search_execution_trace[:5])
                 tool_type = str(decision.signals.get("intent") or volatile_category or "general")
                 if tool_type in {"crypto", "forex", "stock/commodity"}:
                     tool_type = "finance"
                 self.tool_context_store.set(active_user_id, tool_type, routing_prompt, results)
+                if search_execution_trace:
+                    emit_state_event(
+                        "web_execution_trace",
+                        "web_execution_trace",
+                        {
+                            "summary": search_execution_summary,
+                            "steps": search_execution_trace[:8],
+                        },
+                    )
+                    tool_events.append(
+                        {
+                            "tool": "web.execution",
+                            "status": "ok",
+                            "detail": search_execution_summary or f"steps={len(search_execution_trace)}",
+                        }
+                    )
                 if formatted and "Error" not in formatted:
                     search_cap = max(120, int(BUDGET_SEARCH_TOKENS) * 4)
                     search_context = formatted[:search_cap] if plan.evidence_enabled else ""
@@ -834,9 +874,36 @@ async def generate_response(
             content=content,
             intent=str((decision.signals or {}).get("intent") or "general"),
             should_search=bool(should_search),
+            query_text=routing_prompt,
             evidence_contract=search_evidence_contract,
             citation_map=search_citation_map,
         )
+        if should_search:
+            try:
+                from runtime.answer_validator import build_answer_trust_summary
+
+                trust_summary = build_answer_trust_summary(
+                    issues=list(validator_issues or []),
+                    should_search=bool(should_search),
+                    query_text=routing_prompt,
+                    evidence_contract=search_evidence_contract,
+                    citation_map=search_citation_map,
+                )
+                websearch_handler = getattr(self, "websearch", None)
+                report = dict(getattr(websearch_handler, "last_browse_report", {}) or {})
+                if report:
+                    report["trust_level"] = str(trust_summary.get("level") or "")
+                    report["trust_summary"] = str(trust_summary.get("summary") or "")
+                    report["validator_issue_count"] = len(list(validator_issues or []))
+                    report["limitations_count"] = max(
+                        int(report.get("limitations_count") or len(list(report.get("limitations") or [])) or 0),
+                        int(trust_summary.get("caution_count") or 0),
+                    )
+                    if trust_summary.get("latest_date") and not report.get("updated_at"):
+                        report["updated_at"] = str(trust_summary.get("latest_date") or "")
+                    websearch_handler.last_browse_report = report
+            except Exception:
+                pass
         if validator_issues:
             tool_events.append({"tool": "answer.validator", "status": "repaired", "detail": f"issues={len(validator_issues)}"})
 
@@ -1035,6 +1102,8 @@ async def generate_response_with_attachments(
     long_form: bool = False,
     forced_skill_keys: Optional[List[str]] = None,
     image_spec: Optional[Dict[str, Any]] = None,
+    thread_id_override: Optional[str] = None,
+    trace_metadata: Optional[Dict[str, Any]] = None,
 ) -> Tuple[str, List[Dict[str, Any]]]:
     active_user_id = str(user_id or self.user_id)
     self._set_last_attachments(active_user_id, [])
@@ -1045,6 +1114,8 @@ async def generate_response_with_attachments(
         long_form=long_form,
         forced_skill_keys=forced_skill_keys,
         image_spec=image_spec,
+        thread_id_override=thread_id_override,
+        trace_metadata=trace_metadata,
     )
     return content, self.get_last_attachments(active_user_id)
 

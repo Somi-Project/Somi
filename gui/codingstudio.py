@@ -78,9 +78,21 @@ class CodingStudioPanel(QWidget):
         self.runtime_chip = QLabel("Runtimes: --")
         self.health_chip = QLabel("Health: --")
         self.workspace_chip = QLabel("Workspace: --")
+        self.git_chip = QLabel("Git: --")
+        self.snapshot_chip = QLabel("Snapshots: --")
         self.skill_chip = QLabel("Skill: --")
         self.job_chip = QLabel("Job: --")
-        for chip in [self.session_chip, self.profile_chip, self.runtime_chip, self.health_chip, self.workspace_chip, self.skill_chip, self.job_chip]:
+        for chip in [
+            self.session_chip,
+            self.profile_chip,
+            self.runtime_chip,
+            self.health_chip,
+            self.workspace_chip,
+            self.git_chip,
+            self.snapshot_chip,
+            self.skill_chip,
+            self.job_chip,
+        ]:
             chip.setObjectName("codingChip")
             chips.addWidget(chip)
         hero_layout.addLayout(chips)
@@ -247,12 +259,21 @@ class CodingStudioPanel(QWidget):
         repo_map = dict(self.snapshot.get("repo_map") or {})
         active_job = dict(self.snapshot.get("active_job") or {})
         coding_memory = dict(self.snapshot.get("coding_memory") or {})
+        scratchpad = dict(self.snapshot.get("scratchpad") or {})
+        compaction_summary = str(self.snapshot.get("compaction_summary") or "").strip()
+        change_plan = dict(self.snapshot.get("change_plan") or {})
+        edit_risk = dict(self.snapshot.get("edit_risk") or {})
+        git_status = dict(self.snapshot.get("git_status") or {})
+        snapshots = [dict(row) for row in list(self.snapshot.get("snapshots") or [])]
+        sandbox = dict(self.snapshot.get("sandbox") or {})
 
         self.session_chip.setText(f"Session: {session.get('session_id') or '--'}")
         self.profile_chip.setText(f"Profile: {workspace.get('profile_display_name') or workspace.get('profile_key') or '--'}")
         self.runtime_chip.setText(f"Runtimes: {', '.join(runtimes[:4]) if runtimes else '--'}")
         self.health_chip.setText(f"Health: {health.get('status') or scorecard.get('status') or '--'}")
         self.workspace_chip.setText(f"Workspace: {workspace.get('root_path') or '--'}")
+        self.git_chip.setText(f"Git: {git_status.get('summary') or '--'}")
+        self.snapshot_chip.setText(f"Snapshots: {len(snapshots)}")
         self.skill_chip.setText(f"Skill: {skill_hint.get('capability') or '--'}")
         self.job_chip.setText(f"Job: {active_job.get('status') or '--'}")
 
@@ -269,8 +290,24 @@ class CodingStudioPanel(QWidget):
             welcome_blocks.append(f"Verify loop: {scorecard.get('summary')}")
         if repo_map.get("summary"):
             welcome_blocks.append(f"Repo map: {repo_map.get('summary')}")
+        if change_plan.get("summary"):
+            welcome_blocks.append(f"Change plan: {change_plan.get('summary')}")
+        if edit_risk.get("risk_level"):
+            welcome_blocks.append(
+                "Edit risk: "
+                f"{str(edit_risk.get('risk_level') or '').upper()} "
+                f"(score {int(edit_risk.get('risk_score') or 0)})"
+            )
         if coding_memory.get("summary"):
             welcome_blocks.append(f"Context memory: {coding_memory.get('summary')}")
+        if compaction_summary:
+            welcome_blocks.append(f"Resume summary:\n{compaction_summary}")
+        if git_status.get("summary"):
+            welcome_blocks.append(f"Git: {git_status.get('summary')}")
+        if sandbox.get("summary"):
+            welcome_blocks.append(f"Sandbox: {sandbox.get('summary')}")
+        if snapshots:
+            welcome_blocks.append(f"Snapshots available: {len(snapshots)}")
         if benchmark_pack.get("label"):
             welcome_blocks.append(f"Benchmark pack: {benchmark_pack.get('label')} [{benchmark_pack.get('profile_key') or '--'}]")
         self.welcome_text.setPlainText("\n".join(block for block in welcome_blocks if block).strip() or "No active coding session yet.")
@@ -278,6 +315,8 @@ class CodingStudioPanel(QWidget):
         self.next_actions_list.clear()
         for item in list(self.snapshot.get("next_actions") or []):
             self.next_actions_list.addItem(QListWidgetItem(str(item)))
+        for item in list(scratchpad.get("open_loops") or [])[:2]:
+            self.next_actions_list.addItem(QListWidgetItem(f"Open loop: {item}"))
         if self.next_actions_list.count() == 0:
             self.next_actions_list.addItem(QListWidgetItem("Open or start a coding session to populate next actions."))
 
@@ -295,8 +334,20 @@ class CodingStudioPanel(QWidget):
             label = str(item)
             self.repo_list.addItem(QListWidgetItem(label))
             existing_repo_items.add(label)
+        for row in list(repo_map.get("focus_symbols") or [])[:4]:
+            symbols = [str(item).strip() for item in list(row.get("symbols") or []) if str(item).strip()]
+            if not symbols:
+                continue
+            label = f"{row.get('path')}  [symbols={', '.join(symbols[:3])}]"
+            if label not in existing_repo_items:
+                self.repo_list.addItem(QListWidgetItem(label))
+                existing_repo_items.add(label)
         for row in list(repo_map.get("hotspot_files") or [])[:4]:
             label = f"{row.get('path')}  [imports={len(list(row.get('imports') or []))}]"
+            if label not in existing_repo_items:
+                self.repo_list.addItem(QListWidgetItem(label))
+        for changed in list(git_status.get("changed_files") or [])[:4]:
+            label = f"{changed}  [git]"
             if label not in existing_repo_items:
                 self.repo_list.addItem(QListWidgetItem(label))
         if self.repo_list.count() == 0:
@@ -340,10 +391,28 @@ class CodingStudioPanel(QWidget):
             self.health_list.addItem(QListWidgetItem(f"Environment: {health.get('summary')}"))
         if scorecard.get("summary"):
             self.health_list.addItem(QListWidgetItem(f"Scorecard: {scorecard.get('summary')}"))
+        if edit_risk.get("risk_level"):
+            self.health_list.addItem(
+                QListWidgetItem(
+                    "Edit risk: "
+                    f"{str(edit_risk.get('risk_level') or '').upper()} "
+                    f"(score {int(edit_risk.get('risk_score') or 0)})"
+                )
+            )
+        for reason in list(edit_risk.get("reasons") or [])[:3]:
+            self.health_list.addItem(QListWidgetItem(f"Risk flag: {reason}"))
+        for step in list(change_plan.get("steps") or [])[:2]:
+            self.health_list.addItem(QListWidgetItem(f"Plan: {step}"))
         for row in list(health.get("recommendations") or [])[:3]:
             self.health_list.addItem(QListWidgetItem(f"Next: {row}"))
         if benchmark_pack.get("label"):
             self.health_list.addItem(QListWidgetItem(f"Benchmark: {benchmark_pack.get('label')} [{benchmark_pack.get('profile_key')}]"))
+        if git_status.get("summary"):
+            self.health_list.addItem(QListWidgetItem(f"Git: {git_status.get('summary')}"))
+        if snapshots:
+            self.health_list.addItem(QListWidgetItem(f"Snapshots: {len(snapshots)} available"))
+        if sandbox.get("summary"):
+            self.health_list.addItem(QListWidgetItem(f"Sandbox: {sandbox.get('summary')}"))
         if self.health_list.count() == 0:
             self.health_list.addItem(QListWidgetItem("Health and verification details will appear here."))
 

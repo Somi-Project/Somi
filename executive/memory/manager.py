@@ -32,9 +32,11 @@ from .embedder import EmbeddingUnavailable, OllamaEmbedder
 from .extract import heuristics, llm_extract, sanitize, should_call_llm, to_snake
 from .frozen import FrozenMemoryStore
 from .retrieve import not_expired
-from .retrieval import apply_filters_and_caps, rerank_items, rrf_fuse
+from .retrieval import apply_filters_and_caps, infer_memory_focus, rerank_items, rrf_fuse
 from .injection import build_injection_payload
 from .doctor import memory_doctor_report
+from .preference_graph import build_preference_graph
+from .review import build_memory_review
 from .session_summary import build_summary_from_recent_turns, should_update_summary, trim_summary_text
 from .store import SQLiteMemoryStore, utcnow_iso
 from .vault import KnowledgeVaultService
@@ -87,6 +89,44 @@ class Memory3Manager:
     def _debug(self, msg: str, *args):
         if MEMORY_DEBUG:
             logger.info("[memory3] " + msg, *args)
+
+    def build_preference_graph_sync(self, user_id: Optional[str] = None, limit: int = 24) -> Dict[str, Any]:
+        uid = self._resolve_user_id(user_id)
+        profile_rows = self.store.latest_by_scope(uid, "profile", limit=max(1, int(limit or 24)))
+        pref_rows = self.store.latest_by_scope(uid, "preferences", limit=max(1, int(limit or 24)))
+        return build_preference_graph(profile_rows=profile_rows, preference_rows=pref_rows, limit=limit)
+
+    async def build_preference_graph(self, user_id: Optional[str] = None, limit: int = 24) -> Dict[str, Any]:
+        return self.build_preference_graph_sync(user_id=user_id, limit=limit)
+
+    def build_memory_review_sync(self, user_id: Optional[str] = None, limit: int = 6, review_window: int = 96) -> Dict[str, Any]:
+        uid = self._resolve_user_id(user_id)
+        memory_items = self.store.list_items(
+            uid,
+            scopes=[
+                "profile",
+                "preferences",
+                "conversation",
+                "user_memory",
+                "project_memory",
+                "object_memory",
+                "projects",
+                "tasks",
+            ],
+            statuses=["active", "superseded", "expired"],
+            limit=max(12, int(review_window or 96)),
+        )
+        return build_memory_review(
+            items=memory_items,
+            recent_events=self.store.recent_events(uid, limit=max(12, int(review_window or 96))),
+            pinned_rows=self.store.pinned_items(uid, limit=12),
+            summary_row=self.store.latest_session_summary(uid) or {},
+            preference_graph=self.build_preference_graph_sync(uid, limit=12),
+            limit=limit,
+        )
+
+    async def build_memory_review(self, user_id: Optional[str] = None, limit: int = 6, review_window: int = 96) -> Dict[str, Any]:
+        return self.build_memory_review_sync(user_id=user_id, limit=limit, review_window=review_window)
 
     def _resolve_user_id(self, explicit_user_id: Optional[str] = None, session_id: Optional[str] = None) -> str:
         return str(explicit_user_id or session_id or self.user_id or "default_user")
@@ -150,8 +190,13 @@ class Memory3Manager:
         return 0.7
 
     def _lane_for_fact(self, key: str, kind: str) -> str:
+        k = (key or "").lower()
         if key in PINNED_KEYS or kind in ("profile", "preference"):
             return "pinned"
+        if any(token in k for token in ("goal", "project", "task", "reminder", "deadline", "milestone")):
+            return "workflows"
+        if kind == "constraint":
+            return "workflows"
         return "facts"
 
     def _slot_key_for_fact(self, key: str, kind: str) -> str:
@@ -353,7 +398,7 @@ class Memory3Manager:
         item = {
             "id": item_id,
             "user_id": uid,
-            "lane": "facts",
+            "lane": "identity" if kind == "user" else ("workflows" if kind == "project" else "evidence"),
             "type": "typed_memory",
             "entity": "knowledge",
             "mkey": key,
@@ -538,7 +583,7 @@ class Memory3Manager:
         item = {
             "id": sid,
             "user_id": uid,
-            "lane": "facts",
+            "lane": "summary",
             "type": "summary",
             "entity": "user",
             "mkey": "session_summary",
@@ -609,6 +654,7 @@ class Memory3Manager:
         issues = list(snapshot.get("scan_issues") or [])
         source_summary = self.vault.source_summary(uid)
         retrieval_trace = self.store.latest_retrieval_trace(uid) or {}
+        review = self.build_memory_review_sync(uid, limit=4, review_window=64)
         return {
             "user_id": uid,
             "expired_count": expired_count,
@@ -617,12 +663,18 @@ class Memory3Manager:
             "snapshot_present": bool(snapshot),
             "vault_source_count": int(source_summary.get("total_sources") or 0),
             "retrieval_trace_present": bool(retrieval_trace),
+            "review_status": str(review.get("status") or "idle"),
+            "review_alert_count": int(review.get("alert_count") or 0),
+            "promotion_count": int(review.get("promotion_count") or 0),
+            "conflict_count": int(review.get("conflict_count") or 0),
+            "stale_count": int(review.get("stale_count") or 0),
         }
 
     async def build_injected_context(self, user_text: str, user_id: Optional[str] = None, thread_hint: str = "") -> str:
         uid = self._resolve_user_id(user_id)
         self.store.expire_items(utcnow_iso())
         query = str(user_text or "").strip()
+        focus = infer_memory_focus(query, thread_hint=str(thread_hint or ""))
 
         scopes = [
             "profile",
@@ -661,36 +713,68 @@ class Memory3Manager:
             item["_retrieved_via"] = via or ["rrf"]
             item["_fts_score"] = float(fts_map.get(item_id, 0.0))
         ranked = rerank_items(candidates, query, thread_hint=str(thread_hint or ""))
+        caps_by_scope = {
+            "profile": 4,
+            "preferences": 5,
+            "user_memory": 3,
+            "project_memory": 4,
+            "object_memory": 4,
+            "projects": 3,
+            "tasks": 3,
+            "conversation": 6,
+            "skills": 3,
+            "session_summary": 1,
+            "vault": 4,
+        }
+        caps_by_lane = {
+            "pinned": 5,
+            "identity": 3,
+            "workflows": 5,
+            "skills": 3,
+            "summary": 2,
+            "evidence": 4,
+            "vault": 4,
+            "facts": 8,
+        }
+        if focus == "coding":
+            caps_by_scope.update({"project_memory": 5, "skills": 4, "tasks": 4, "projects": 4, "vault": 2, "preferences": 3})
+            caps_by_lane.update({"workflows": 6, "skills": 4, "facts": 6})
+        elif focus == "reminders":
+            caps_by_scope.update({"tasks": 5, "projects": 4, "conversation": 4, "vault": 2})
+            caps_by_lane.update({"workflows": 6, "summary": 2, "facts": 5})
+        elif focus == "planning":
+            caps_by_scope.update({"projects": 5, "tasks": 4, "project_memory": 5, "conversation": 4, "profile": 3})
+            caps_by_lane.update({"workflows": 6, "summary": 2, "facts": 5})
+        elif focus == "personal":
+            caps_by_scope.update({"profile": 5, "preferences": 6, "user_memory": 4, "conversation": 4, "vault": 2, "skills": 2})
+            caps_by_lane.update({"pinned": 6, "identity": 4, "facts": 5})
+        elif focus == "research":
+            caps_by_scope.update({"vault": 5, "object_memory": 5, "project_memory": 4, "conversation": 4, "preferences": 3})
+            caps_by_lane.update({"evidence": 5, "vault": 5, "facts": 5})
         filtered = apply_filters_and_caps(
             ranked,
-            caps_by_scope={
-                "profile": 4,
-                "preferences": 5,
-                "user_memory": 3,
-                "project_memory": 4,
-                "object_memory": 4,
-                "projects": 3,
-                "tasks": 3,
-                "conversation": 6,
-                "skills": 3,
-                "session_summary": 1,
-                "vault": 4,
-            },
+            caps_by_scope=caps_by_scope,
+            caps_by_lane=caps_by_lane,
         )
-
-        profile_rows = self.store.latest_by_scope(uid, "profile", limit=4)
-        pref_rows = self.store.latest_by_scope(uid, "preferences", limit=5)
-        user_rows = self.store.latest_by_scope(uid, "user_memory", limit=3)
-        project_rows = self.store.latest_by_scope(uid, "project_memory", limit=4)
-        object_rows = self.store.latest_by_scope(uid, "object_memory", limit=4)
+        profile_limit = 5 if focus == "personal" else 4
+        pref_limit = 6 if focus == "personal" else (3 if focus == "research" else 5)
+        user_limit = 4 if focus == "personal" else 3
+        project_limit = 5 if focus in {"coding", "planning", "research"} else 4
+        object_limit = 5 if focus == "research" else 4
+        profile_rows = self.store.latest_by_scope(uid, "profile", limit=profile_limit)
+        pref_rows = self.store.latest_by_scope(uid, "preferences", limit=pref_limit)
+        user_rows = self.store.latest_by_scope(uid, "user_memory", limit=user_limit)
+        project_rows = self.store.latest_by_scope(uid, "project_memory", limit=project_limit)
+        object_rows = self.store.latest_by_scope(uid, "object_memory", limit=object_limit)
         summary = self.store.latest_session_summary(uid)
         summary_text = str((summary or {}).get("text") or "")
-        goal_rows = self._active_goal_rows(uid, limit=3)
-        reminder_rows = self.store.active_reminders(uid, scope="task", limit=3)
-        operational_items = self._operational_session_hits(query, uid, limit=3)
-        vault_rows = [item for item in filtered if str(item.get("scope") or "") == "vault"][:4]
+        goal_rows = self._active_goal_rows(uid, limit=4 if focus in {"planning", "reminders"} else 3)
+        reminder_rows = self.store.active_reminders(uid, scope="task", limit=4 if focus == "reminders" else 3)
+        operational_items = self._operational_session_hits(query, uid, limit=4 if focus in {"planning", "coding"} else 3)
+        vault_rows = [item for item in filtered if str(item.get("scope") or "") == "vault"][: (5 if focus == "research" else 4)]
         vault_source_summary = self.vault.source_summary(uid)
         latest_sources = self.vault.list_sources(uid, limit=6)
+        memory_review = self.build_memory_review_sync(uid, limit=6, review_window=96)
 
         block = build_injection_payload(
             profile_rows=profile_rows,
@@ -708,6 +792,7 @@ class Memory3Manager:
         retrieval_trace = {
             "trace_id": "",
             "query": query[:240],
+            "focus": focus,
             "scope_counts": self.store.scope_counts(uid, scopes=scopes),
             "fts_hit_count": len(fts_hits),
             "vector_hit_count": len(vec_ids),
@@ -738,7 +823,9 @@ class Memory3Manager:
         self.frozen_store.write_snapshot(
             uid,
             {
+                "preference_graph": self.build_preference_graph_sync(uid, limit=12),
                 "query": query[:240],
+                "focus": focus,
                 "profile_rows": profile_rows[:4],
                 "preference_rows": pref_rows[:5],
                 "user_rows": user_rows[:3],
@@ -754,6 +841,7 @@ class Memory3Manager:
                 "relevant_items": filtered[:8],
                 "retrieval_trace_id": trace_id,
                 "retrieval_trace": retrieval_trace,
+                "memory_review": memory_review,
                 "payload": block,
                 "scan_issues": [],
             },
@@ -798,6 +886,7 @@ class Memory3Manager:
         retrieval_trace = self.store.latest_retrieval_trace(uid)
         source_summary = self.vault.source_summary(uid)
         latest_sources = self.vault.list_sources(uid, limit=5)
+        review_summary = self.build_memory_review_sync(uid, limit=4, review_window=64)
         return memory_doctor_report(
             user_id=uid,
             query=query,
@@ -812,6 +901,7 @@ class Memory3Manager:
             retrieval_trace=retrieval_trace,
             source_summary=source_summary,
             latest_sources=latest_sources,
+            review_summary=review_summary,
         )
 
     # compatibility APIs used by agent

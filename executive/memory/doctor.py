@@ -18,6 +18,7 @@ def memory_doctor_report(
     retrieval_trace: Dict | None = None,
     source_summary: Dict | None = None,
     latest_sources: List[Dict] | None = None,
+    review_summary: Dict | None = None,
 ) -> str:
     lines = [
         "[Memory Doctor]",
@@ -57,6 +58,15 @@ def memory_doctor_report(
             lines.append(
                 f"  - {item.get('scope', '')} | {item.get('retrieved_via', [])} | {item.get('preview', '')}"
             )
+    if review_summary:
+        lines.extend(["", "Memory review:"])
+        lines.append(f"- status: {dict(review_summary).get('status', 'idle')}")
+        lines.append(f"- summary: {dict(review_summary).get('summary', '')}")
+        lines.append(
+            f"- promote={dict(review_summary).get('promotion_count', 0)} | "
+            f"conflicts={dict(review_summary).get('conflict_count', 0)} | "
+            f"stale={dict(review_summary).get('stale_count', 0)}"
+        )
     lines.extend(["", "DB stats:"])
     for k, v in stats.items():
         lines.append(f"- {k}: {v}")

@@ -32,6 +32,8 @@ def classify_source_type(url: str, *, provider_hint: str = "") -> str:
         return "academic"
     if any(h in host for h in ("arxiv.org", "pubmed", "semanticscholar.org")) or hint in {"pubmed", "arxiv", "semantic_scholar"}:
         return "academic"
+    if any(h in host for h in ("github.com", "gitlab.com", "readthedocs.io", "pypi.org", "npmjs.com")):
+        return "vendor"
     if any(h in host for h in ("wikipedia.org", "britannica.com")):
         return "reference"
     if any(h in host for h in ("reuters.com", "apnews.com", "bbc.com", "bbc.co.uk")):

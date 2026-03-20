@@ -1,0 +1,20 @@
+{
+  "manifest_id": "continuity_field_health",
+  "name": "Continuity Field Health Checklist",
+  "description": "Create a compact triage and observation checklist for offline shelter health reviews.",
+  "script": "topic = 'field health'\nif 'topic' in inputs:\n  topic = str(inputs['topic'])\nchecklist = [\n  'Start with airway, breathing, circulation, and major bleeding.',\n  'Clean and dress wounds with the safest clean water available.',\n  'Record symptoms, temperature, medicines, and reassessment times.',\n  'Escalate immediately if breathing, bleeding, or infection signs worsen.'\n]\nemit('built field health checklist')\nresult = {\n  'topic': topic,\n  'summary': 'Field health checklist prepared.',\n  'checklist': checklist,\n}\n",
+  "allowed_tools": [],
+  "backend": "local",
+  "timeout_seconds": 20,
+  "max_tool_calls": 1,
+  "metadata": {
+    "category": "continuity",
+    "domain": "health",
+    "tags": [
+      "health",
+      "triage",
+      "wounds",
+      "stabilization"
+    ]
+  }
+}

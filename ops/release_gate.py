@@ -14,8 +14,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from ops.backup_verifier import verify_recent_backups
+from ops.artifact_hygiene import run_artifact_hygiene
 from ops.champion_scorecard import build_champion_scorecard, build_finality_summary
+from ops.context_budget import run_context_budget_status
 from ops.doctor import run_somi_doctor
+from ops.docs_integrity import run_docs_integrity
+from ops.offline_resilience import run_offline_resilience
 from ops.replay_harness import run_replay_harness
 from ops.security_audit import run_security_audit
 
@@ -84,6 +88,10 @@ def _dashboard_row(
 def build_subsystem_dashboards(
     *,
     doctor: dict[str, Any],
+    docs_integrity: dict[str, Any],
+    artifact_hygiene: dict[str, Any],
+    offline_resilience: dict[str, Any],
+    context_budget: dict[str, Any] | None = None,
     security: dict[str, Any],
     backups: dict[str, Any],
     eval_report: dict[str, Any],
@@ -91,6 +99,7 @@ def build_subsystem_dashboards(
     benchmark_baseline: dict[str, Any],
     finality_summary: dict[str, Any],
 ) -> list[dict[str, Any]]:
+    context_budget = dict(context_budget or {})
     severity_counts = dict(dict(security.get("summary") or {}).get("severity_counts") or {})
     high_findings = _safe_int(severity_counts.get("HIGH")) + _safe_int(severity_counts.get("CRITICAL"))
     medium_findings = _safe_int(severity_counts.get("MEDIUM"))
@@ -132,11 +141,53 @@ def build_subsystem_dashboards(
             "Framework Doctor",
             status="ready" if bool(doctor.get("ok")) else "blocked",
             subtitle=(
-                f"tools={_safe_int(dict(doctor.get('tools') or {}).get('available'))}/"
+                f"tools={_safe_int(dict(doctor.get('tools') or {}).get('available_count'))}/"
                 f"{_safe_int(dict(doctor.get('tools') or {}).get('total'))} | "
                 f"repairs={len(list(doctor.get('applied_repairs') or []))}"
             ),
             detail=doctor,
+        ),
+        _dashboard_row(
+            "docs",
+            "Contributor Docs",
+            status="ready" if bool(docs_integrity.get("ok")) else "warn",
+            subtitle=(
+                f"missing={len(list(docs_integrity.get('missing_files') or []))} | "
+                f"broken_links={len(list(docs_integrity.get('broken_links') or []))}"
+            ),
+            detail=docs_integrity,
+        ),
+        _dashboard_row(
+            "artifacts",
+            "Artifact Hygiene",
+            status="ready" if bool(artifact_hygiene.get("ok")) else "warn",
+            subtitle=(
+                f"warnings={len(list(artifact_hygiene.get('warnings') or []))} | "
+                f"candidates={len(list(artifact_hygiene.get('cleanup_candidates') or []))}"
+            ),
+            detail=artifact_hygiene,
+        ),
+        _dashboard_row(
+            "offline_resilience",
+            "Offline Resilience",
+            status="ready" if bool(offline_resilience.get("ok")) and str(offline_resilience.get("readiness") or "") == "ready" else ("warn" if bool(offline_resilience.get("ok")) else "blocked"),
+            subtitle=(
+                f"packs={dict(offline_resilience.get('knowledge_packs') or {}).get('pack_count', 0)} | "
+                f"agentpedia={offline_resilience.get('agentpedia_pages_count', 0)} | "
+                f"cache={offline_resilience.get('evidence_cache_records', 0)}"
+            ),
+            detail=offline_resilience,
+        ),
+        _dashboard_row(
+            "context_budget",
+            "Context Budget",
+            status="warn" if str(context_budget.get("status") or "") == "warn" else ("watch" if str(context_budget.get("status") or "") == "watch" else str(context_budget.get("status") or "idle")),
+            subtitle=(
+                f"compacted={context_budget.get('compacted_session_count', 0)} | "
+                f"pressure={context_budget.get('pressure_count', 0)} | "
+                f"tokens={context_budget.get('estimated_tokens', 0)}"
+            ),
+            detail=context_budget,
         ),
         _dashboard_row(
             "finality_lab",
@@ -171,12 +222,17 @@ def build_subsystem_dashboards(
 def _collect_blockers(
     *,
     doctor: dict[str, Any],
+    docs_integrity: dict[str, Any],
+    artifact_hygiene: dict[str, Any],
+    offline_resilience: dict[str, Any],
+    context_budget: dict[str, Any] | None = None,
     security: dict[str, Any],
     backups: dict[str, Any],
     eval_report: dict[str, Any],
     replay: dict[str, Any],
     benchmark_baseline: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    context_budget = dict(context_budget or {})
     blockers: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     severity_counts = dict(dict(security.get("summary") or {}).get("severity_counts") or {})
@@ -206,6 +262,52 @@ def _collect_blockers(
         warnings.append({"type": "security", "message": f"Security audit reported {medium_findings} MEDIUM finding(s)."})
     if _safe_int(backups.get("verified_count")) < 3 and _safe_int(backups.get("verified_count")) > 0:
         warnings.append({"type": "backup", "message": "Fewer than three verified backups are available for confident rollback."})
+    if not bool(docs_integrity.get("ok")):
+        warnings.append(
+            {
+                "type": "docs",
+                "message": (
+                    "Contributor docs integrity has gaps "
+                    f"(missing={len(list(docs_integrity.get('missing_files') or []))}, "
+                    f"broken_links={len(list(docs_integrity.get('broken_links') or []))})."
+                ),
+            }
+        )
+    if not bool(artifact_hygiene.get("ok")):
+        warnings.append(
+            {
+                "type": "artifacts",
+                "message": (
+                    "Generated artifact hygiene is over budget "
+                    f"(warnings={len(list(artifact_hygiene.get('warnings') or []))}, "
+                    f"cleanup_candidates={len(list(artifact_hygiene.get('cleanup_candidates') or []))})."
+                ),
+            }
+        )
+    if not bool(offline_resilience.get("ok")) or str(offline_resilience.get("readiness") or "") != "ready":
+        warnings.append(
+            {
+                "type": "offline_resilience",
+                "message": (
+                    "Offline resilience is not fully ready "
+                    f"(readiness={offline_resilience.get('readiness', 'blocked')}, "
+                    f"missing={len(list(offline_resilience.get('missing_categories') or []))}, "
+                    f"fallback_order={len(list(offline_resilience.get('fallback_order') or []))})."
+                ),
+            }
+        )
+    if str(context_budget.get("status") or "") == "warn":
+        warnings.append(
+            {
+                "type": "context_budget",
+                "message": (
+                    "Context budget pressure is high "
+                    f"(pressure={context_budget.get('pressure_count', 0)}, "
+                    f"compacted={context_budget.get('compacted_session_count', 0)}, "
+                    f"tokens={context_budget.get('estimated_tokens', 0)})."
+                ),
+            }
+        )
 
     return blockers, warnings
 
@@ -348,6 +450,7 @@ def _render_release_markdown(report: dict[str, Any]) -> str:
         f"- Eval score: {dict(report.get('eval') or {}).get('score', 0.0)}",
         f"- Replay issues: {dict(dict(report.get('replay') or {}).get('summary') or {}).get('issue_count', 0)}",
         f"- Verified backups: {dict(report.get('backups') or {}).get('verified_count', 0)}",
+        f"- Artifact warnings: {len(list(dict(report.get('artifact_hygiene') or {}).get('warnings') or []))}",
         f"- Finality measured: {finality.get('measured_count', 0)}/{finality.get('pack_count', 0)}",
         "",
         "## Subsystems",
@@ -399,6 +502,7 @@ def format_release_gate(report: dict[str, Any]) -> str:
         f"- warnings: {len(list(report.get('warnings') or []))}",
         f"- eval_score: {dict(report.get('eval') or {}).get('score', 0.0)}",
         f"- verified_backups: {dict(report.get('backups') or {}).get('verified_count', 0)}",
+        f"- artifact_warnings: {len(list(dict(report.get('artifact_hygiene') or {}).get('warnings') or []))}",
         f"- finality_measured: {dict(report.get('finality_lab') or {}).get('measured_count', 0)}/{dict(report.get('finality_lab') or {}).get('pack_count', 0)}",
     ]
     blockers = list(report.get("blockers") or [])
@@ -454,6 +558,10 @@ def run_release_gate(
         from runtime.eval_harness import run_eval_harness
 
         doctor = run_somi_doctor(root, apply_repairs=False)
+        docs_integrity = run_docs_integrity(root)
+        artifact_hygiene = run_artifact_hygiene(root)
+        offline_resilience = run_offline_resilience(root)
+        context_budget = run_context_budget_status(root)
         security = run_security_audit(root)
         backups = verify_recent_backups(root / "backups", limit=5)
         benchmark_baseline = build_benchmark_baseline(root, user_id=user_id)
@@ -463,6 +571,10 @@ def run_release_gate(
 
     blockers, warnings = _collect_blockers(
         doctor=doctor,
+        docs_integrity=docs_integrity,
+        artifact_hygiene=artifact_hygiene,
+        offline_resilience=offline_resilience,
+        context_budget=context_budget,
         security=security,
         backups=backups,
         eval_report=eval_report,
@@ -471,6 +583,10 @@ def run_release_gate(
     )
     dashboards = build_subsystem_dashboards(
         doctor=doctor,
+        docs_integrity=docs_integrity,
+        artifact_hygiene=artifact_hygiene,
+        offline_resilience=offline_resilience,
+        context_budget=context_budget,
         security=security,
         backups=backups,
         eval_report=eval_report,
@@ -505,6 +621,10 @@ def run_release_gate(
         "ok": status != "fail",
         "readiness_score": score,
         "doctor": doctor,
+        "docs_integrity": docs_integrity,
+        "artifact_hygiene": artifact_hygiene,
+        "offline_resilience": offline_resilience,
+        "context_budget": context_budget,
         "security": security,
         "backups": backups,
         "benchmark_baseline": benchmark_baseline,

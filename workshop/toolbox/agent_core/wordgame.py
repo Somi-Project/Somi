@@ -4,14 +4,33 @@ import logging
 import os
 import re
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(message)s',
-    handlers=[
-        logging.FileHandler('agent.log'),
-        logging.StreamHandler()
-    ]
-)
+
+def _ensure_wordgame_logging() -> None:
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    target = os.path.abspath("agent.log")
+    has_agent_log = False
+    has_stream = False
+    for handler in list(root_logger.handlers):
+        base = getattr(handler, "baseFilename", "")
+        if base and os.path.abspath(str(base)) == target:
+            has_agent_log = True
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, logging.FileHandler):
+            has_stream = True
+
+    if not has_agent_log:
+        file_handler = logging.FileHandler("agent.log")
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        root_logger.addHandler(file_handler)
+    if not has_stream:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setLevel(logging.INFO)
+        stream_handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+        root_logger.addHandler(stream_handler)
+
+
+_ensure_wordgame_logging()
 logger = logging.getLogger(__name__)
 
 class WordGameHandler:

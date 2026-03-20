@@ -1,0 +1,19 @@
+{
+  "manifest_id": "continuity_sanitation",
+  "name": "Continuity Sanitation Checklist",
+  "description": "Create a compact sanitation and sterilization action list for degraded shelter conditions.",
+  "script": "topic = 'sanitation'\nif 'topic' in inputs:\n  topic = str(inputs['topic'])\nchecklist = [\n  'Separate clean water, waste, and sharps zones.',\n  'Document a disinfection method and contact time for shared tools.',\n  'Review hand-washing, waste handling, and illness isolation routines.',\n  'Confirm the next sanitation review window and owner.'\n]\nemit('built sanitation continuity checklist')\nresult = {\n  'topic': topic,\n  'summary': 'Sanitation continuity checklist prepared.',\n  'checklist': checklist,\n}\n",
+  "allowed_tools": [],
+  "backend": "local",
+  "timeout_seconds": 20,
+  "max_tool_calls": 1,
+  "metadata": {
+    "category": "continuity",
+    "domain": "sanitation",
+    "tags": [
+      "sanitation",
+      "sterilization",
+      "hygiene"
+    ]
+  }
+}

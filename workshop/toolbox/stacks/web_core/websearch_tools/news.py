@@ -26,6 +26,9 @@ from datetime import datetime
 from runtime.ollama_options import build_ollama_chat_options
 
 logger = logging.getLogger(__name__)
+_NEWS_SEARX_TIMEOUT_S = 12.0
+_NEWS_REFINER_TIMEOUT_S = 4.0
+_NEWS_DDG_TIMEOUT_S = 12.0
 
 try:
     from config.settings import DEFAULT_NEWS_REGION as _DEFAULT_NEWS_REGION
@@ -510,10 +513,27 @@ Query: {raw_q}
         q_hyg, applied_term = _apply_ambiguity_hygiene(q)
 
         # Keep searx aligned to original user wording (before LLM refinement).
-        searx_results = await self._searx_news(q_hyg, max_results=15)
+        try:
+            searx_results = await asyncio.wait_for(self._searx_news(q_hyg, max_results=15), timeout=_NEWS_SEARX_TIMEOUT_S)
+        except Exception:
+            searx_results = []
 
-        refined_query, _ = await asyncio.to_thread(self._refine_query_llm, q_hyg)
-        ddg_results = await self._search_once(refined_query, retries=retries, backoff_factor=backoff_factor)
+        topical_news_query = any(term in q_hyg.lower() for term in ("headlines", "news", "today", "breaking"))
+        if searx_results and topical_news_query and self._query_relevance_score(q_hyg, searx_results) >= 1:
+            refined_query = q_hyg
+            ddg_results = []
+        else:
+            try:
+                refined_query, _ = await asyncio.wait_for(asyncio.to_thread(self._refine_query_llm, q_hyg), timeout=_NEWS_REFINER_TIMEOUT_S)
+            except Exception:
+                refined_query, _ = (q_hyg, q_hyg)
+            try:
+                ddg_results = await asyncio.wait_for(
+                    self._search_once(refined_query, retries=retries, backoff_factor=backoff_factor),
+                    timeout=_NEWS_DDG_TIMEOUT_S,
+                )
+            except Exception:
+                ddg_results = []
 
         if self._prefer_ddg_over_searx(q_hyg, searx_results, ddg_results):
             results = ddg_results or searx_results
@@ -530,8 +550,17 @@ Query: {raw_q}
                 if "today" not in forced.lower() and "news" not in forced.lower():
                     forced = forced + " news today"
 
-                forced_ddg = await self._search_once(forced, retries=2, backoff_factor=backoff_factor)
-                forced_searx = await self._searx_news(forced, max_results=15)
+                try:
+                    forced_ddg = await asyncio.wait_for(
+                        self._search_once(forced, retries=2, backoff_factor=backoff_factor),
+                        timeout=_NEWS_DDG_TIMEOUT_S,
+                    )
+                except Exception:
+                    forced_ddg = []
+                try:
+                    forced_searx = await asyncio.wait_for(self._searx_news(forced, max_results=15), timeout=_NEWS_SEARX_TIMEOUT_S)
+                except Exception:
+                    forced_searx = []
 
                 if self._prefer_ddg_over_searx(forced, forced_searx, forced_ddg):
                     forced_results = forced_ddg or forced_searx
@@ -545,8 +574,17 @@ Query: {raw_q}
 
         if not results:
             broader = q.replace("today", "").strip() + " news"
-            broader_searx = await self._searx_news(broader, max_results=15)
-            broader_ddg = await self._search_once(broader, retries=2, backoff_factor=backoff_factor)
+            try:
+                broader_searx = await asyncio.wait_for(self._searx_news(broader, max_results=15), timeout=_NEWS_SEARX_TIMEOUT_S)
+            except Exception:
+                broader_searx = []
+            try:
+                broader_ddg = await asyncio.wait_for(
+                    self._search_once(broader, retries=2, backoff_factor=backoff_factor),
+                    timeout=_NEWS_DDG_TIMEOUT_S,
+                )
+            except Exception:
+                broader_ddg = []
             if self._prefer_ddg_over_searx(broader, broader_searx, broader_ddg):
                 results = broader_ddg or broader_searx
             else:

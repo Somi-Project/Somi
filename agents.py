@@ -167,11 +167,24 @@ from workshop.toolbox.coding import CodingSessionService
 from workshop.toolbox.runtime import InternalToolRuntime
 os.makedirs(os.path.join("sessions", "logs"), exist_ok=True)
 LOG_PATH = os.path.join("sessions", "logs", "bot.log")
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler(LOG_PATH, encoding="utf-8")],
-)
+
+
+def _ensure_bot_file_logging() -> None:
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    target = os.path.abspath(LOG_PATH)
+    for handler in list(root_logger.handlers):
+        base = getattr(handler, "baseFilename", "")
+        if base and os.path.abspath(str(base)) == target:
+            return
+
+    file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    root_logger.addHandler(file_handler)
+
+
+_ensure_bot_file_logging()
 logger = logging.getLogger(__name__)
 logging.getLogger("http.client").setLevel(logging.WARNING)
 logging.getLogger("urllib3").setLevel(logging.WARNING)
@@ -212,7 +225,7 @@ class Agent:
             with open(self.personality_config, "r", encoding="utf-8") as f:
                 self.characters = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            logger.error(f"Failed to load personality config ({e}) â€” using default")
+            logger.error(f"Failed to load personality config ({e}) - using default")
             self.characters = {
                 self.default_agent_key: {
                     "role": "assistant",
@@ -310,6 +323,7 @@ class Agent:
         self._current_response_timeout_s = 150.0
         self._allow_parallel_tools = True
         self._tool_call_history_by_user: Dict[str, List[Dict[str, Any]]] = {}
+        self._tool_loop_warning_cache_by_user: Dict[str, Dict[str, bool]] = {}
         self._state_ledger_cache_by_user: Dict[str, Dict[str, Any]] = {}
         self._model_failures_by_name: Dict[str, int] = {}
         self._model_cooldowns_by_name: Dict[str, float] = {}
@@ -679,7 +693,7 @@ class Agent:
         reason_l = str(reason or "").lower()
         if "insufficient_sources" not in reason_l and "web search unavailable" not in reason_l:
             return content
-        return (content or "").rstrip() + "\n\nI couldnâ€™t fetch enough sources right now, so I answered without citations."
+        return (content or "").rstrip() + "\n\nI couldn't fetch enough sources right now, so I answered without citations."
     def _is_analysis_intent(self, prompt: str) -> bool:
         p = (prompt or "").strip().lower()
         if not p:
@@ -735,6 +749,7 @@ from agent_methods.history_methods import (
     _push_history_for,
     _tool_loop_config,
     _tool_call_history,
+    _tool_loop_warning_cache,
     _run_tool_with_loop_guard,
 )
 from agent_methods.coding_methods import _handle_coding_command_or_intent
@@ -847,6 +862,7 @@ _EXTRACTED_AGENT_METHODS = [
     _push_history_for,
     _tool_loop_config,
     _tool_call_history,
+    _tool_loop_warning_cache,
     _run_tool_with_loop_guard,
     _handle_coding_command_or_intent,
     _handle_starter_command_or_intent,

@@ -190,6 +190,7 @@ def run_security_audit(root_dir: str | Path = ".") -> dict[str, Any]:
         "findings": findings,
         "repair_suggestions": repairs,
         "backups": backups,
+        "backup_roots": list(backups.get("roots") or []),
         "runtime_secrets": secret_status,
     }
 

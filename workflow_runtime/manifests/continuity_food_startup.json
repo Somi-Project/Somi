@@ -1,0 +1,20 @@
+{
+  "manifest_id": "continuity_food_startup",
+  "name": "Continuity Food Startup Checklist",
+  "description": "Create a compact sequence for restarting food production with limited inputs.",
+  "script": "seeds = ['beans', 'greens']\nif 'seeds' in inputs:\n  seeds = list(inputs['seeds'])\nchecklist = [\n  'Protect seed stock and label source, date, and germination notes.',\n  'Stabilize water and soil inputs before scaling the growing area.',\n  'Start with one repeatable crop block and record outcomes.',\n  'Separate compost and waste streams so food production stays sanitary.'\n]\nemit('built food startup checklist')\nresult = {\n  'seed_plan': seeds,\n  'summary': 'Food startup checklist prepared.',\n  'checklist': checklist,\n}\n",
+  "allowed_tools": [],
+  "backend": "local",
+  "timeout_seconds": 20,
+  "max_tool_calls": 1,
+  "metadata": {
+    "category": "continuity",
+    "domain": "food",
+    "tags": [
+      "food",
+      "seeds",
+      "garden",
+      "aquaponics"
+    ]
+  }
+}

@@ -43,7 +43,8 @@ def __init__(self):
     self.toolbox_runtime = InternalToolRuntime(ops_control=self.ops_control)
     self.coding_user_id = "default_user"
     self.coding_service = CodingSessionService()
-    self.coding_studio_builder = CodingStudioSnapshotBuilder(coding_service=self.coding_service)
+    self.codex_control = CodexControlPlane(coding_service=self.coding_service)
+    self.coding_studio_builder = CodingStudioSnapshotBuilder(coding_service=self.coding_service, control_plane=self.codex_control)
     self.coding_studio_window = None
     self.toolbox_panel = None
     self.research_studio_builder = ResearchStudioSnapshotBuilder()
@@ -109,11 +110,21 @@ def __init__(self):
     self.hud_assets = {k: _find_hud_asset(v) for k, v in HUD_ASSET_STEMS.items()}
     self.hud_overlay = None
     self.command_stream_card = None
+    self.research_pulse_card = None
+    self.research_mode_label = None
+    self.research_query_label = None
+    self.research_summary_label = None
+    self.research_trace_label = None
+    self.research_meta_label = None
+    self.research_signal_meter = None
     self.core_splitter = None
     self.heartbeat_stream_list = None
     self.stream_meters = {}
     self.stream_orbit = None
     self.stream_status_chips = {}
+    self.theme_mode_buttons = {}
+    self.theme_mode_slider = None
+    self.theme_mode_syncing = False
     self._custom_background_path = ""
     self.control_room_panel = None
     self.heartbeat_service.set_shared_context(
@@ -136,6 +147,7 @@ def __init__(self):
 
     self.build_top_status_strip()
     self.build_center_panel()
+    self.update_research_pulse()
     self.build_bottom_tabs()
     self.build_quick_action_bar()
     self.load_gui_theme_preference()

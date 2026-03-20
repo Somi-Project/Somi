@@ -1,0 +1,18 @@
+{
+  "id": "power_recovery_basics",
+  "name": "Power Recovery Basics",
+  "category": "power",
+  "summary": "Battery care, load triage, and small-system recovery basics for shelter power.",
+  "tags": [
+    "power",
+    "battery",
+    "inverter",
+    "solar",
+    "microgrid"
+  ],
+  "status": "ready",
+  "schema_version": 1,
+  "variant": "compact",
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19"
+}

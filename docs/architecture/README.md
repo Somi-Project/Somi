@@ -13,6 +13,8 @@ Read these in order:
 - [SYSTEM_MAP.md](/C:/somex/docs/architecture/SYSTEM_MAP.md)
 - [BOUNDARIES.md](/C:/somex/docs/architecture/BOUNDARIES.md)
 - [RECOVERY_PLAYBOOK.md](/C:/somex/docs/architecture/RECOVERY_PLAYBOOK.md)
+- [CONTRIBUTOR_MAP.md](/C:/somex/docs/architecture/CONTRIBUTOR_MAP.md)
+- [NEWCOMER_CHECKLIST.md](/C:/somex/docs/architecture/NEWCOMER_CHECKLIST.md)
 - [system_manifest.json](/C:/somex/docs/architecture/system_manifest.json)
 
 Phase status:
@@ -29,4 +31,4 @@ Phase status:
 - `Phase 10`: agent studio / control room views for sessions, tasks, subagents, workflows, automations, channels, memory, and failures
 - `Phase 11`: runtime profiles, rollout gates, policy decision logging, and local model/tool observability
 - `Phase 12`: trajectory capture, replay scorecards, workflow-derived skill suggestions, and regression-pack inventory
-- `Reference plan`: [upgradeplan.md](/C:/somex/upgradeplan.md)
+- `Reference plan`: [update.md](/C:/somex/update.md)

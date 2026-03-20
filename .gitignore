@@ -7,16 +7,37 @@ __pycache__/
 # Generated backups and temp research mirrors
 backups/
 temp/
+audit/backups/
+audit/external_repos/
+
+# Generated audit artifacts
+audit/*.json
+audit/*.jsonl
+audit/*.png
+audit/*.txt
+audit/*.out
+audit/*.err
+audit/phase*.md
+audit/*phase*.md
+audit/*summary.md
+audit/*report*.md
+audit/reports/
 
 # Runtime sessions and local state
 sessions/
 jobs/history/*.json
 jobs/journal/*.jsonl
 database/**/*.db
+database/**/*.db-shm
+database/**/*.db-wal
 database/**/*.sqlite
 database/**/*.sqlite3
 database/memory_store/MEMORY_*.md
 database/agentpedia/state.json
+database/agentpedia/pages/
+state/node_exchange/
+state/research_cache/*.json
+sessions/recovery_drill_workflows/
 
 # Logs and scratch files
 *.log

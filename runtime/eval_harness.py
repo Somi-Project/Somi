@@ -3,6 +3,7 @@
 import json
 import time
 import types
+import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -11,14 +12,26 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+AUDIT_ROOT = ROOT / "audit"
+if str(AUDIT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIT_ROOT))
 
 from runtime.audit import append_event, audit_path, verify_audit_log
 from runtime.history_compaction import build_compaction_summary
 from runtime.tool_execution import IdempotencyCache, ToolExecutionPolicy, execute_with_policy
 from runtime.golden_scenarios import run_golden_scenarios
-from audit.benchmark_baseline import build_benchmark_baseline
-from audit.benchmark_packs import list_benchmark_packs
-from audit.regression_packs import list_regression_packs
+try:
+    from audit.benchmark_baseline import build_benchmark_baseline
+    from audit.benchmark_packs import list_benchmark_packs
+    from audit.regression_packs import list_regression_packs
+except ModuleNotFoundError:
+    audit_module = sys.modules.get("audit")
+    audit_file = str(getattr(audit_module, "__file__", "") or "").replace("\\", "/").lower()
+    if audit_file.endswith("/runtime/audit.py"):
+        del sys.modules["audit"]
+    build_benchmark_baseline = importlib.import_module("audit.benchmark_baseline").build_benchmark_baseline
+    list_benchmark_packs = importlib.import_module("audit.benchmark_packs").list_benchmark_packs
+    list_regression_packs = importlib.import_module("audit.regression_packs").list_regression_packs
 from learning import SkillSuggestionEngine, TrajectoryStore, build_scorecard
 from ops import OpsControlPlane
 from workshop.toolbox.agent_core.continuity import render_state_ledger_block, update_state_ledger

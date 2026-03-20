@@ -37,6 +37,7 @@ from gui.qt import (
     QPushButton,
     QRect,
     QRectF,
+    QSlider,
     QSplitter,
     QTabWidget,
     QTextEdit,
@@ -61,7 +62,7 @@ from gui.nodemanager import NodeManagerPanel
 from gui.nodemanager_data import NodeManagerSnapshotBuilder
 from gui.researchstudio import ResearchStudioPanel
 from gui.researchstudio_data import ResearchStudioSnapshotBuilder
-from gui.themes import app_stylesheet, dialog_stylesheet, get_theme_name, list_themes, set_theme
+from gui.themes import COLORS, app_stylesheet, dialog_stylesheet, get_theme_name, list_themes, set_theme
 from automations import AutomationEngine, AutomationStore
 from gateway import DeliveryGateway, GatewayService
 from heartbeat.integrations.gui_bridge import HeartbeatGUIBridge
@@ -72,7 +73,7 @@ from ops import OpsControlPlane
 from state import SessionEventStore
 from subagents import SubagentRegistry, SubagentStatusStore
 from workshop.skills import SkillManager, SkillMarketplaceService, StarterStudioService
-from workshop.toolbox.coding import CodingSessionService
+from workshop.toolbox.coding import CodexControlPlane, CodingSessionService
 from workflow_runtime import WorkflowManifestStore, WorkflowRunStore
 from workshop.toolbox.registry import ToolRegistry
 from workshop.toolbox.runtime import InternalToolRuntime
@@ -434,6 +435,79 @@ class StatusOrbitWidget(QWidget):
             )
 
 
+class ResearchSignalMeterWidget(QWidget):
+    """Compact research meter for recent browse intensity and caution level."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumHeight(24)
+        self.setMaximumHeight(24)
+        self._mode = "standby"
+        self._sources_count = 0
+        self._limitations_count = 0
+
+    def _mode_color(self) -> QColor:
+        mode = str(self._mode or "").lower()
+        if mode in {"official", "official_direct"}:
+            return QColor(COLORS.get("accent_ok", "#92c5ff"))
+        if mode == "github":
+            return QColor(COLORS.get("accent_soft", "#ffb04d"))
+        if mode in {"deep", "deep_browse", "direct_url"}:
+            return QColor(COLORS.get("accent", "#ff8c1a"))
+        if mode in {"quick", "quick_web"}:
+            return QColor(COLORS.get("text_muted", "#7f8ea3"))
+        return QColor(COLORS.get("border_soft", "#5a6470"))
+
+    def set_report(self, *, mode: str, sources_count: int, limitations_count: int):
+        self._mode = str(mode or "standby").strip().lower() or "standby"
+        self._sources_count = max(0, int(sources_count or 0))
+        self._limitations_count = max(0, int(limitations_count or 0))
+        self.setToolTip(
+            f"{str(self._mode or 'standby').upper()} | {self._sources_count} source(s) | {self._limitations_count} caution(s)"
+        )
+        self.update()
+
+    def paintEvent(self, _):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        body = QRectF(self.rect()).adjusted(0.5, 2.5, -0.5, -2.5)
+        bg = QColor(COLORS.get("pill_bg", "#1a1d22"))
+        border = QColor(COLORS.get("border_soft", "#5a6470"))
+        accent = self._mode_color()
+        muted = QColor(COLORS.get("button_alt", "#30343b"))
+        caution = QColor("#ff6a57" if self._limitations_count else COLORS.get("button_alt", "#30343b"))
+
+        painter.setPen(border)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(body, 9.0, 9.0)
+
+        inner = body.adjusted(8.0, 5.0, -26.0, -5.0)
+        source_gap = 4.0
+        source_width = max(7.0, (inner.width() - (source_gap * 5.0)) / 6.0)
+        source_y = inner.top()
+        active_sources = min(6, max(0, self._sources_count))
+        for index in range(6):
+            rect = QRectF(inner.left() + index * (source_width + source_gap), source_y, source_width, 5.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(accent if index < active_sources else muted)
+            painter.drawRoundedRect(rect, 2.5, 2.5)
+
+        caution_gap = 5.0
+        caution_width = max(10.0, (inner.width() - (caution_gap * 2.0)) / 3.0)
+        caution_y = inner.top() + 8.0
+        active_limits = min(3, max(0, self._limitations_count))
+        for index in range(3):
+            rect = QRectF(inner.left() + index * (caution_width + caution_gap), caution_y, caution_width, 4.0)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(caution if index < active_limits else muted)
+            painter.drawRoundedRect(rect, 2.0, 2.0)
+
+        dot_rect = QRectF(body.right() - 15.0, body.center().y() - 4.0, 8.0, 8.0)
+        painter.setBrush(accent)
+        painter.drawEllipse(dot_rect)
+
+
 class HoverIntelCard(QFrame):
     hovered = pyqtSignal(bool)
 
@@ -625,8 +699,10 @@ from somicontroller_parts.layout_methods import (
     build_state_model,
     build_top_status_strip,
     build_center_panel,
+    _rebalance_core_splitter,
     build_embedded_chat,
     build_presence_panel,
+    build_research_pulse_panel,
     build_intel_stream,
     build_heartbeat_stream,
     build_activity_stream_card,
@@ -661,6 +737,13 @@ from somicontroller_parts.studio_methods import (
     send_coding_prompt,
 )
 from somicontroller_parts.settings_methods import (
+    _apply_theme_mode,
+    _sync_theme_mode_controls,
+    _theme_key_from_slider,
+    _theme_mode_definitions,
+    _theme_mode_emoji,
+    _theme_mode_label,
+    _theme_slider_index,
     read_gui_settings,
     write_gui_settings,
     load_gui_theme_preference,
@@ -682,6 +765,11 @@ from somicontroller_parts.settings_methods import (
 )
 from somicontroller_parts.status_methods import (
     push_activity,
+    _research_mode_badge,
+    _research_trace_preview,
+    _research_timeline_preview,
+    _research_source_preview,
+    update_research_pulse,
     update_clock,
     update_heartbeat_label,
     poll_heartbeat_events,
@@ -764,8 +852,10 @@ _EXTRACTED_SOMI_GUI_METHODS = [
     build_state_model,
     build_top_status_strip,
     build_center_panel,
+    _rebalance_core_splitter,
     build_embedded_chat,
     build_presence_panel,
+    build_research_pulse_panel,
     build_intel_stream,
     build_heartbeat_stream,
     build_activity_stream_card,
@@ -796,6 +886,13 @@ _EXTRACTED_SOMI_GUI_METHODS = [
     draft_coding_skill,
     open_coding_workspace_folder,
     send_coding_prompt,
+    _theme_mode_definitions,
+    _theme_mode_emoji,
+    _theme_mode_label,
+    _theme_slider_index,
+    _theme_key_from_slider,
+    _sync_theme_mode_controls,
+    _apply_theme_mode,
     read_gui_settings,
     write_gui_settings,
     load_gui_theme_preference,
@@ -815,6 +912,11 @@ _EXTRACTED_SOMI_GUI_METHODS = [
     read_help_file,
     show_help,
     push_activity,
+    _research_mode_badge,
+    _research_trace_preview,
+    _research_timeline_preview,
+    _research_source_preview,
+    update_research_pulse,
     update_clock,
     update_heartbeat_label,
     poll_heartbeat_events,

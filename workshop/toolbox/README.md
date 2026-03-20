@@ -2,6 +2,21 @@
 
 Toolchain for building, registering, dispatching, and running internal tools.
 
+## Contributor Path
+
+- overall contributor map:
+  - [`docs/architecture/CONTRIBUTOR_MAP.md`](/C:/somex/docs/architecture/CONTRIBUTOR_MAP.md)
+- capability stack map:
+  - [`stacks/README.md`](/C:/somex/workshop/toolbox/stacks/README.md)
+- agent routing helpers:
+  - [`agent_core/README.md`](/C:/somex/workshop/toolbox/agent_core/README.md)
+- coding control plane:
+  - [`coding/README.md`](/C:/somex/workshop/toolbox/coding/README.md)
+- browser session layer:
+  - [`browser/README.md`](/C:/somex/workshop/toolbox/browser/README.md)
+- research artifact layer:
+  - [`research_supermode/README.md`](/C:/somex/workshop/toolbox/research_supermode/README.md)
+
 ## Core Modules
 - `builder`, `installer`, `loader`, `dispatch`, `registry`, `runtime`
 - `bridge` for internal create/dispatch helpers used by executive and skills paths

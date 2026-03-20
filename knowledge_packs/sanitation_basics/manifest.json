@@ -1,0 +1,17 @@
+{
+  "id": "sanitation_basics",
+  "name": "Sanitation Basics",
+  "category": "sanitation",
+  "summary": "Sterilization, waste separation, and camp hygiene basics for recovery conditions.",
+  "tags": [
+    "sanitation",
+    "sterilization",
+    "hygiene",
+    "waste"
+  ],
+  "status": "ready",
+  "schema_version": 1,
+  "variant": "compact",
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19"
+}
