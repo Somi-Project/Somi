@@ -33,6 +33,7 @@ def build_approval_summary(ops_control: Any, *, limit: int = 12) -> dict[str, An
     if ops_control is None:
         return {
             "active_profile": "",
+            "active_autonomy_profile": "",
             "allowed": 0,
             "blocked": 0,
             "recent_policy_events": [],
@@ -44,6 +45,7 @@ def build_approval_summary(ops_control: Any, *, limit: int = 12) -> dict[str, An
     ][-max(1, int(limit or 12)) :]
     return {
         "active_profile": str(dict(snapshot.get("active_profile") or {}).get("profile_id") or ""),
+        "active_autonomy_profile": str(dict(snapshot.get("active_autonomy_profile") or {}).get("profile_id") or ""),
         "allowed": int(counts.get("allowed", 0)),
         "blocked": int(counts.get("blocked", 0)),
         "recent_policy_events": recent_policy_events,

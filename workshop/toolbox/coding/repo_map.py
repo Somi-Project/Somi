@@ -27,6 +27,12 @@ _TEXT_EXTENSIONS = {
 }
 _PY_IMPORT_RE = re.compile(r"^\s*(?:from\s+([a-zA-Z0-9_\.]+)\s+import|import\s+([a-zA-Z0-9_\. ,]+))", re.MULTILINE)
 _JS_IMPORT_RE = re.compile(r"""(?:import\s+.*?\s+from\s+['"]([^'"]+)['"]|require\(\s*['"]([^'"]+)['"]\s*\))""")
+_PY_SYMBOL_RE = re.compile(r"^\s*(?:async\s+def|def|class)\s+([A-Za-z_][A-Za-z0-9_]*)", re.MULTILINE)
+_JS_SYMBOL_RE = re.compile(
+    r"^\s*(?:export\s+)?(?:async\s+function|function|class)\s+([A-Za-z_$][A-Za-z0-9_$]*)"
+    r"|^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:async\s*)?(?:\(|function)",
+    re.MULTILINE,
+)
 _TOKEN_RE = re.compile(r"[a-z0-9_]+")
 _ENTRYPOINT_HINTS = {
     "main.py",
@@ -87,6 +93,19 @@ def _parse_imports(path: Path, content: str) -> list[str]:
             if target:
                 imports.append(target.strip())
     return list(dict.fromkeys(imports))
+
+
+def _extract_symbols(path: Path, content: str) -> list[str]:
+    rows: list[str] = []
+    suffix = path.suffix.lower()
+    if suffix == ".py":
+        rows.extend(match.group(1) for match in _PY_SYMBOL_RE.finditer(content) if match.group(1))
+    elif suffix in {".js", ".jsx", ".ts", ".tsx"}:
+        for match in _JS_SYMBOL_RE.finditer(content):
+            symbol = match.group(1) or match.group(2)
+            if symbol:
+                rows.append(symbol)
+    return list(dict.fromkeys([str(item).strip() for item in rows if str(item).strip()]))[:12]
 
 
 def _dependency_kind(value: str) -> str:
@@ -173,6 +192,7 @@ def build_repo_map(root_path: Path, *, objective: str = "", limit: int = 120) ->
 
         preview = _safe_text(path)
         imports = _parse_imports(path, preview)
+        symbols = _extract_symbols(path, preview)
         local_modules.update(_local_module_names(rel))
 
         tokens = _file_token_blob(rel, preview[:1000])
@@ -189,6 +209,8 @@ def build_repo_map(root_path: Path, *, objective: str = "", limit: int = 120) ->
                 "kind": kind,
                 "size": int(path.stat().st_size),
                 "imports": imports[:12],
+                "symbols": symbols,
+                "symbol_count": len(symbols),
                 "focus_score": int(focus_hits),
             }
         )
@@ -207,6 +229,17 @@ def build_repo_map(root_path: Path, *, objective: str = "", limit: int = 120) ->
         focus_files = [row["path"] for row in files if str(row.get("kind") or "") in {"source", "test"}][:8]
 
     hotspot_files = sorted(files, key=lambda row: (-len(list(row.get("imports") or [])), -int(row.get("size", 0))))[:8]
+    focus_symbol_rows = [
+        {"path": str(row.get("path") or ""), "symbols": list(row.get("symbols") or [])[:8]}
+        for row in files
+        if int(row.get("focus_score", 0)) > 0 and list(row.get("symbols") or [])
+    ][:8]
+    if not focus_symbol_rows:
+        focus_symbol_rows = [
+            {"path": str(row.get("path") or ""), "symbols": list(row.get("symbols") or [])[:8]}
+            for row in files
+            if str(row.get("kind") or "") == "source" and list(row.get("symbols") or [])
+        ][:8]
     summary_bits = [
         f"files={len(files)}",
         f"source={source_count}",
@@ -229,6 +262,7 @@ def build_repo_map(root_path: Path, *, objective: str = "", limit: int = 120) ->
         "doc_file_count": int(doc_count),
         "entrypoints": list(dict.fromkeys(entrypoints))[:6],
         "focus_files": focus_files,
+        "focus_symbols": focus_symbol_rows,
         "hotspot_files": hotspot_files,
         "external_dependencies": [
             {"name": name, "count": count}
@@ -258,6 +292,15 @@ def build_project_context_memory(
     focus_files = [str(item) for item in list(repo.get("focus_files") or []) if str(item).strip()]
     if focus_files:
         lines.append("Focus files: " + ", ".join(focus_files[:5]))
+    focus_symbols = [dict(item) for item in list(repo.get("focus_symbols") or []) if isinstance(item, dict)]
+    if focus_symbols:
+        labels: list[str] = []
+        for row in focus_symbols[:3]:
+            symbol_rows = [str(item).strip() for item in list(row.get("symbols") or []) if str(item).strip()]
+            if symbol_rows:
+                labels.append(f"{row.get('path')}: {', '.join(symbol_rows[:3])}")
+        if labels:
+            lines.append("Key symbols: " + " | ".join(labels))
     if health_payload.get("summary"):
         lines.append(f"Workspace health: {health_payload['summary']}")
     if job.get("scorecard"):
@@ -272,4 +315,5 @@ def build_project_context_memory(
         "summary": " | ".join(lines[:3]),
         "lines": lines[:6],
         "focus_files": focus_files[:8],
+        "focus_symbols": focus_symbols[:6],
     }

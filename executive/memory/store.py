@@ -451,6 +451,30 @@ class SQLiteMemoryStore:
             ).fetchall()
         return [dict(r) for r in rows]
 
+    def list_items(
+        self,
+        user_id: str,
+        *,
+        scopes: Optional[List[str]] = None,
+        statuses: Optional[List[str]] = None,
+        limit: int = 80,
+    ) -> List[Dict[str, Any]]:
+        params: list[Any] = [str(user_id)]
+        sql = "SELECT * FROM memory_items WHERE user_id=?"
+        if scopes:
+            placeholders = ",".join(["?"] * len(scopes))
+            sql += f" AND scope IN ({placeholders})"
+            params.extend([str(scope) for scope in scopes])
+        if statuses:
+            placeholders = ",".join(["?"] * len(statuses))
+            sql += f" AND status IN ({placeholders})"
+            params.extend([str(status) for status in statuses])
+        sql += " ORDER BY updated_at DESC, created_at DESC LIMIT ?"
+        params.append(max(1, int(limit or 80)))
+        with self._connect() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
     def latest_session_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(

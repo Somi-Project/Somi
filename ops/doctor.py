@@ -8,7 +8,11 @@ from typing import Any
 from workshop.toolbox.registry import ToolRegistry
 
 from .backup_verifier import verify_recent_backups
+from .context_budget import run_context_budget_status
+from .artifact_hygiene import run_artifact_hygiene
 from .control_plane import OpsControlPlane
+from .docs_integrity import run_docs_integrity
+from .offline_resilience import run_offline_resilience
 from .repair import apply_safe_repairs
 
 
@@ -40,9 +44,14 @@ def run_somi_doctor(root_dir: str | Path = ".", *, apply_repairs: bool = False) 
     ops = OpsControlPlane(root_dir=root / "sessions" / "ops")
     ops_snapshot = ops.snapshot(event_limit=12, metric_limit=24)
     backup_report = verify_recent_backups(root / "backups", limit=5)
+    backup_roots = list(backup_report.get("roots") or [])
+    docs_integrity = run_docs_integrity(root)
+    artifact_hygiene = run_artifact_hygiene(root)
+    offline_resilience = run_offline_resilience(root)
+    context_budget = run_context_budget_status(root)
 
     directories = {
-        "backups": (root / "backups").exists(),
+        "backups": bool(backup_roots),
         "sessions": (root / "sessions").exists(),
         "database": (root / "database").exists(),
         "docs_architecture": (root / "docs" / "architecture").exists(),
@@ -87,6 +96,42 @@ def run_somi_doctor(root_dir: str | Path = ".", *, apply_repairs: bool = False) 
                 "Repair missing tool paths, modules, or executables before relying on those capabilities.",
             )
         )
+    if not bool(docs_integrity.get("ok")):
+        issues.append(
+            _issue(
+                "MEDIUM",
+                "Contributor documentation has missing or stale checkpoints",
+                docs_integrity,
+                "Repair the contributor-map/readme coverage before calling the framework release-ready for newcomers.",
+            )
+        )
+    if not bool(artifact_hygiene.get("ok")):
+        issues.append(
+            _issue(
+                "LOW",
+                "Generated artifacts are drifting past the current hygiene budgets",
+                artifact_hygiene,
+                "Archive or trim older generated reports before the next long upgrade or benchmark pass.",
+            )
+        )
+    if not bool(offline_resilience.get("ok")):
+        issues.append(
+            _issue(
+                "LOW",
+                "Offline resilience posture is still too thin for degraded-network operation",
+                offline_resilience,
+                "Seed the missing local packs and cached evidence so Somi stays useful when the network is unavailable.",
+            )
+        )
+    if str(context_budget.get("status") or "") == "warn":
+        issues.append(
+            _issue(
+                "LOW",
+                "Long-running conversation context is under pressure",
+                context_budget,
+                "Resume or compact the flagged threads so Somi preserves constraints and open loops before context quality drops.",
+            )
+        )
 
     repair_suggestions = [issue["repair"] for issue in issues if str(issue.get("repair") or "").strip()]
     highest = max((_severity_rank(issue.get("severity", "LOW")) for issue in issues), default=0)
@@ -98,6 +143,7 @@ def run_somi_doctor(root_dir: str | Path = ".", *, apply_repairs: bool = False) 
         "directories": directories,
         "tools": {
             "total": len(tools),
+            "available_count": max(0, len(tools) - len(unavailable)),
             "unavailable_count": len(unavailable),
             "unavailable": unavailable[:10],
         },
@@ -107,6 +153,11 @@ def run_somi_doctor(root_dir: str | Path = ".", *, apply_repairs: bool = False) 
             "policy_decision_counts": dict(ops_snapshot.get("policy_decision_counts") or {}),
         },
         "backups": backup_report,
+        "backup_roots": backup_roots,
+        "docs_integrity": docs_integrity,
+        "artifact_hygiene": artifact_hygiene,
+        "offline_resilience": offline_resilience,
+        "context_budget": context_budget,
         "issues": issues,
         "repair_suggestions": repair_suggestions,
         "applied_repairs": applied_repairs,
@@ -133,8 +184,27 @@ def format_somi_doctor(report: dict[str, Any]) -> str:
             f"- unavailable: {tool_info.get('unavailable_count', 0)}",
             "",
             "Backups:",
+            f"- roots: {', '.join(list(report.get('backup_roots') or [])) or '--'}",
             f"- verified_recent: {dict(report.get('backups') or {}).get('verified_count', 0)}",
             f"- recent_seen: {dict(report.get('backups') or {}).get('recent_count', 0)}",
+            "",
+            "Docs:",
+            f"- ok: {bool(dict(report.get('docs_integrity') or {}).get('ok', False))}",
+            f"- broken_links: {len(list(dict(report.get('docs_integrity') or {}).get('broken_links') or []))}",
+            "",
+            "Artifacts:",
+            f"- ok: {bool(dict(report.get('artifact_hygiene') or {}).get('ok', False))}",
+            f"- warnings: {len(list(dict(report.get('artifact_hygiene') or {}).get('warnings') or []))}",
+            "",
+            "Offline:",
+            f"- ok: {bool(dict(report.get('offline_resilience') or {}).get('ok', False))}",
+            f"- readiness: {dict(report.get('offline_resilience') or {}).get('readiness', 'blocked')}",
+            f"- fallback_order: {', '.join(list(dict(report.get('offline_resilience') or {}).get('fallback_order') or [])) or '--'}",
+            "",
+            "Context:",
+            f"- status: {dict(report.get('context_budget') or {}).get('status', 'idle')}",
+            f"- pressure_threads: {dict(report.get('context_budget') or {}).get('pressure_count', 0)}",
+            f"- compacted_sessions: {dict(report.get('context_budget') or {}).get('compacted_session_count', 0)}",
             "",
             "Issues:",
         ]

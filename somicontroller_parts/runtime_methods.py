@@ -140,6 +140,20 @@ def preload_default_agent_and_chat_worker(self):
         logger.exception("Failed to prepare chat panel history")
         self.push_activity("core", f"Chat history preload failed: {exc}")
 
+    def _start_chat_worker():
+        try:
+            use_studies = True
+            if getattr(self, "chat_panel", None) is not None:
+                use_studies = bool(self.chat_panel.use_studies_check.isChecked())
+            self.ensure_chat_worker_running(use_studies=use_studies)
+            self.push_activity("core", "Chat worker pre-initialized")
+        except Exception as exc:
+            logger.exception("Failed to pre-initialize chat worker")
+            self.push_activity("core", f"Chat worker preload failed: {exc}")
+
+    QTimer.singleShot(0, _start_chat_worker)
+    QTimer.singleShot(700, _start_chat_worker)
+
 def _on_agent_warmed(self, ok: bool, detail: str):
     if ok:
         if self.agent_warmup_worker:
@@ -187,14 +201,26 @@ def ensure_chat_worker_running(self, use_studies: bool = True):
     self.chat_worker = ChatWorker(self, agent_key, use_studies, preloaded_agent=self.preloaded_agent)
     self.chat_worker.error_signal.connect(lambda msg: self.push_activity("core", f"Chat worker error: {msg}"))
     self.chat_worker.status_signal.connect(lambda status: self.push_activity("core", f"Chat worker status: {status}"))
+    def _handle_chat_worker_status(status):
+        normalized = str(status or "").strip().lower()
+        if normalized != "ready":
+            return
+        if self.chat_panel:
+            self.chat_panel.on_status("Ready")
+        if self._startup_chat_message_sent:
+            return
+        startup_msg = "Prime chat is ready - how can I help you today?"
+        if self.chat_panel:
+            self.chat_panel.chat_area.append(f"Somi: {startup_msg}\n")
+            self.chat_panel.chat_area.ensureCursorVisible()
+        self.push_activity("core", "Chat worker ready")
+        self._startup_chat_message_sent = True
+    self.chat_worker.status_signal.connect(_handle_chat_worker_status)
+    if self.chat_panel and not self._startup_chat_message_sent:
+        self.chat_panel.on_status("Warming up chat...")
     self.chat_worker.start()
     if self.chat_panel:
         self.chat_panel.attach_worker(self.chat_worker)
-        if not self._startup_chat_message_sent:
-            startup_msg = "Chat worker online - how can I help you today?"
-            self.chat_panel.chat_area.append(f"Somi: {startup_msg}\n")
-            self.chat_panel.append_history("system", startup_msg, str(getattr(self, "selected_agent_key", "")))
-            self._startup_chat_message_sent = True
 
 def stop_chat_worker(self):
     if self.chat_panel:

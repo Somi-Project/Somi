@@ -21,9 +21,21 @@ import logging.handlers
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 logger = logging.getLogger(__name__)
-handler = logging.handlers.TimedRotatingFileHandler('agent.log', when='midnight', interval=1, backupCount=7)
-handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
-logger.handlers = [handler]
+
+
+def _ensure_cli_rotating_logger() -> None:
+    target = os.path.abspath("agent.log")
+    for existing in list(logger.handlers):
+        base = getattr(existing, "baseFilename", "")
+        if isinstance(existing, logging.handlers.TimedRotatingFileHandler) and base and os.path.abspath(str(base)) == target:
+            return
+
+    handler = logging.handlers.TimedRotatingFileHandler("agent.log", when="midnight", interval=1, backupCount=7)
+    handler.setFormatter(logging.Formatter("%(asctime)s - %(message)s"))
+    logger.addHandler(handler)
+
+
+_ensure_cli_rotating_logger()
 
 CHARACTERS = {}
 ALIAS_TO_KEY = {}

@@ -41,6 +41,49 @@ except Exception:
         return {}
 
 
+def _research_mode_label(mode: str) -> str:
+    mapping = {
+        "quick": "Quick browse",
+        "quick_web": "Quick browse",
+        "deep": "Deep browse",
+        "deep_browse": "Deep browse",
+        "github": "GitHub browse",
+        "direct_url": "Direct page read",
+        "official": "Official-source browse",
+        "official_direct": "Official-source browse",
+    }
+    return mapping.get(str(mode or "").strip().lower(), "Browse")
+
+
+def _render_research_capsule(report) -> str:
+    payload = dict(report or {}) if isinstance(report, dict) else {}
+    mode_label = _research_mode_label(str(payload.get("mode") or ""))
+    trust_level = str(payload.get("trust_level") or "").strip().lower()
+    try:
+        sources_count = max(0, int(payload.get("sources_count") or 0))
+    except Exception:
+        sources_count = 0
+    try:
+        limitations_count = max(0, int(payload.get("limitations_count") or 0))
+    except Exception:
+        limitations_count = 0
+    headline = " ".join(str(payload.get("progress_headline") or "").split()).strip()
+    if not headline:
+        trace = [str(item).strip() for item in list(payload.get("trace") or []) if str(item).strip()]
+        headline = trace[0] if trace else " ".join(str(payload.get("execution_summary") or "").split()).strip()
+    headline = re.sub(r"^\d+\.\s*", "", headline)
+    parts = [mode_label]
+    if sources_count:
+        parts.append(f"{sources_count} source{'s' if sources_count != 1 else ''}")
+    if trust_level:
+        parts.append(f"trust {trust_level.upper()}")
+    if headline:
+        parts.append(headline[:128])
+    if limitations_count:
+        parts.append(f"{limitations_count} caution{'s' if limitations_count != 1 else ''}")
+    return " | ".join([part for part in parts if part])
+
+
 class ChatPanel(QWidget):
     popout_requested = pyqtSignal()
     dock_requested = pyqtSignal()
@@ -64,6 +107,11 @@ class ChatPanel(QWidget):
         self.max_history_lines_to_load = 200
         self.history_loaded = False
         self.resume_context_once = ""
+        self.pending_send_prompt = ""
+        self.pending_send_attempts = 0
+        self.pending_send_timer = QTimer(self)
+        self.pending_send_timer.setSingleShot(True)
+        self.pending_send_timer.timeout.connect(self._flush_pending_prompt)
 
         self.spinner_frames = ["|", "/", "-", "\\"]
         self.spinner_index = 0
@@ -89,12 +137,12 @@ class ChatPanel(QWidget):
         header.addWidget(title)
         header.addStretch(1)
         self.btn_new_chat = QPushButton("New Chat")
-        self.btn_old_chats = QPushButton("Old Chats")
-        self.btn_coding = QPushButton("Coding Mode")
+        self.btn_old_chats = QPushButton("History")
+        self.btn_coding = QPushButton("Coding")
         self.btn_popout = QPushButton("Pop Out")
         self.btn_expand = QPushButton("Expand")
         self.btn_stop_chat = QPushButton("Stop Chat")
-        self.btn_stop_gen = QPushButton("Stop Generating")
+        self.btn_stop_gen = QPushButton("Stop Gen")
         for btn in [
             self.btn_new_chat,
             self.btn_old_chats,
@@ -147,8 +195,8 @@ class ChatPanel(QWidget):
         self.prompt_entry.setFont(QFont("Arial", 11))
         self.send_button = QPushButton("Send")
         self.send_button.setObjectName("chatSendButton")
-        self.prompt_entry.setMinimumHeight(46)
-        self.send_button.setMinimumHeight(46)
+        self.prompt_entry.setMinimumHeight(42)
+        self.send_button.setMinimumHeight(42)
         prompt_row.addWidget(self.prompt_entry, 1)
         prompt_row.addWidget(self.send_button)
         root.addLayout(prompt_row)
@@ -170,6 +218,17 @@ class ChatPanel(QWidget):
         self.status_label = QLabel("Status: Standby")
         self.status_label.setObjectName("chatStatusPill")
         root.addWidget(self.status_label)
+
+        for btn in [
+            self.send_button,
+            self.upload_image_button,
+            self.clear_image_button,
+            self.ocr_settings_button,
+            self.schema_editor_button,
+            self.apply_agent_button,
+        ]:
+            btn.setAutoDefault(False)
+            btn.setDefault(False)
 
         self.btn_new_chat.clicked.connect(self.start_new_chat)
         self.btn_old_chats.clicked.connect(self.open_old_chats)
@@ -229,6 +288,8 @@ class ChatPanel(QWidget):
         except Exception:
             pass
         self._set_connected_state(True)
+        if self.pending_send_prompt and not self.pending_send_timer.isActive():
+            self.pending_send_timer.start(120)
 
     def detach_worker(self):
         if self.worker:
@@ -270,6 +331,11 @@ class ChatPanel(QWidget):
                     continue
                 role = str(item.get("role", "system"))
                 text = str(item.get("text", ""))
+                if role == "system" and text.strip() in {
+                    "Chat worker online - how can I help you today?",
+                    "Prime chat is ready - how can I help you today?",
+                }:
+                    continue
                 prefix = "You" if role == "user" else "Somi" if role == "assistant" else "System"
                 self.chat_area.append(f"{prefix}: {text}\n")
             self.history_loaded = True
@@ -295,20 +361,67 @@ class ChatPanel(QWidget):
         prompt = self.prompt_entry.text().strip()
         if not prompt:
             return
-        if not self.worker or not self.worker.isRunning():
+        if not self._worker_ready():
             self.app.ensure_chat_worker_running(use_studies=self.use_studies_check.isChecked())
-            if not self.worker or not self.worker.isRunning():
-                self.on_error("Chat worker is not available.")
+            if not self._worker_ready():
+                self._queue_pending_prompt(prompt)
                 return
-        else:
-            # Keep active worker settings aligned with current panel toggle.
-            self.worker.use_studies = self.use_studies_check.isChecked()
-            try:
-                if self.worker.is_busy():
-                    self.on_status("Busy - stop current response first")
-                    return
-            except Exception:
-                pass
+        self._dispatch_prompt(prompt)
+
+    def _worker_ready(self) -> bool:
+        worker = self.worker
+        return bool(
+            worker
+            and worker.isRunning()
+            and getattr(worker, "running", False)
+            and getattr(worker, "agent", None) is not None
+        )
+
+    def _queue_pending_prompt(self, prompt: str) -> None:
+        self.pending_send_prompt = str(prompt)
+        self.pending_send_attempts = 0
+        self.prompt_entry.clear()
+        self.prompt_entry.setEnabled(False)
+        self.send_button.setEnabled(False)
+        self.btn_stop_gen.setEnabled(False)
+        self.on_status("Starting chat worker...")
+        if not self.pending_send_timer.isActive():
+            self.pending_send_timer.start(120)
+
+    def _flush_pending_prompt(self) -> None:
+        prompt = str(self.pending_send_prompt or "").strip()
+        if not prompt:
+            return
+        if self._worker_ready():
+            self.pending_send_prompt = ""
+            self.pending_send_attempts = 0
+            self._dispatch_prompt(prompt)
+            return
+        self.pending_send_attempts += 1
+        self.app.ensure_chat_worker_running(use_studies=self.use_studies_check.isChecked())
+        if self.pending_send_attempts in {20, 50, 90}:
+            self.on_status("Still warming chat engine...")
+        if self.pending_send_attempts >= 180:
+            self.pending_send_prompt = ""
+            self.pending_send_attempts = 0
+            self.prompt_entry.setEnabled(True)
+            self.send_button.setEnabled(True)
+            self.on_error("Chat worker took too long to initialize. Check the model stack and try again.")
+            return
+        if not self.pending_send_timer.isActive():
+            self.pending_send_timer.start(120)
+
+    def _dispatch_prompt(self, prompt: str) -> None:
+        if not self.worker:
+            self.on_error("Chat worker is not available.")
+            return
+        self.worker.use_studies = self.use_studies_check.isChecked()
+        try:
+            if self.worker.is_busy():
+                self.on_status("Busy - stop current response first")
+                return
+        except Exception:
+            pass
         self.on_status("Thinking...")
         self.prompt_entry.setEnabled(False)
         self.send_button.setEnabled(False)
@@ -332,9 +445,25 @@ class ChatPanel(QWidget):
 
     def on_response(self, user_input, ai_response, attachments):
         selected_name = self.name_combo.currentText() or self.app._selected_agent_name()
+        research_report = {}
+        visible_attachments = []
+        for att in attachments or []:
+            if str(att.get("type", "")).lower() == "research_report":
+                research_report = dict(att.get("payload") or {})
+                continue
+            visible_attachments.append(att)
         self.chat_area.append(f"You: {user_input}\n")
         self.chat_area.append(f"{selected_name}: {str(ai_response).strip()}\n")
-        for att in attachments or []:
+        if research_report:
+            if hasattr(self.app, "update_research_pulse"):
+                try:
+                    self.app.update_research_pulse(research_report, announce=True)
+                except Exception:
+                    pass
+            capsule = _render_research_capsule(research_report)
+            if capsule:
+                self.chat_area.append(f"Research note: {capsule}\n")
+        for att in visible_attachments:
             if str(att.get("type", "")).lower() == "image":
                 img_path = str(att.get("path", ""))
                 if os.path.exists(img_path):
@@ -349,6 +478,7 @@ class ChatPanel(QWidget):
         self.append_history("user", user_input, agent_key)
         self.append_history("assistant", str(ai_response).strip(), agent_key, attachments)
         self.chat_area.ensureCursorVisible()
+        self.pending_send_timer.stop()
         self.prompt_entry.setEnabled(True)
         self.send_button.setEnabled(True)
         self.btn_stop_gen.setEnabled(False)
@@ -359,7 +489,7 @@ class ChatPanel(QWidget):
 
     def on_status(self, text):
         self.spinner_state = text
-        if text in {"Idle", "Done", "Stopped"}:
+        if text in {"Idle", "Done", "Stopped", "Ready"}:
             self.spinner_timer.stop()
             self.status_label.setText(f"Status: {text}")
         else:
@@ -370,6 +500,9 @@ class ChatPanel(QWidget):
         had_ocr_context = bool(self.ocr_worker is not None or self.pending_ocr_prompt)
         self.ocr_worker = None
         self.pending_ocr_prompt = ""
+        self.pending_send_prompt = ""
+        self.pending_send_attempts = 0
+        self.pending_send_timer.stop()
         if had_ocr_context and bool(getattr(settings, "OCR_AUTO_CLEAR_IMAGE", True)):
             self.clear_image()
         self.chat_area.append(f"Error: {msg}\n")
@@ -390,6 +523,9 @@ class ChatPanel(QWidget):
         if self.worker and self.worker.isRunning():
             self.worker.cancel_current()
         self.cancel_ocr_if_running()
+        self.pending_send_prompt = ""
+        self.pending_send_attempts = 0
+        self.pending_send_timer.stop()
         self.prompt_entry.setEnabled(True)
         self.send_button.setEnabled(True)
         self.btn_stop_gen.setEnabled(False)

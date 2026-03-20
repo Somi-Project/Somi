@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from workshop.toolbox.coding import CodingSessionService, get_repo_task_benchmark_pack, list_workspace_files, workspace_health_report
+from workshop.toolbox.coding import CodexControlPlane, CodingSessionService, get_repo_task_benchmark_pack, list_workspace_files, workspace_health_report
 
 
 class CodingStudioSnapshotBuilder:
-    def __init__(self, coding_service: CodingSessionService | None = None) -> None:
+    def __init__(self, coding_service: CodingSessionService | None = None, control_plane: CodexControlPlane | None = None) -> None:
         self.coding_service = coding_service or CodingSessionService()
+        self.control_plane = control_plane or CodexControlPlane(coding_service=self.coding_service)
 
     def build(self, *, user_id: str = "default_user") -> dict[str, Any]:
         sessions = self.coding_service.list_sessions(user_id=user_id, limit=8)
@@ -24,6 +25,13 @@ class CodingStudioSnapshotBuilder:
         repo_map = dict(metadata.get("repo_map") or {})
         active_job = dict(metadata.get("active_job") or {})
         coding_memory = dict(metadata.get("coding_memory") or {})
+        scratchpad = dict(metadata.get("scratchpad") or {})
+        compaction_summary = str(metadata.get("compaction_summary") or "")
+        change_plan = dict(metadata.get("last_change_plan") or {})
+        edit_risk = dict(metadata.get("last_edit_risk") or {})
+        git_status: dict[str, Any] = {}
+        snapshots: list[dict[str, Any]] = []
+        sandbox: dict[str, Any] = {}
         session_id = str(session.get("session_id") or "").strip()
         if session_id:
             try:
@@ -32,6 +40,23 @@ class CodingStudioSnapshotBuilder:
                 live_job = None
             if isinstance(live_job, dict) and live_job:
                 active_job = live_job
+            try:
+                control_snapshot = self.control_plane.build_control_snapshot(session_id=session_id)
+            except Exception:
+                control_snapshot = {}
+            if isinstance(control_snapshot, dict) and bool(control_snapshot.get("ok")):
+                git_status = dict(control_snapshot.get("git") or {})
+                snapshots = [dict(row) for row in list(control_snapshot.get("snapshots") or [])]
+                sandbox = dict(control_snapshot.get("sandbox") or {})
+                workspace_files = [dict(row) for row in list(control_snapshot.get("workspace_files") or [])] or workspace_files
+                health = dict(control_snapshot.get("health") or {}) or health
+                benchmark_pack = dict(control_snapshot.get("benchmark_pack") or {}) or benchmark_pack
+                repo_map = dict(control_snapshot.get("repo_map") or {}) or repo_map
+                coding_memory = dict(control_snapshot.get("coding_memory") or {}) or coding_memory
+                scratchpad = dict(control_snapshot.get("scratchpad") or {}) or scratchpad
+                compaction_summary = str(control_snapshot.get("compaction_summary") or compaction_summary or "")
+                change_plan = dict(control_snapshot.get("change_plan") or {}) or change_plan
+                edit_risk = dict(control_snapshot.get("edit_risk") or {}) or edit_risk
         sessions_rows = [
             {
                 "id": str(item.get("session_id") or ""),
@@ -85,4 +110,11 @@ class CodingStudioSnapshotBuilder:
             "repo_map": repo_map,
             "active_job": active_job,
             "coding_memory": coding_memory,
+            "scratchpad": scratchpad,
+            "compaction_summary": compaction_summary,
+            "change_plan": change_plan,
+            "edit_risk": edit_risk,
+            "git_status": git_status,
+            "snapshots": snapshots,
+            "sandbox": sandbox,
         }

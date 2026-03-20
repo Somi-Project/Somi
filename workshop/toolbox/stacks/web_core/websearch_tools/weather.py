@@ -61,6 +61,59 @@ _WEATHER_INTENT_TRASH = (
     "sunrise", "sunset", "moon phase", "moon cycle",
     "in", "for", "at", "around", "near",
 )
+_US_STATE_ABBREVIATIONS = {
+    "al": "alabama",
+    "ak": "alaska",
+    "az": "arizona",
+    "ar": "arkansas",
+    "ca": "california",
+    "co": "colorado",
+    "ct": "connecticut",
+    "de": "delaware",
+    "dc": "district of columbia",
+    "fl": "florida",
+    "ga": "georgia",
+    "hi": "hawaii",
+    "id": "idaho",
+    "il": "illinois",
+    "in": "indiana",
+    "ia": "iowa",
+    "ks": "kansas",
+    "ky": "kentucky",
+    "la": "louisiana",
+    "me": "maine",
+    "md": "maryland",
+    "ma": "massachusetts",
+    "mi": "michigan",
+    "mn": "minnesota",
+    "ms": "mississippi",
+    "mo": "missouri",
+    "mt": "montana",
+    "ne": "nebraska",
+    "nv": "nevada",
+    "nh": "new hampshire",
+    "nj": "new jersey",
+    "nm": "new mexico",
+    "ny": "new york",
+    "nc": "north carolina",
+    "nd": "north dakota",
+    "oh": "ohio",
+    "ok": "oklahoma",
+    "or": "oregon",
+    "pa": "pennsylvania",
+    "ri": "rhode island",
+    "sc": "south carolina",
+    "sd": "south dakota",
+    "tn": "tennessee",
+    "tx": "texas",
+    "ut": "utah",
+    "vt": "vermont",
+    "va": "virginia",
+    "wa": "washington",
+    "wv": "west virginia",
+    "wi": "wisconsin",
+    "wy": "wyoming",
+}
 
 
 def _open_meteo_weather_desc(code) -> str:
@@ -142,6 +195,42 @@ def _build_searxng_weather_query(original_query: str, location: str) -> str:
     return f"weather in {loc}"
 
 
+def _expand_geocode_location(location: str) -> list[str]:
+    loc = _normalize_space(location).strip(" ,")
+    if not loc:
+        return []
+    candidates: list[str] = [loc]
+    match = re.match(r"^(.*?),\s*([a-z]{2})$", loc, re.IGNORECASE)
+    if match:
+        city = _normalize_space(match.group(1))
+        region = str(match.group(2)).strip().lower()
+        state_name = _US_STATE_ABBREVIATIONS.get(region)
+        if state_name:
+            candidates.insert(0, f"{city}, {state_name}, united states")
+            candidates.append(f"{city}, {state_name}")
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = candidate.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(candidate)
+    return deduped
+
+
+def _split_us_city_state(location: str) -> tuple[str, str] | None:
+    loc = _normalize_space(location).strip(" ,")
+    match = re.match(r"^(.*?),\s*([a-z]{2})$", loc, re.IGNORECASE)
+    if not match:
+        return None
+    city = _normalize_space(match.group(1))
+    state_name = _US_STATE_ABBREVIATIONS.get(str(match.group(2)).strip().lower())
+    if not city or not state_name:
+        return None
+    return city, state_name
+
+
 class WeatherHandler:
     def __init__(self, timezone: str | None = None):
         # Timezone defaults to settings, but caller can override.
@@ -191,13 +280,29 @@ class WeatherHandler:
 
     async def fetch_open_meteo_geocode(self, location: str) -> dict:
         try:
-            params = {"name": location, "count": 1, "language": "en", "format": "json"}
             async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
-                resp = await client.get(_OPEN_METEO_GEOCODE_URL, params=params)
-                resp.raise_for_status()
-                payload = resp.json() or {}
-                results = payload.get("results") or []
-                return results[0] if results else {}
+                us_city_state = _split_us_city_state(location)
+                if us_city_state:
+                    city, state_name = us_city_state
+                    params = {"name": city, "count": 5, "language": "en", "format": "json", "countryCode": "US"}
+                    resp = await client.get(_OPEN_METEO_GEOCODE_URL, params=params)
+                    resp.raise_for_status()
+                    payload = resp.json() or {}
+                    results = payload.get("results") or []
+                    for row in results:
+                        if str((row or {}).get("admin1") or "").strip().lower() == state_name:
+                            return row
+                    if results:
+                        return results[0]
+                for candidate in _expand_geocode_location(location):
+                    params = {"name": candidate, "count": 1, "language": "en", "format": "json"}
+                    resp = await client.get(_OPEN_METEO_GEOCODE_URL, params=params)
+                    resp.raise_for_status()
+                    payload = resp.json() or {}
+                    results = payload.get("results") or []
+                    if results:
+                        return results[0]
+                return {}
         except Exception as e:
             logger.error(f"Error fetching Open-Meteo geocode for '{location}': {e}")
             return {}

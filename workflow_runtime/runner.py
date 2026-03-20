@@ -212,6 +212,10 @@ class RestrictedWorkflowRunner:
         base_ctx.setdefault("channel", "workflow")
         base_ctx.setdefault("operation_mode", "read")
         base_ctx.setdefault("max_risk_tier", "LOW")
+        base_ctx.setdefault("task_id", str(spec.run_id))
+        base_ctx.setdefault("workflow_run_id", str(spec.run_id))
+        base_ctx.setdefault("active_autonomy_profile", str(base_ctx.get("active_autonomy_profile") or base_ctx.get("autonomy_profile") or "balanced"))
+        base_ctx.setdefault("background_task", bool(dict(spec.metadata or {}).get("background_task", False)))
         if hasattr(self.runtime, "build_workflow_call"):
             return self.runtime.build_workflow_call(allowed_tools=list(spec.allowed_tools or []), ctx=base_ctx)
 

@@ -315,6 +315,7 @@ If you are evaluating SOMI as a framework, these are the most important entry po
 - [`gateway`](gateway) - channel and node-facing control surface
 - [`speech`](speech) - local speech runtime
 - [`docs/architecture/SYSTEM_MAP.md`](docs/architecture/SYSTEM_MAP.md) - architecture backbone
+- [`docs/architecture/CONTRIBUTOR_MAP.md`](docs/architecture/CONTRIBUTOR_MAP.md) - fastest path for new contributors
 - [`docs/release/FRAMEWORK_FREEZE.md`](docs/release/FRAMEWORK_FREEZE.md) - current readiness snapshot
 
 ---

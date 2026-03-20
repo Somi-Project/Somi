@@ -1,0 +1,17 @@
+{
+  "id": "field_health_basics",
+  "name": "Field Health Basics",
+  "category": "health",
+  "summary": "Triage, wound cleaning, observation, and stabilization basics for offline conditions.",
+  "tags": [
+    "health",
+    "triage",
+    "wounds",
+    "stabilization"
+  ],
+  "status": "ready",
+  "schema_version": 1,
+  "variant": "compact",
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19"
+}

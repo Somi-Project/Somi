@@ -1,0 +1,18 @@
+{
+  "id": "food_production_basics",
+  "name": "Food Production Basics",
+  "category": "food",
+  "summary": "Seed, soil, water, and protected growing basics for rebuilding food supply.",
+  "tags": [
+    "food",
+    "seeds",
+    "soil",
+    "garden",
+    "aquaponics"
+  ],
+  "status": "ready",
+  "schema_version": 1,
+  "variant": "compact",
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19"
+}

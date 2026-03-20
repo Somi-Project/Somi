@@ -42,6 +42,8 @@ class EvidenceBundle:
     calculations: List[Dict[str, Any]]
     answer: str
     limitations: List[str] = field(default_factory=list)
+    research_brief: Dict[str, Any] = field(default_factory=dict)
+    section_bundles: List[Dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> Dict[str, Any]:
         return asdict(self)

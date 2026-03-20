@@ -9,13 +9,10 @@ from types import ModuleType
 from typing import Any, Callable
 
 from runtime.audit import append_event
+from runtime.action_policy import evaluate_action_policy
 from runtime.security_guard import (
     normalize_delivery_channel,
     normalize_execution_backend,
-    normalize_risk_tier,
-    risk_exceeds,
-    tool_allows_backend,
-    tool_allows_channel,
 )
 from runtime.tool_execution import (
     IdempotencyCache,
@@ -209,56 +206,42 @@ class InternalToolRuntime:
         return {"ok": True, "issues": []}
 
     def _enforce_policy(self, *, tool_name: str, entry: dict[str, Any], runtime_ctx: dict[str, Any], availability: dict[str, Any]) -> dict[str, Any]:
-        policy_meta = dict(entry.get("policy") or {})
-        read_only = bool(policy_meta.get("read_only", False))
-        requires_approval = bool(policy_meta.get("requires_approval", False))
-        risk_tier = normalize_risk_tier(policy_meta.get("risk_tier", "LOW"))
-        approved = bool(runtime_ctx.get("approved", False))
-        backend = normalize_execution_backend(runtime_ctx.get("backend") or runtime_ctx.get("execution_backend") or "local")
-        channel = normalize_delivery_channel(runtime_ctx.get("channel") or runtime_ctx.get("delivery_channel") or runtime_ctx.get("source") or "chat")
+        decision = evaluate_action_policy(
+            tool_name=tool_name,
+            entry=entry,
+            runtime_ctx=runtime_ctx,
+            availability=availability,
+        )
+        if not bool(decision.allowed):
+            reason = str(decision.blocked_reason or "policy_blocked")
+            if reason == "approval_required":
+                raise ToolRuntimeError(f"Tool {tool_name} requires approval before runtime execution")
+            if reason.startswith("mode:"):
+                requested_mode = reason.split(":", 1)[-1]
+                raise ToolRuntimeError(f"Tool {tool_name} is read_only; operation_mode '{requested_mode}' is disallowed")
+            if reason.startswith("risk:"):
+                raise ToolRuntimeError(
+                    f"Tool {tool_name} risk_tier {decision.risk_tier} exceeds allowed max_risk_tier {decision.max_risk_tier}"
+                )
+            if reason.startswith("unavailable:"):
+                raise ToolRuntimeError(f"Tool {tool_name} is unavailable: {reason.split(':', 1)[-1]}")
+            if reason.startswith("backend:"):
+                raise ToolRuntimeError(f"Tool {tool_name} does not allow backend '{decision.backend}'")
+            if reason.startswith("channel:"):
+                raise ToolRuntimeError(f"Tool {tool_name} is not exposed to channel '{decision.channel}'")
+            raise ToolRuntimeError(f"Tool {tool_name} blocked by action policy: {reason}")
 
-        if requires_approval and not approved:
-            raise ToolRuntimeError(f"Tool {tool_name} requires approval before runtime execution")
-
-        if (not read_only) and (not approved) and not bool(runtime_ctx.get("allow_unapproved_mutation", False)):
-            raise ToolRuntimeError(
-                f"Tool {tool_name} is not read_only and cannot run without approved context"
-            )
-
-        requested_mode = str(runtime_ctx.get("operation_mode") or "").strip().lower()
-        if read_only and requested_mode in {"write", "mutate", "delete", "execute"}:
-            raise ToolRuntimeError(
-                f"Tool {tool_name} is read_only; operation_mode '{requested_mode}' is disallowed"
-            )
-
-        max_risk_tier = normalize_risk_tier(runtime_ctx.get("max_risk_tier", "CRITICAL"))
-        if risk_exceeds(risk_tier, max_risk_tier):
-            raise ToolRuntimeError(
-                f"Tool {tool_name} risk_tier {risk_tier} exceeds allowed max_risk_tier {max_risk_tier}"
-            )
-        if not bool(availability.get("ok", True)):
-            joined = ", ".join(str(x) for x in list(availability.get("issues") or [])[:4])
-            raise ToolRuntimeError(f"Tool {tool_name} is unavailable: {joined}")
-        if not tool_allows_backend(entry, backend):
-            raise ToolRuntimeError(f"Tool {tool_name} does not allow backend '{backend}'")
-        if not tool_allows_channel(entry, channel):
-            raise ToolRuntimeError(f"Tool {tool_name} is not exposed to channel '{channel}'")
-
-        return {
-            "read_only": read_only,
-            "requires_approval": requires_approval,
-            "risk_tier": risk_tier,
-            "max_risk_tier": max_risk_tier,
-            "approved": approved,
-            "backend": backend,
-            "channel": channel,
-            "backends": list(entry.get("backends") or []),
-            "channels": list(entry.get("channels") or []),
-            "capabilities": list(entry.get("capabilities") or []),
-            "toolsets": list(entry.get("toolsets") or []),
-            "exposure": dict(entry.get("exposure") or {}),
-            "availability": dict(availability or {"ok": True, "issues": []}),
-        }
+        state = decision.to_dict()
+        state.update(
+            {
+                "backends": list(entry.get("backends") or []),
+                "channels": list(entry.get("channels") or []),
+                "capabilities": list(entry.get("capabilities") or []),
+                "toolsets": list(entry.get("toolsets") or []),
+                "exposure": dict(entry.get("exposure") or {}),
+            }
+        )
+        return state
 
     def _record_policy_decision(
         self,
@@ -283,6 +266,7 @@ class InternalToolRuntime:
                         "risk_tier": str(dict((entry or {}).get("policy") or {}).get("risk_tier") or "LOW"),
                         "requires_approval": bool(dict((entry or {}).get("policy") or {}).get("requires_approval", False)),
                         "toolsets": list((entry or {}).get("toolsets") or []),
+                        "action_class": str(dict((entry or {}).get("policy") or {}).get("action_class") or ""),
                     },
                     "availability": dict(availability or {"ok": True, "issues": []}),
                 },
@@ -347,6 +331,11 @@ class InternalToolRuntime:
                 "approved": bool(policy_state.get("approved", False)),
                 "backend": str(policy_state.get("backend") or "local"),
                 "channel": str(policy_state.get("channel") or "chat"),
+                "action_class": str(policy_state.get("action_class") or "read"),
+                "approval_required": bool(policy_state.get("approval_required", False)),
+                "confirmation_requirement": str(policy_state.get("confirmation_requirement") or "single_click"),
+                "preview_required": bool(policy_state.get("preview_required", False)),
+                "rollback_advised": bool(policy_state.get("rollback_advised", False)),
                 "capabilities": list(policy_state.get("capabilities") or []),
                 "toolsets": list(policy_state.get("toolsets") or []),
                 "availability_ok": bool(dict(policy_state.get("availability") or {}).get("ok", True)),
@@ -449,6 +438,13 @@ class InternalToolRuntime:
                         "approved": bool(policy_state.get("approved", False)),
                         "backend": str(policy_state.get("backend") or "local"),
                         "channel": str(policy_state.get("channel") or "chat"),
+                        "action_class": str(policy_state.get("action_class") or "read"),
+                        "approval_required": bool(policy_state.get("approval_required", False)),
+                        "confirmation_requirement": str(policy_state.get("confirmation_requirement") or "single_click"),
+                        "preview_required": bool(policy_state.get("preview_required", False)),
+                        "rollback_advised": bool(policy_state.get("rollback_advised", False)),
+                        "autonomy_profile": str(policy_state.get("autonomy_profile") or "balanced"),
+                        "autonomy_check": dict(policy_state.get("autonomy_check") or {}),
                     },
                 )
             meta.setdefault(

@@ -74,6 +74,7 @@ import os
 import tempfile
 import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, List
 from collections import defaultdict, deque
 
@@ -111,7 +112,20 @@ from config.extraction_schema import (
     OUTPUT_COLUMNS
 )
 from gateway import GatewayService
+from state import SessionEventStore
 from workshop.toolbox.runtime import InternalToolRuntime
+from workshop.integrations.telegram_runtime import (
+    TelegramRuntimeBridge,
+    build_telegram_delivery_bundle,
+    build_telegram_progress_ack,
+    build_telegram_reply_bundle,
+    resolve_telegram_conversation_id,
+)
+from workshop.toolbox.stacks.ocr_core.document_intel import (
+    SUPPORTED_DOCUMENT_SUFFIXES,
+    build_document_note,
+    extract_document_payload,
+)
 
 OCR_PIPELINE_READY = True
 
@@ -128,6 +142,8 @@ MAX_URLS_NON_OWNER = 1                   # non-owners: URL-heavy prompts blocked
 BLOCK_URL_ONLY_NON_OWNER = True          # blocks "summarize this link" style abuse for public
 MAX_PHOTO_BYTES_NON_OWNER = 5_000_000    # 5MB; owners bypass
 MAX_PHOTO_BYTES_OWNER = 20_000_000       # owners still capped to avoid insanity
+MAX_DOCUMENT_BYTES_NON_OWNER = 8_000_000
+MAX_DOCUMENT_BYTES_OWNER = 25_000_000
 
 # URL detection for proxy-abuse gating
 URL_RE = re.compile(r"(https?://\S+|www\.\S+)", re.IGNORECASE)
@@ -182,6 +198,60 @@ async def safe_edit_or_send(ack_msg, update: Update, text: str) -> None:
         await update.message.reply_text(text)
     except Exception:
         pass
+
+
+async def _send_telegram_file_bundle(update: Update, files: List[Dict[str, Any]]) -> int:
+    sent = 0
+    for item in list(files or []):
+        path = str(item.get("path") or "").strip()
+        if not path or not os.path.exists(path):
+            continue
+        caption_raw = str(item.get("caption") or item.get("title") or "").strip()
+        caption = sanitize_text(caption_raw, 900) if caption_raw else ""
+        file_name = os.path.basename(path)
+        try:
+            with open(path, "rb") as handle:
+                await update.message.reply_document(
+                    document=handle,
+                    filename=file_name,
+                    caption=caption or None,
+                    parse_mode=None,
+                )
+            sent += 1
+        except Exception as exc:
+            logger.debug(f"Failed sending Telegram document attachment {file_name}: {exc}")
+        finally:
+            if bool(item.get("cleanup")):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    return sent
+
+
+async def _send_telegram_visual_bundle(update: Update, attachments: List[Dict[str, Any]]) -> int:
+    sent = 0
+    for att in list(attachments or []):
+        att_type = str(att.get("type") or "").strip().lower()
+        path = str(att.get("path") or "").strip()
+        if not path or not os.path.exists(path):
+            continue
+        try:
+            if att_type == "image":
+                with open(path, "rb") as handle:
+                    await update.message.reply_photo(photo=handle, caption=(att.get("title") or ""))
+                sent += 1
+            elif att_type in {"document", "file", "text"}:
+                sent += await _send_telegram_file_bundle(update, [att])
+        except Exception as exc:
+            logger.debug(f"Failed sending Telegram attachment {os.path.basename(path)}: {exc}")
+        finally:
+            if att_type == "image" and bool(att.get("cleanup")):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    return sent
 
 def load_personalities(personality_config: str):
     try:
@@ -262,6 +332,11 @@ class TelegramHandler:
         self.application = Application.builder().token(self.token).build()
         self.ocr_runtime = InternalToolRuntime()
         self.gateway_service = GatewayService(root_dir="sessions/gateway")
+        self.state_store = SessionEventStore()
+        self.runtime_bridge = TelegramRuntimeBridge(
+            gateway_service=self.gateway_service,
+            state_store=self.state_store,
+        )
         self.gateway_session = self.gateway_service.register_session(
             user_id="default_user",
             surface="telegram",
@@ -290,6 +365,7 @@ class TelegramHandler:
         self.user_queues: Dict[str, deque] = defaultdict(deque)
         self.user_tasks: Dict[str, asyncio.Task] = {}
         self.user_cancel_flags: Dict[str, bool] = defaultdict(bool)
+        self.user_active_threads: Dict[str, Dict[str, str]] = {}
         self.queue_cap_per_user = 20
 
         # âœ… Split global governors
@@ -333,6 +409,7 @@ class TelegramHandler:
             )
 
         self.application.add_handler(MessageHandler(filters.PHOTO, self.handle_photo))
+        self.application.add_handler(MessageHandler(filters.Document.ALL, self.handle_document))
         self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_all_messages))
 
     def _resolve_agent_key(self, name: str) -> str:
@@ -365,12 +442,54 @@ class TelegramHandler:
         os.makedirs(p, exist_ok=True)
         return p
 
+    def _documents_dir(self, uid: str) -> str:
+        p = os.path.join(self._user_dir(uid), "documents")
+        os.makedirs(p, exist_ok=True)
+        return p
+
+    def _safe_filename(self, name: str, *, fallback: str = "document.bin") -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", str(name or "").strip())
+        return cleaned[:120] or fallback
+
     def _get_agent(self, uid: str) -> Agent:
         if uid in self.agents:
             return self.agents[uid]
         agent = Agent(self.agent_key, use_studies=self.use_studies, user_id=uid)
         self.agents[uid] = agent
         return agent
+
+    def _conversation_id(self, update: Update) -> str:
+        chat_id = getattr(getattr(update, "effective_chat", None), "id", "")
+        thread_id = getattr(getattr(update, "message", None), "message_thread_id", "")
+        return resolve_telegram_conversation_id(chat_id=chat_id, message_thread_id=thread_id)
+
+    def _active_thread_state(self, uid: str) -> Dict[str, str]:
+        return dict(self.user_active_threads.get(uid) or {})
+
+    def _mark_thread_activity(self, *, uid: str, conversation_id: str, thread_id: str) -> None:
+        self.user_active_threads[uid] = {
+            "conversation_id": str(conversation_id or ""),
+            "thread_id": str(thread_id or ""),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def _ensure_user_surface_session(self, update: Update, *, uid: str, conversation_id: str, thread_id: str, queue_depth: int) -> dict:
+        user = getattr(update, "effective_user", None)
+        username = str(getattr(user, "username", "") or "").strip()
+        first_name = str(getattr(user, "first_name", "") or "").strip()
+        last_name = str(getattr(user, "last_name", "") or "").strip()
+        display_name = " ".join([part for part in [first_name, last_name] if part]).strip() or username or f"Telegram {uid}"
+        chat_type = str(getattr(getattr(update, "effective_chat", None), "type", "") or "telegram")
+        return self.runtime_bridge.upsert_surface_session(
+            user_id=uid,
+            client_label=display_name,
+            username=username,
+            chat_type=chat_type,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+            is_owner=self._is_owner(uid),
+            queue_depth=queue_depth,
+        )
 
     def _run_ocr_tool(self, *, uid: str, image_paths: List[str], caption: str, mode: str) -> dict:
         payload = {
@@ -500,7 +619,19 @@ class TelegramHandler:
         t = self.user_tasks.get(uid)
         if t and not t.done():
             t.cancel()
+        queued = list(self.user_queues[uid])
         self.user_queues[uid].clear()
+        for item in queued:
+            if len(item) >= 4 and str(item[3] or "").strip():
+                try:
+                    self._get_agent(uid).ops_control.fail_background_task(
+                        str(item[3]),
+                        error="Cancelled from Telegram before execution.",
+                        recoverable=False,
+                        recommended_action="Send a fresh request when ready.",
+                    )
+                except Exception:
+                    pass
         await update.message.reply_text("Cancelled current task and cleared queued messages.")
 
     async def code_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -692,6 +823,7 @@ class TelegramHandler:
     async def _enqueue_user_job(self, update: Update, text: str):
         uid = self._uid(update)
         is_owner = self._is_owner(uid)
+        conversation_id = self._conversation_id(update)
 
         text = (text or "").strip()
         if not text:
@@ -727,20 +859,67 @@ class TelegramHandler:
             )
             return
 
-        self.user_queues[uid].append((update, text))
-        self._gateway_touch(activity=f"queued:{uid}", detail=f"depth={len(self.user_queues[uid])}")
+        active_state = self._active_thread_state(uid)
+        thread_id = self.runtime_bridge.resolve_thread_id(
+            user_id=uid,
+            prompt=text,
+            conversation_id=conversation_id,
+            active_thread_id=str(active_state.get("thread_id") or ""),
+            active_conversation_id=str(active_state.get("conversation_id") or ""),
+            active_updated_at=str(active_state.get("updated_at") or ""),
+        )
+        reused_thread = bool(active_state.get("thread_id")) and thread_id == str(active_state.get("thread_id") or "")
+        agent = self._get_agent(uid)
+        task_row = agent.ops_control.create_background_task(
+            user_id=uid,
+            objective=text,
+            task_type="telegram_chat",
+            surface="telegram",
+            thread_id=thread_id,
+            meta={
+                "conversation_id": conversation_id,
+                "owner": is_owner,
+            },
+        )
+        task_id = str(task_row.get("task_id") or "")
+        session = self._ensure_user_surface_session(
+            update,
+            uid=uid,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+            queue_depth=len(self.user_queues[uid]) + 1,
+        )
+        self.user_queues[uid].append((update, text, thread_id, task_id, conversation_id, str(session.get("session_id") or ""), reused_thread))
+        self._mark_thread_activity(uid=uid, conversation_id=conversation_id, thread_id=thread_id)
+        self._gateway_touch(
+            activity=f"queued:{uid}",
+            detail=f"depth={len(self.user_queues[uid])}",
+            metadata={"thread_id": thread_id, "task_id": task_id},
+        )
         self.gateway_service.record_prompt_ingress(
             surface="telegram",
             user_id=uid,
             text=text,
-            session_id=str((self.gateway_session or {}).get("session_id") or ""),
-            client_id=str((self.gateway_session or {}).get("client_id") or ""),
-            metadata={"queue_depth": len(self.user_queues[uid]), "owner": is_owner},
+            session_id=str(session.get("session_id") or ""),
+            client_id=str(session.get("client_id") or ""),
+            thread_id=thread_id,
+            metadata={
+                "queue_depth": len(self.user_queues[uid]),
+                "owner": is_owner,
+                "conversation_id": conversation_id,
+                "task_id": task_id,
+            },
         )
 
         # worker already running â†’ acknowledge
         if uid in self.user_tasks and not self.user_tasks[uid].done():
-            await update.message.reply_text("Got it â€” queued. Iâ€™ll reply in order.")
+            await update.message.reply_text(
+                build_telegram_progress_ack(
+                    queue_depth=len(self.user_queues[uid]),
+                    reused_thread=reused_thread,
+                    active_task=True,
+                )
+            )
             return
 
         self.user_cancel_flags[uid] = False
@@ -753,15 +932,46 @@ class TelegramHandler:
                 self.user_queues[uid].clear()
                 return
 
-            update, text = self.user_queues[uid].popleft()
+            update, text, thread_id, task_id, conversation_id, session_id, reused_thread = self.user_queues[uid].popleft()
             agent = self._get_agent(uid)
             settings = self.user_settings[uid]
 
             dementia_friendly = bool(settings.get("simple") or settings.get("postictal"))
             long_form = bool(settings.get("detailed"))
 
-            ack = await update.message.reply_text("Got it â€” thinkingâ€¦")
-            self._gateway_touch(activity=f"responding:{uid}", detail=text[:120])
+            ack = await update.message.reply_text(
+                build_telegram_progress_ack(
+                    queue_depth=len(self.user_queues[uid]),
+                    reused_thread=reused_thread,
+                    active_task=False,
+                )
+            )
+            self._gateway_touch(
+                activity=f"responding:{uid}",
+                detail=text[:120],
+                metadata={"thread_id": thread_id, "task_id": task_id},
+            )
+            try:
+                agent.ops_control.heartbeat_background_task(
+                    task_id,
+                    summary="Generating Telegram reply.",
+                    meta={
+                        "conversation_id": conversation_id,
+                        "queue_depth": len(self.user_queues[uid]),
+                    },
+                )
+            except Exception:
+                pass
+            try:
+                self.gateway_service.update_presence(
+                    session_id=session_id,
+                    status="online",
+                    activity="telegram_reply_running",
+                    detail=f"{thread_id[:8]} :: {text[:72]}",
+                    metadata={"task_id": task_id, "conversation_id": conversation_id},
+                )
+            except Exception:
+                pass
 
             try:
                 async with self.global_text_sem:
@@ -772,27 +982,93 @@ class TelegramHandler:
                             user_id=uid,
                             dementia_friendly=dementia_friendly,
                             long_form=long_form,
+                            thread_id_override=thread_id,
+                            trace_metadata={
+                                "surface": "telegram",
+                                "conversation_id": conversation_id,
+                                "task_id": task_id,
+                                "gateway_session_id": session_id,
+                            },
                         ),
                         timeout=150,
                     )
-                await safe_edit_or_send(ack, update, resp)
+                report = dict(getattr(getattr(agent, "websearch", None), "last_browse_report", {}) or {})
+                route = self.runtime_bridge.latest_route(user_id=uid, thread_id=thread_id)
+                continuity = self.runtime_bridge.build_thread_capsule(
+                    user_id=uid,
+                    thread_id=thread_id,
+                    active_thread_id=thread_id,
+                )
+                reply_bundle = build_telegram_delivery_bundle(
+                    content=resp,
+                    route=route,
+                    browse_report=report,
+                    thread_id=thread_id,
+                    task_id=task_id,
+                    continuity_report=continuity,
+                )
+                await safe_edit_or_send(ack, update, reply_bundle.get("primary", resp))
+                for item in list(reply_bundle.get("follow_ups") or []):
+                    clean = str(item or "").strip()
+                    if clean:
+                        await update.message.reply_text(clean, parse_mode=None)
+                sent_exports = await _send_telegram_file_bundle(update, list(reply_bundle.get("exports") or []))
+                sent_visuals = await _send_telegram_visual_bundle(update, list(attachments or []))
+                try:
+                    agent.ops_control.complete_background_task(
+                        task_id,
+                        summary=str(reply_bundle.get("summary") or resp[:220]),
+                        handoff={
+                            "surface": "telegram",
+                            "thread_id": thread_id,
+                            "resume_hint": "Say continue to keep going on this thread.",
+                            "route": route,
+                            "recommended_surface": str(continuity.get("recommended_surface") or "telegram"),
+                            "surface_names": list(continuity.get("surface_names") or []),
+                            "open_task_count": int(continuity.get("open_task_count") or 0),
+                            "sources_count": len(list(report.get("sources") or [])),
+                            "export_count": sent_exports,
+                            "attachment_count": sent_visuals,
+                        },
+                    )
+                except Exception:
+                    pass
+                self._mark_thread_activity(uid=uid, conversation_id=conversation_id, thread_id=thread_id)
                 self._gateway_event(
                     uid=uid,
                     event_type="telegram_response",
                     title=f"Response sent to {uid}",
                     body=resp,
-                    metadata={"attachment_count": len(attachments or [])},
+                    metadata={
+                        "attachment_count": sent_visuals,
+                        "export_count": sent_exports,
+                        "thread_id": thread_id,
+                        "task_id": task_id,
+                        "route": route,
+                    },
                 )
-                for att in attachments or []:
-                    if str(att.get("type", "")).lower() == "image" and os.path.exists(str(att.get("path", ""))):
-                        try:
-                            with open(att["path"], "rb") as ph:
-                                await update.message.reply_photo(photo=ph, caption=(att.get("title") or ""))
-                        except Exception as e:
-                            logger.debug(f"[{uid}] Failed sending image attachment: {e}")
+                try:
+                    self.gateway_service.update_presence(
+                        session_id=session_id,
+                        status="online",
+                        activity="telegram_reply_completed",
+                        detail=f"{thread_id[:8]} :: {route or 'chat'}",
+                        metadata={"task_id": task_id, "thread_id": thread_id},
+                    )
+                except Exception:
+                    pass
 
             except asyncio.CancelledError:
                 await safe_edit_or_send(ack, update, "Cancelled.")
+                try:
+                    agent.ops_control.fail_background_task(
+                        task_id,
+                        error="Telegram task was cancelled.",
+                        recoverable=False,
+                        recommended_action="Restart the request when ready.",
+                    )
+                except Exception:
+                    pass
                 self._gateway_event(uid=uid, event_type="telegram_cancelled", title=f"Task cancelled for {uid}", level="warn")
                 return
 
@@ -802,6 +1078,15 @@ class TelegramHandler:
                     update,
                     "Timed out. Try again with a shorter prompt, or use /simple mode."
                 )
+                try:
+                    agent.ops_control.fail_background_task(
+                        task_id,
+                        error="Telegram reply timed out.",
+                        recoverable=True,
+                        recommended_action="Retry with a shorter or more focused request.",
+                    )
+                except Exception:
+                    pass
                 self._gateway_event(uid=uid, event_type="telegram_timeout", title=f"Timeout for {uid}", level="warn")
 
             except Exception as e:
@@ -810,6 +1095,15 @@ class TelegramHandler:
                     update,
                     f"Error: {type(e).__name__}. Try again."
                 )
+                try:
+                    agent.ops_control.fail_background_task(
+                        task_id,
+                        error=f"{type(e).__name__}: {e}",
+                        recoverable=True,
+                        recommended_action="Retry the request or simplify the prompt.",
+                    )
+                except Exception:
+                    pass
                 self._gateway_event(
                     uid=uid,
                     event_type="telegram_error",
@@ -954,6 +1248,230 @@ class TelegramHandler:
         finally:
             try:
                 os.remove(photo_path)
+            except Exception:
+                pass
+
+    async def handle_document(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        uid = self._uid(update)
+        is_owner = self._is_owner(uid)
+        document = getattr(getattr(update, "message", None), "document", None)
+        if document is None:
+            return
+
+        if not _allow_photo(uid, is_owner=is_owner):
+            await update.message.reply_text("Too many document requests. Try again in a minute.")
+            return
+
+        file_name = self._safe_filename(getattr(document, "file_name", "") or f"document_{getattr(document, 'file_id', 'upload')}")
+        suffix = Path(file_name).suffix.lower()
+        if suffix not in SUPPORTED_DOCUMENT_SUFFIXES:
+            supported = ", ".join(sorted(SUPPORTED_DOCUMENT_SUFFIXES))
+            await update.message.reply_text(f"I can currently read these document types here: {supported}")
+            return
+
+        file_size = int(getattr(document, "file_size", 0) or 0)
+        limit = MAX_DOCUMENT_BYTES_OWNER if is_owner else MAX_DOCUMENT_BYTES_NON_OWNER
+        if file_size and file_size > limit:
+            await update.message.reply_text("Document too large. Send a smaller PDF or text-based file.")
+            return
+
+        conversation_id = self._conversation_id(update)
+        caption = str(getattr(update.message, "caption", "") or "").strip()
+        prompt = caption or f"Summarize this document and highlight the important points: {file_name}"
+        active_state = self._active_thread_state(uid)
+        thread_id = self.runtime_bridge.resolve_thread_id(
+            user_id=uid,
+            prompt=prompt,
+            conversation_id=conversation_id,
+            active_thread_id=str(active_state.get("thread_id") or ""),
+            active_conversation_id=str(active_state.get("conversation_id") or ""),
+            active_updated_at=str(active_state.get("updated_at") or ""),
+        )
+        agent = self._get_agent(uid)
+        task_row = agent.ops_control.create_background_task(
+            user_id=uid,
+            objective=prompt,
+            task_type="telegram_document",
+            surface="telegram",
+            thread_id=thread_id,
+            meta={"conversation_id": conversation_id, "file_name": file_name, "owner": is_owner},
+        )
+        task_id = str(task_row.get("task_id") or "")
+        session = self._ensure_user_surface_session(
+            update,
+            uid=uid,
+            conversation_id=conversation_id,
+            thread_id=thread_id,
+            queue_depth=0,
+        )
+        self._mark_thread_activity(uid=uid, conversation_id=conversation_id, thread_id=thread_id)
+        self._gateway_event(
+            uid=uid,
+            event_type="telegram_document",
+            title=f"Document received from {uid}",
+            body=file_name,
+            metadata={"thread_id": thread_id, "task_id": task_id, "suffix": suffix},
+        )
+
+        doc_dir = self._documents_dir(uid)
+        doc_path = os.path.join(doc_dir, f"{update.message.message_id}_{file_name}")
+        ack = await update.message.reply_text("Reading document...")
+        try:
+            tg_file = await document.get_file()
+            await tg_file.download_to_drive(doc_path)
+            if os.path.getsize(doc_path) > limit:
+                await safe_edit_or_send(ack, update, "Document too large. Send a smaller PDF or text-based file.")
+                agent.ops_control.fail_background_task(
+                    task_id,
+                    error="Document exceeded size limit after download.",
+                    recoverable=False,
+                    recommended_action="Retry with a smaller file.",
+                )
+                return
+
+            try:
+                agent.ops_control.heartbeat_background_task(
+                    task_id,
+                    summary=f"Extracting text from {file_name}.",
+                    meta={"thread_id": thread_id, "conversation_id": conversation_id},
+                )
+            except Exception:
+                pass
+
+            async with self.global_ocr_sem:
+                payload = await asyncio.to_thread(
+                    extract_document_payload,
+                    doc_path,
+                    max_chars=5000,
+                    max_pdf_pages=6,
+                )
+
+            note = build_document_note(payload)
+            if not bool(payload.get("ok")):
+                message = note or "I couldn't extract readable text from that document yet."
+                await safe_edit_or_send(ack, update, message)
+                try:
+                    agent.ops_control.fail_background_task(
+                        task_id,
+                        error=str(payload.get("error") or "document_extract_failed"),
+                        recoverable=False,
+                        recommended_action=str(payload.get("manual_review_message") or "Try a text-based export or send page screenshots."),
+                    )
+                except Exception:
+                    pass
+                return
+
+            excerpt = str(payload.get("excerpt") or "").strip()
+            doc_prompt = (
+                f"{prompt}\n\n"
+                f"{note}\n\n"
+                "Document excerpt:\n"
+                f"{excerpt}\n\n"
+                "When helpful, reference the document anchors from the note."
+            )
+            async with self.global_text_sem:
+                agent._last_request_source = "telegram"
+                response, attachments = await asyncio.wait_for(
+                    agent.generate_response_with_attachments(
+                        doc_prompt,
+                        user_id=uid,
+                        thread_id_override=thread_id,
+                        trace_metadata={
+                            "surface": "telegram",
+                            "conversation_id": conversation_id,
+                            "task_id": task_id,
+                            "gateway_session_id": str(session.get("session_id") or ""),
+                            "document_name": file_name,
+                            "document_kind": str(payload.get("document_kind") or ""),
+                        },
+                    ),
+                    timeout=180,
+                )
+
+            route = self.runtime_bridge.latest_route(user_id=uid, thread_id=thread_id)
+            continuity = self.runtime_bridge.build_thread_capsule(
+                user_id=uid,
+                thread_id=thread_id,
+                active_thread_id=str(active_state.get("thread_id") or ""),
+            )
+            reply_bundle = build_telegram_delivery_bundle(
+                content=response,
+                route=route,
+                browse_report=dict(getattr(getattr(agent, "websearch", None), "last_browse_report", {}) or {}),
+                thread_id=thread_id,
+                task_id=task_id,
+                document_payload=payload,
+                document_note=note,
+                continuity_report=continuity,
+            )
+            await safe_edit_or_send(ack, update, str(reply_bundle.get("primary") or response))
+            for item in list(reply_bundle.get("follow_ups") or []):
+                clean = str(item or "").strip()
+                if clean:
+                    await update.message.reply_text(clean, parse_mode=None)
+            sent_exports = await _send_telegram_file_bundle(update, list(reply_bundle.get("exports") or []))
+            sent_visuals = await _send_telegram_visual_bundle(update, list(attachments or []))
+
+            try:
+                agent.ops_control.complete_background_task(
+                    task_id,
+                    summary=str(reply_bundle.get("summary") or response[:220]),
+                    handoff={
+                        "surface": "telegram",
+                        "thread_id": thread_id,
+                        "resume_hint": "Say continue to keep working with this document thread.",
+                        "route": route,
+                        "recommended_surface": str(continuity.get("recommended_surface") or "telegram"),
+                        "surface_names": list(continuity.get("surface_names") or []),
+                        "open_task_count": int(continuity.get("open_task_count") or 0),
+                        "document_name": file_name,
+                        "document_kind": str(payload.get("document_kind") or ""),
+                        "document_anchor_count": len(list(payload.get("anchors") or [])),
+                        "export_count": sent_exports,
+                        "attachment_count": sent_visuals,
+                    },
+                )
+            except Exception:
+                pass
+
+            try:
+                self.gateway_service.update_presence(
+                    session_id=str(session.get("session_id") or ""),
+                    status="online",
+                    activity="telegram_document_completed",
+                    detail=f"{thread_id[:8]} :: {file_name}",
+                    metadata={"task_id": task_id, "thread_id": thread_id, "export_count": sent_exports},
+                )
+            except Exception:
+                pass
+
+        except asyncio.TimeoutError:
+            await safe_edit_or_send(ack, update, "Document processing timed out. Try a smaller file or a narrower question.")
+            try:
+                agent.ops_control.fail_background_task(
+                    task_id,
+                    error="Telegram document processing timed out.",
+                    recoverable=True,
+                    recommended_action="Retry with a smaller excerpt or a more focused prompt.",
+                )
+            except Exception:
+                pass
+        except Exception as exc:
+            logger.error(f"[{uid}] Document handling failed: {exc}")
+            await safe_edit_or_send(ack, update, f"Could not process that document: {type(exc).__name__}.")
+            try:
+                agent.ops_control.fail_background_task(
+                    task_id,
+                    error=f"{type(exc).__name__}: {exc}",
+                    recoverable=True,
+                    recommended_action="Retry with a supported text-based document or a smaller PDF.",
+                )
+            except Exception:
+                pass
+        finally:
+            try:
+                if os.path.exists(doc_path):
+                    os.remove(doc_path)
             except Exception:
                 pass
 

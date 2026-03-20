@@ -7,7 +7,10 @@ import time
 from typing import Any, Dict, List
 
 import httpx
-from duckduckgo_search import DDGS
+try:
+    from ddgs import DDGS
+except Exception:  # pragma: no cover
+    from duckduckgo_search import DDGS
 
 from workshop.toolbox.stacks.research_core.searxng import search_searxng
 from .search_common import SearchProfile, normalize_search_result, dedupe_by_url
@@ -136,7 +139,13 @@ def _normalize_ddg(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return out
 
 
-async def search_general(query: str, min_results: int = 3, sanitize_query: bool = True, budgets_ms: Dict[str, int] | None = None) -> List[Dict[str, Any]]:
+async def search_general(
+    query: str,
+    min_results: int = 3,
+    sanitize_query: bool = True,
+    budgets_ms: Dict[str, int] | None = None,
+    allow_ddg_fallback: bool = True,
+) -> List[Dict[str, Any]]:
     q = (query or "").strip()
     if sanitize_query:
         q = _strip_meta_scaffold_query(q)
@@ -162,7 +171,7 @@ async def search_general(query: str, min_results: int = 3, sanitize_query: bool 
     except Exception:
         searx_failed = True
 
-    if searx_failed or len(out) < int(min_results):
+    if allow_ddg_fallback and (searx_failed or len(out) < int(min_results)):
         _TELEMETRY["fallback_triggered_count"] += 1
         ddg_rows = _normalize_ddg(await _ddg_text(q, max_results=10))
         out = dedupe_by_url([*out, *ddg_rows])

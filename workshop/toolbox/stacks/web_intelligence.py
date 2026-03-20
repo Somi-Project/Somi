@@ -129,6 +129,20 @@ def _render_contract_block(
     return "\n".join(lines)
 
 
+def _render_execution_block(report: dict[str, Any]) -> str:
+    steps = [sanitize_untrusted_text(str(item or ""), max_len=240) for item in list((report or {}).get("execution_steps") or []) if str(item or "").strip()]
+    if not steps:
+        return ""
+    lines = ["## Execution Trace"]
+    summary = sanitize_untrusted_text(str((report or {}).get("execution_summary") or ""), max_len=320)
+    if summary:
+        lines.append(f"- summary: {summary}")
+    for step in steps[:6]:
+        if step:
+            lines.append(f"- {step}")
+    return "\n".join(lines)
+
+
 def run_web_intelligence(
     *,
     query: str,
@@ -161,6 +175,7 @@ def run_web_intelligence(
             )
         )
         formatted = handler.format_results(results)
+        browse_report = dict(handler.last_browse_report or {}) if isinstance(handler.last_browse_report, dict) else {}
     except Exception as exc:
         return {"ok": False, "error": f"web search failed: {exc}"}
 
@@ -177,7 +192,12 @@ def run_web_intelligence(
         evidence_contract=evidence_contract,
         citation_map=citation_map,
     )
-    formatted_with_contract = (str(formatted or "").strip() + "\n\n" + contract_block).strip()
+    execution_block = _render_execution_block(browse_report)
+    parts = [str(formatted or "").strip()]
+    if execution_block:
+        parts.append(execution_block)
+    parts.append(contract_block)
+    formatted_with_contract = "\n\n".join([part for part in parts if part]).strip()
 
     return {
         "ok": True,
@@ -188,5 +208,8 @@ def run_web_intelligence(
         "formatted": formatted_with_contract,
         "citation_map": citation_map,
         "evidence_contract": evidence_contract,
+        "browse_report": browse_report,
+        "execution_trace": list(browse_report.get("execution_steps") or []),
+        "execution_summary": str(browse_report.get("execution_summary") or ""),
         "degraded": not bool(evidence_contract.get("satisfied", False)),
     }

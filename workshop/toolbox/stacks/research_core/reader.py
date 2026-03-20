@@ -9,12 +9,14 @@ import httpx
 from workshop.toolbox.stacks.research_core.evidence_schema import EvidenceItem
 
 _META_DATE_RE = re.compile(r'<meta[^>]+(?:property|name)="(?:article:published_time|pubdate|date)"[^>]+content="([^"]+)"', re.IGNORECASE)
+_SCRIPT_STYLE_RE = re.compile(r"<(?:script|style|noscript|template)\b[^>]*>.*?</(?:script|style|noscript|template)>", re.IGNORECASE | re.DOTALL)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"\s+")
 
 
 def _extract_excerpt(html: str, max_chars: int = 2500) -> str:
-    text = _TAG_RE.sub(" ", html or "")
+    cleaned = _SCRIPT_STYLE_RE.sub(" ", html or "")
+    text = _TAG_RE.sub(" ", cleaned)
     text = _WS_RE.sub(" ", text).strip()
     return text[:max_chars]
 

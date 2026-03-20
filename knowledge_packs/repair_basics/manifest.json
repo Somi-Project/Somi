@@ -1,0 +1,19 @@
+{
+  "id": "repair_basics",
+  "name": "Repair Basics",
+  "category": "repair",
+  "summary": "Starter defensive references for restoring power, pumps, filtration, and field diagnostics on limited hardware.",
+  "schema_version": 1,
+  "variant": "compact",
+  "tags": [
+    "repair",
+    "generator",
+    "power",
+    "water",
+    "diagnostics",
+    "tools"
+  ],
+  "trust": "bundled_local",
+  "updated_at": "2026-03-19",
+  "status": "seeded"
+}

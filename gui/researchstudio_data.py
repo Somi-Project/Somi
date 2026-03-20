@@ -22,6 +22,9 @@ class ResearchStudioSnapshotBuilder:
         graph_rows: list[dict[str, Any]] = []
         for path in sorted(self.store.graphs_dir.glob("*_graph.json"), key=lambda item: item.stat().st_mtime, reverse=True)[:20]:
             graph_rows.append({"path": str(path), "name": path.name})
+        active_progress = dict(active.get("progress") or {})
+        active_memory = dict(active.get("memory") or {})
+        active_subagents = [dict(row) for row in list(active.get("subagents") or []) if isinstance(row, dict)]
         return {
             "active_job": active,
             "jobs": jobs,
@@ -32,5 +35,12 @@ class ResearchStudioSnapshotBuilder:
                 "export_count": len(export_rows),
                 "graph_count": len(graph_rows),
                 "active_job_id": str(active.get("job_id") or ""),
+                "active_query": str(active.get("query") or ""),
+                "active_status": str(active.get("status") or ""),
+                "active_progress_summary": str(active_progress.get("summary") or ""),
+                "active_memory_summary": str(active_memory.get("summary") or ""),
+                "active_subagent_summary": ", ".join(
+                    f"{str(row.get('id') or '--')}: {str(row.get('status') or '--')}" for row in active_subagents[:4]
+                ),
             },
         }

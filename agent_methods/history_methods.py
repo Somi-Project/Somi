@@ -180,6 +180,18 @@ def _tool_call_history(self, active_user_id: str) -> List[Dict[str, Any]]:
     uid = str(active_user_id or self.user_id)
     return self._tool_call_history_by_user.setdefault(uid, [])
 
+def _tool_loop_warning_cache(self, active_user_id: str) -> Dict[str, bool]:
+    cache = getattr(self, "_tool_loop_warning_cache_by_user", None)
+    if not isinstance(cache, dict):
+        cache = {}
+        setattr(self, "_tool_loop_warning_cache_by_user", cache)
+    uid = str(active_user_id or self.user_id)
+    bucket = cache.get(uid)
+    if not isinstance(bucket, dict):
+        bucket = {}
+        cache[uid] = bucket
+    return bucket
+
 async def _run_tool_with_loop_guard(
     self,
     *,
@@ -202,7 +214,11 @@ async def _run_tool_with_loop_guard(
         }
 
     if pre.stuck and pre.level == "warning":
-        logger.warning(f"Tool loop warning for {tool_name}: {pre.message}")
+        warning_cache = _tool_loop_warning_cache(self, active_user_id)
+        warning_key = str(pre.warning_key or f"{tool_name}:{pre.detector}:{pre.count}")
+        if not bool(warning_cache.get(warning_key)):
+            logger.warning(f"Tool loop warning for {tool_name}: {pre.message}")
+            warning_cache[warning_key] = True
 
     record_tool_call(history, tool_name=tool_name, args=safe_args, cfg=cfg)
     try:

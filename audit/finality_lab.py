@@ -2,18 +2,36 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import importlib
 import json
 import os
 import platform
 import re
 import shutil
 import statistics
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from audit.benchmark_packs import get_task_pack, list_benchmark_packs
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+AUDIT_ROOT = ROOT / "audit"
+if str(AUDIT_ROOT) not in sys.path:
+    sys.path.insert(0, str(AUDIT_ROOT))
+
+try:
+    from audit.benchmark_packs import get_task_pack, list_benchmark_packs
+except ModuleNotFoundError:
+    audit_module = sys.modules.get("audit")
+    audit_file = str(getattr(audit_module, "__file__", "") or "").replace("\\", "/").lower()
+    if audit_file.endswith("/runtime/audit.py"):
+        del sys.modules["audit"]
+    benchmark_packs = importlib.import_module("audit.benchmark_packs")
+    get_task_pack = benchmark_packs.get_task_pack
+    list_benchmark_packs = benchmark_packs.list_benchmark_packs
 
 
 FinalityProvider = Callable[[Path, str, Path], dict[str, Any]]

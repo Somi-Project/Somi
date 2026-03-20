@@ -6,10 +6,17 @@ from pathlib import Path
 from typing import Any
 
 from ops.framework_freeze import load_latest_framework_freeze
+from ops.observability import build_observability_digest
+from ops.context_budget import run_context_budget_status
+from ops.offline_resilience import run_offline_resilience
 from ops.release_gate import load_latest_release_report
 from runtime.audit import verify_audit_path
+from runtime.task_resume import build_resume_ledger
 from runtime.task_graph import load_task_graph
 from executive.approvals import build_approval_summary
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _now_iso() -> str:
@@ -117,6 +124,26 @@ class ControlRoomSnapshotBuilder:
         self.jobs_root = Path(jobs_root)
         self.artifacts_root = Path(artifacts_root)
 
+    def _task_graph_root(self) -> Path | None:
+        db_path = getattr(self.state_store, "db_path", None)
+        if db_path is None:
+            return None
+        path = Path(db_path)
+        try:
+            return path.parent.parent / "task_graph"
+        except Exception:
+            return None
+
+    def _project_root(self) -> Path:
+        db_path = getattr(self.state_store, "db_path", None)
+        if db_path is None:
+            return PROJECT_ROOT
+        path = Path(db_path)
+        try:
+            return path.parents[2]
+        except Exception:
+            return PROJECT_ROOT
+
     def _timeline_detail(self, *, user_id: str, thread_id: str) -> str:
         timeline = self.state_store.load_session_timeline(user_id=user_id, thread_id=thread_id)
         session = dict(timeline.get("session") or {})
@@ -212,6 +239,16 @@ class ControlRoomSnapshotBuilder:
                 subtitle=f"allowed={approval_summary.get('allowed', 0)} | blocked={approval_summary.get('blocked', 0)}",
                 detail=_json_text(approval_summary),
             ),
+            _row(
+                "autonomy_profile",
+                "Autonomy Profile",
+                status=str(approval_summary.get("active_autonomy_profile") or "balanced"),
+                subtitle=(
+                    f"runtime={approval_summary.get('active_profile') or 'local_workstation'} | "
+                    f"policy_events={len(list(approval_summary.get('recent_policy_events') or []))}"
+                ),
+                detail=_json_text(approval_summary),
+            ),
         ]
         if gateway_snapshot:
             rows.append(
@@ -266,7 +303,12 @@ class ControlRoomSnapshotBuilder:
         return rows
 
     def _task_rows(self, *, user_id: str, thread_id: str) -> list[dict[str, str]]:
-        graph = load_task_graph(user_id, thread_id) if thread_id else {"tasks": []}
+        task_graph_root = self._task_graph_root()
+        graph = (
+            load_task_graph(user_id, thread_id, root_dir=task_graph_root)
+            if thread_id and task_graph_root is not None
+            else (load_task_graph(user_id, thread_id) if thread_id else {"tasks": []})
+        )
         rows: list[dict[str, str]] = []
         for row in list(graph.get("tasks") or [])[:24]:
             deps = list(row.get("deps") or [])
@@ -287,6 +329,107 @@ class ControlRoomSnapshotBuilder:
                     status=str(row.get("status") or "open"),
                     updated_at=str(row.get("updated_at") or ""),
                     subtitle=", ".join(deps[:3]) if deps else "No dependencies",
+                    detail="\n".join(detail_lines),
+                )
+            )
+        return rows
+
+    def _continuity_rows(
+        self,
+        *,
+        user_id: str,
+        active_thread_id: str,
+        sessions: list[dict[str, Any]],
+        background_snapshot: dict[str, Any] | None = None,
+    ) -> list[dict[str, str]]:
+        task_graphs: dict[str, dict[str, Any]] = {}
+        task_graph_root = self._task_graph_root()
+        for session in list(sessions or [])[:12]:
+            thread_id = str(dict(session or {}).get("thread_id") or "").strip()
+            if not thread_id or thread_id in task_graphs:
+                continue
+            task_graphs[thread_id] = (
+                load_task_graph(user_id, thread_id, root_dir=task_graph_root)
+                if task_graph_root is not None
+                else load_task_graph(user_id, thread_id)
+            )
+        ledger = build_resume_ledger(
+            sessions=list(sessions or []),
+            background_snapshot=dict(background_snapshot or {}),
+            task_graphs=task_graphs,
+            active_thread_id=active_thread_id,
+            limit=8,
+        )
+        rows: list[dict[str, str]] = [
+            _row(
+                "task_resume_ledger",
+                "Task Resume Ledger",
+                status=str(ledger.get("status") or "idle"),
+                updated_at=str(ledger.get("generated_at") or ""),
+                subtitle=_clip(ledger.get("summary") or "No resumable work is queued right now.", limit=180),
+                detail=_json_text(ledger),
+            )
+        ]
+        for idx, entry in enumerate(list(ledger.get("entries") or [])[:8], start=1):
+            surface_names = list(entry.get("surface_names") or [])
+            detail_lines = [
+                f"Thread: {entry.get('thread_id') or '--'}",
+                f"Status: {entry.get('status') or 'idle'}",
+                f"Surfaces: {', '.join(surface_names) or entry.get('primary_surface') or '--'}",
+                f"Open tasks: {entry.get('open_task_count', 0)}",
+                f"Background tasks: {entry.get('background_count', 0)}",
+                f"Last route: {entry.get('last_route') or '--'}",
+                f"Resume hint: {entry.get('resume_hint') or '--'}",
+            ]
+            rows.append(
+                _row(
+                    f"task_resume_entry:{idx}",
+                    str(entry.get("thread_id") or f"Resume {idx}"),
+                    status=str(entry.get("status") or "idle"),
+                    updated_at=str(entry.get("last_seen_at") or ""),
+                    subtitle=_clip(entry.get("summary") or entry.get("resume_hint") or "", limit=180),
+                    detail="\n".join(detail_lines),
+                )
+            )
+        return rows
+
+    def _context_rows(self, *, user_id: str) -> list[dict[str, str]]:
+        report = run_context_budget_status(self._project_root(), user_id=user_id, limit=8)
+        rows: list[dict[str, str]] = [
+            _row(
+                "context_budget",
+                "Context Budget",
+                status=str(report.get("status") or "idle"),
+                updated_at=str(report.get("generated_at") or ""),
+                subtitle=_clip(report.get("summary") or "No context budget data yet", limit=180),
+                detail=_json_text(report),
+            )
+        ]
+        for idx, entry in enumerate(list(report.get("entries") or [])[:8], start=1):
+            detail_lines = [
+                f"Thread: {entry.get('thread_id') or '--'}",
+                f"Surface: {entry.get('surface') or '--'}",
+                f"Turns: {entry.get('turn_count', 0)}",
+                f"Estimated tokens: {entry.get('estimated_tokens', 0)}",
+                f"Compactions: {entry.get('compaction_count', 0)}",
+                f"Open loops: {entry.get('open_loop_count', 0)}",
+                f"Unresolved asks: {entry.get('unresolved_count', 0)}",
+                f"Last route: {entry.get('last_route') or '--'}",
+                f"Status note: {entry.get('status_note') or '--'}",
+            ]
+            if entry.get("last_compacted_at"):
+                detail_lines.append(f"Last compacted: {entry.get('last_compacted_at')}")
+            if entry.get("latest_compaction_summary"):
+                detail_lines.append("")
+                detail_lines.append("Latest compaction summary:")
+                detail_lines.append(str(entry.get("latest_compaction_summary") or ""))
+            rows.append(
+                _row(
+                    f"context_thread:{idx}",
+                    str(entry.get("thread_id") or f"Context {idx}"),
+                    status=str(entry.get("status") or "idle"),
+                    updated_at=str(entry.get("last_seen_at") or entry.get("last_compacted_at") or ""),
+                    subtitle=_clip(entry.get("summary") or entry.get("status_note") or "", limit=180),
                     detail="\n".join(detail_lines),
                 )
             )
@@ -486,17 +629,49 @@ class ControlRoomSnapshotBuilder:
         recent_events = store.recent_events(user_id, limit=10)
         frozen_snapshot = self.memory_manager.frozen_store.read_snapshot(user_id) or {}
         retrieval_trace = store.latest_retrieval_trace(user_id) or {}
+        preference_graph = self.memory_manager.build_preference_graph_sync(user_id, limit=12)
+        memory_review_builder = getattr(self.memory_manager, "build_memory_review_sync", None)
+        try:
+            memory_review = memory_review_builder(user_id, limit=6) if callable(memory_review_builder) else {}
+        except Exception:
+            memory_review = {}
+        if not isinstance(memory_review, dict):
+            memory_review = {}
         vault_service = getattr(self.memory_manager, "vault", None)
         vault_summary = vault_service.source_summary(user_id) if vault_service is not None else {"total_sources": 0, "total_items": 0}
         vault_sources = vault_service.list_sources(user_id, limit=8) if vault_service is not None else []
+        lane_counts = dict(memory_review.get("lane_counts") or {}) if isinstance(memory_review, dict) else {}
+        top_lanes = ", ".join(
+            f"{name}={count}"
+            for name, count in sorted(lane_counts.items(), key=lambda item: (-int(item[1]), str(item[0])))[:3]
+            if int(count or 0) > 0
+        )
+        next_action = str((list(memory_review.get("suggested_actions") or [])[:1] or [""])[0]).replace("_", " ").strip()
+        memory_review_subtitle = str(memory_review.get("summary") or "No memory review data yet")
+        if top_lanes:
+            memory_review_subtitle += f" | lanes={top_lanes}"
+        if next_action:
+            memory_review_subtitle += f" | next={next_action}"
         return [
             _row(
                 "memory_hygiene",
                 "Memory Hygiene",
-                status="warn" if int(hygiene.get("scan_issue_count") or 0) > 0 else "ready",
+                status="warn" if int(hygiene.get("scan_issue_count") or 0) > 0 or int(memory_review.get("alert_count") or 0) > 0 else "ready",
                 updated_at=str(frozen_snapshot.get("updated_at") or ""),
-                subtitle=f"expired={hygiene.get('expired_count', 0)} | issues={hygiene.get('scan_issue_count', 0)}",
+                subtitle=(
+                    f"expired={hygiene.get('expired_count', 0)} | "
+                    f"issues={hygiene.get('scan_issue_count', 0)} | "
+                    f"review={memory_review.get('status', hygiene.get('review_status', 'idle'))}"
+                ),
                 detail=_json_text(hygiene),
+            ),
+            _row(
+                "memory_review",
+                "Memory Review Queue",
+                status="warn" if int(memory_review.get("alert_count") or 0) > 0 else ("ready" if memory_review else "idle"),
+                updated_at=str(memory_review.get("generated_at") or ""),
+                subtitle=_clip(memory_review_subtitle, limit=160),
+                detail=_json_text(memory_review),
             ),
             _row(
                 "memory_profile",
@@ -513,6 +688,14 @@ class ControlRoomSnapshotBuilder:
                 updated_at="",
                 subtitle=", ".join(_clip(row.get("value"), limit=40) for row in preference_rows[:3]) or "No preferences yet",
                 detail=_json_text(preference_rows),
+            ),
+            _row(
+                "memory_preference_graph",
+                "Preference Graph",
+                status="ready" if int(preference_graph.get("node_count") or 0) > 0 else "idle",
+                updated_at=str(preference_graph.get("updated_at") or ""),
+                subtitle=_clip(preference_graph.get("summary") or "No preference graph yet", limit=160),
+                detail=_json_text(preference_graph),
             ),
             _row(
                 "memory_summary",
@@ -569,10 +752,14 @@ class ControlRoomSnapshotBuilder:
         ops_snapshot: dict[str, Any],
         release_report: dict[str, Any] | None,
         freeze_report: dict[str, Any] | None,
+        offline_report: dict[str, Any] | None = None,
     ) -> list[dict[str, str]]:
         rows: list[dict[str, str]] = []
         tool_metrics = dict(ops_snapshot.get("tool_metrics") or {})
         model_metrics = dict(ops_snapshot.get("model_metrics") or {})
+        background_tasks = dict(ops_snapshot.get("background_tasks") or {})
+        skill_apprenticeship = dict(ops_snapshot.get("skill_apprenticeship") or {})
+        observability = build_observability_digest(ops_snapshot)
         rows.append(
             _row(
                 "ops_metrics",
@@ -580,11 +767,98 @@ class ControlRoomSnapshotBuilder:
                 status="ready" if (tool_metrics or model_metrics) else "idle",
                 subtitle=(
                     f"tools={tool_metrics.get('successes', 0)}/{tool_metrics.get('total', 0)} ok | "
-                    f"avg_latency_ms={model_metrics.get('average_latency_ms', 0.0)}"
+                    f"avg_latency_ms={model_metrics.get('average_latency_ms', 0.0)} | "
+                    f"alerts={observability.get('alert_count', 0)}"
                 ),
                 detail=_json_text(ops_snapshot),
             )
         )
+        if list(observability.get("tool_hotspots") or []) or list(observability.get("model_hotspots") or []):
+            top_tool = dict((list(observability.get("tool_hotspots") or []) or [{}])[0])
+            top_model = dict((list(observability.get("model_hotspots") or []) or [{}])[0])
+            hotspot_bits: list[str] = []
+            if top_tool:
+                hotspot_bits.append(
+                    f"tool={top_tool.get('tool_name', '--')}:{int(float(top_tool.get('average_latency_ms') or 0.0))}ms"
+                )
+            if top_model:
+                hotspot_bits.append(
+                    f"model={top_model.get('model_name', '--')}:{int(float(top_model.get('average_latency_ms') or 0.0))}ms"
+                )
+            rows.append(
+                _row(
+                    "latency_hotspots",
+                    "Latency Hotspots",
+                    status=str(observability.get("status") or "idle"),
+                    updated_at=str(observability.get("generated_at") or ""),
+                    subtitle=" | ".join(hotspot_bits) or "No active latency hotspots",
+                    detail=_json_text(observability),
+                )
+            )
+        if background_tasks:
+            counts = dict(background_tasks.get("counts") or {})
+            rows.append(
+                _row(
+                    "background_tasks",
+                    "Background Task Queue",
+                    status=(
+                        "warn"
+                        if int(background_tasks.get("retry_ready_count") or 0) > 0 or int(background_tasks.get("failed_count") or 0) > 0
+                        else ("running" if int(background_tasks.get("running_count") or 0) > 0 else "idle")
+                    ),
+                    updated_at=str(background_tasks.get("updated_at") or ""),
+                    subtitle=(
+                        f"running={background_tasks.get('running_count', 0)} | "
+                        f"retry_ready={background_tasks.get('retry_ready_count', 0)} | "
+                        f"failed={background_tasks.get('failed_count', 0)}"
+                    ),
+                    detail=_json_text({"queue": background_tasks, "counts": counts}),
+                )
+            )
+        if list(observability.get("failure_hotspots") or []) or int(observability.get("recovery_pressure") or 0) > 0:
+            top_failure = dict((list(observability.get("failure_hotspots") or []) or [{}])[0])
+            rows.append(
+                _row(
+                    "recovery_watchlist",
+                    "Recovery Watchlist",
+                    status="warn" if int(observability.get("recovery_pressure") or 0) > 0 else str(observability.get("status") or "ready"),
+                    updated_at=str(observability.get("generated_at") or ""),
+                    subtitle=(
+                        f"recovery_pressure={observability.get('recovery_pressure', 0)} | "
+                        f"top={top_failure.get('kind', '--')}::{top_failure.get('name', '--')}"
+                    ),
+                    detail=_json_text(observability),
+                )
+            )
+        if skill_apprenticeship:
+            suggestions = list(skill_apprenticeship.get("suggestions") or [])
+            rows.append(
+                _row(
+                    "skill_apprenticeship",
+                    "Skill Apprenticeship",
+                    status="ready" if suggestions else "idle",
+                    updated_at=str(skill_apprenticeship.get("updated_at") or ""),
+                    subtitle=(
+                        f"approval_required={skill_apprenticeship.get('approval_required_count', 0)} | "
+                        f"draft_ready={skill_apprenticeship.get('draft_ready_count', 0)}"
+                    ),
+                    detail=_json_text(skill_apprenticeship),
+                )
+            )
+        if offline_report:
+            rows.append(
+                _row(
+                    "offline_resilience",
+                    "Offline Resilience",
+                    status=str(offline_report.get("readiness") or ("ready" if offline_report.get("ok") else "blocked")),
+                    subtitle=(
+                        f"packs={dict(offline_report.get('knowledge_packs') or {}).get('pack_count', 0)} | "
+                        f"agentpedia={offline_report.get('agentpedia_pages_count', 0)} | "
+                        f"cache={offline_report.get('evidence_cache_records', 0)}"
+                    ),
+                    detail=_json_text(offline_report),
+                )
+            )
 
         if release_report:
             blockers = list(release_report.get("blockers") or [])
@@ -770,8 +1044,12 @@ class ControlRoomSnapshotBuilder:
             ontology_counts[kind] = ontology_counts.get(kind, 0) + 1
         ops_snapshot = self.ops_control.snapshot(event_limit=12, metric_limit=24) if self.ops_control is not None else {}
         gateway_snapshot = self.gateway_service.snapshot(limit=8) if self.gateway_service is not None else {}
-        release_report = load_latest_release_report()
-        freeze_report = load_latest_framework_freeze()
+        project_root = self._project_root()
+        release_report = load_latest_release_report(project_root)
+        freeze_report = load_latest_framework_freeze(project_root)
+        offline_report = run_offline_resilience(project_root)
+        context_rows = self._context_rows(user_id=user_id)
+        observability = build_observability_digest(ops_snapshot)
 
         config_rows = self._config_rows(
             user_id=user_id,
@@ -783,6 +1061,12 @@ class ControlRoomSnapshotBuilder:
         )
         session_rows = self._session_rows(user_id=user_id, sessions=sessions)
         task_rows = self._task_rows(user_id=user_id, thread_id=active_thread_id)
+        continuity_rows = self._continuity_rows(
+            user_id=user_id,
+            active_thread_id=active_thread_id,
+            sessions=sessions,
+            background_snapshot=dict(ops_snapshot.get("background_tasks") or {}),
+        )
         subagent_rows = self._subagent_rows(user_id=user_id)
         workflow_rows = self._workflow_rows(user_id=user_id)
         action_rows = self._action_rows(user_id=user_id, thread_id=active_thread_id)
@@ -795,6 +1079,7 @@ class ControlRoomSnapshotBuilder:
             ops_snapshot=ops_snapshot,
             release_report=release_report,
             freeze_report=freeze_report,
+            offline_report=offline_report,
         )
         error_rows = self._error_rows(
             user_id=user_id,
@@ -813,10 +1098,12 @@ class ControlRoomSnapshotBuilder:
             f"Model: {model_snapshot.get('DEFAULT_MODEL', '--')}",
             f"Capability profile: {model_snapshot.get('MODEL_CAPABILITY_PROFILE', '--')}",
             f"Runtime profile: {dict(ops_snapshot.get('active_profile') or {}).get('profile_id', '--')}",
+            f"Autonomy profile: {dict(ops_snapshot.get('active_autonomy_profile') or {}).get('profile_id', '--')}",
             "",
             "Coverage:",
             f"- Sessions: {len(session_rows)}",
             f"- Tasks: {len(task_rows)}",
+            f"- Resume continuity: {len(continuity_rows)}",
             f"- Subagents: {len(subagent_rows)}",
             f"- Workflow surfaces: {len(workflow_rows)}",
             f"- Actions: {len(action_rows)}",
@@ -827,9 +1114,35 @@ class ControlRoomSnapshotBuilder:
             f"- Gateway sessions: {len(gateway_snapshot.get('sessions') or [])}",
             f"- Nodes: {len(gateway_snapshot.get('nodes') or [])}",
             f"- Memory surfaces: {len(memory_rows)}",
+            f"- Context surfaces: {len(context_rows)}",
             f"- Observability surfaces: {len(observability_rows)}",
             f"- Recent errors: {0 if error_rows and error_rows[0].get('id') == 'no_errors' else len(error_rows)}",
             f"- Policy decisions: {sum(int(v or 0) for v in dict(ops_snapshot.get('policy_decision_counts') or {}).values())}",
+            (
+                f"- Background tasks: {int(dict(ops_snapshot.get('background_tasks') or {}).get('running_count') or 0)} running / "
+                f"{int(dict(ops_snapshot.get('background_tasks') or {}).get('retry_ready_count') or 0)} retry_ready / "
+                f"{int(dict(ops_snapshot.get('background_tasks') or {}).get('failed_count') or 0)} failed"
+            ),
+            (
+                f"- Skill apprenticeship: "
+                f"{int(dict(ops_snapshot.get('skill_apprenticeship') or {}).get('approval_required_count') or 0)} approval-needed / "
+                f"{int(dict(ops_snapshot.get('skill_apprenticeship') or {}).get('draft_ready_count') or 0)} draft-ready"
+            ),
+            (
+                f"- Context budget: {str((context_rows[0] or {}).get('status') or 'idle')} "
+                f"({(context_rows[0] or {}).get('subtitle') or '--'})"
+            ),
+            (
+                f"- Offline resilience: {offline_report.get('readiness', 'blocked')} "
+                f"(packs={dict(offline_report.get('knowledge_packs') or {}).get('pack_count', 0)}, "
+                f"agentpedia={offline_report.get('agentpedia_pages_count', 0)}, "
+                f"cache={offline_report.get('evidence_cache_records', 0)})"
+            ),
+            (
+                f"- Observability: {observability.get('status', 'idle')} "
+                f"(alerts={observability.get('alert_count', 0)}, "
+                f"recovery_pressure={observability.get('recovery_pressure', 0)})"
+            ),
         ]
         if release_report:
             overview_lines.append(f"- Release gate: {release_report.get('status', 'idle')} ({release_report.get('readiness_score', 0.0)})")
@@ -847,9 +1160,19 @@ class ControlRoomSnapshotBuilder:
         summary_cards = [
             {"label": "Sessions", "value": str(len(session_rows)), "hint": active_thread_id or "latest"},
             {"label": "Tasks", "value": str(len(task_rows)), "hint": "task graph"},
+            {
+                "label": "Resume",
+                "value": str(max(0, len(continuity_rows) - 1 if continuity_rows else 0)),
+                "hint": str((continuity_rows[0] or {}).get("status") or "idle") if continuity_rows else "idle",
+            },
             {"label": "Automations", "value": str(len(automation_rows)), "hint": "scheduler"},
             {"label": "Channels", "value": str(len(channel_rows)), "hint": "delivery + gateway"},
             {"label": "Workflows", "value": str(len(workflow_rows)), "hint": "runs + manifests"},
+            {
+                "label": "Context",
+                "value": str(max(0, len(context_rows) - 1 if context_rows else 0)),
+                "hint": str((context_rows[0] or {}).get("status") or "idle") if context_rows else "idle",
+            },
             {
                 "label": "Errors",
                 "value": str(0 if error_rows and error_rows[0].get("id") == "no_errors" else len(error_rows)),
@@ -867,6 +1190,7 @@ class ControlRoomSnapshotBuilder:
                 "config": config_rows,
                 "sessions": session_rows,
                 "tasks": task_rows,
+                "continuity": continuity_rows,
                 "subagents": subagent_rows,
                 "workflows": workflow_rows,
                 "actions": action_rows,
@@ -875,6 +1199,7 @@ class ControlRoomSnapshotBuilder:
                 "automations": automation_rows,
                 "channels": channel_rows,
                 "memory": memory_rows,
+                "context": context_rows,
                 "observability": observability_rows,
                 "errors": error_rows,
             },
