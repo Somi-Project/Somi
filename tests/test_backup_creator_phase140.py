@@ -18,9 +18,10 @@ class BackupCreatorPhase140Tests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "ops").mkdir(parents=True, exist_ok=True)
+            (root / "docs" / "release").mkdir(parents=True, exist_ok=True)
             (root / "ops" / "tool.py").write_text("print('ok')\n", encoding="utf-8")
             (root / "README.md").write_text("# tmp\n", encoding="utf-8")
-            (root / "update.md").write_text("# roadmap\n", encoding="utf-8")
+            (root / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md").write_text("# roadmap\n", encoding="utf-8")
             (root / "audit" / "backups" / "old").mkdir(parents=True, exist_ok=True)
             (root / "audit" / "backups" / "old" / "nested.txt").write_text("skip\n", encoding="utf-8")
             (root / "audit" / "external_repos" / "repo").mkdir(parents=True, exist_ok=True)

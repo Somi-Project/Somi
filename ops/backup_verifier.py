@@ -12,7 +12,11 @@ CRITICAL_BACKUP_PATHS = (
     "docs/architecture/SYSTEM_MAP.md",
 )
 CHECKPOINT_SUFFIXES = {".py", ".md", ".json", ".yaml", ".yml", ".toml", ".txt"}
-PHASE_LOG_HINTS = {"phase_upgrade.md", "agentupgrade.md", "searchupgrade.md", "update.md"}
+PHASE_LOG_HINTS = {
+    "framework_release_notes.md",
+    "upgrade_path_verified.md",
+    "framework_freeze.md",
+}
 
 
 def _now_iso() -> str:

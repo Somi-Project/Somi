@@ -31,4 +31,4 @@ Phase status:
 - `Phase 10`: agent studio / control room views for sessions, tasks, subagents, workflows, automations, channels, memory, and failures
 - `Phase 11`: runtime profiles, rollout gates, policy decision logging, and local model/tool observability
 - `Phase 12`: trajectory capture, replay scorecards, workflow-derived skill suggestions, and regression-pack inventory
-- `Reference plan`: [update.md](/C:/somex/update.md)
+- `Release reference`: [FRAMEWORK_RELEASE_NOTES.md](/C:/somex/docs/release/FRAMEWORK_RELEASE_NOTES.md)

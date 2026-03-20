@@ -29,8 +29,9 @@ class TaskContinuityPhase151Tests(unittest.TestCase):
         checkpoint = self.temp_dir / "audit" / "backups" / "phase151_demo_checkpoint"
         checkpoint.mkdir(parents=True, exist_ok=True)
         (checkpoint / "doctor.py").write_text("print('doctor')\n", encoding="utf-8")
-        (checkpoint / "update.md").write_text("# Update\n", encoding="utf-8")
-        (checkpoint / "phase_upgrade.md").write_text("# Phase\n", encoding="utf-8")
+        (checkpoint / "docs" / "release").mkdir(parents=True, exist_ok=True)
+        (checkpoint / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md").write_text("# Update\n", encoding="utf-8")
+        (checkpoint / "docs" / "release" / "UPGRADE_PATH_VERIFIED.md").write_text("# Phase\n", encoding="utf-8")
         self.state_store = SessionEventStore(db_path=self.temp_dir / "sessions" / "state" / "system_state.sqlite3")
         self.gateway = GatewayService(root_dir=self.temp_dir / "gateway")
         self.ops = OpsControlPlane(root_dir=self.temp_dir / "sessions" / "ops")

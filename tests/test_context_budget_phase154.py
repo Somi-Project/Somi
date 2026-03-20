@@ -26,13 +26,15 @@ class ContextBudgetPhase154Tests(unittest.TestCase):
         (self.temp_dir / "sessions").mkdir(parents=True, exist_ok=True)
         (self.temp_dir / "database").mkdir(parents=True, exist_ok=True)
         (self.temp_dir / "docs" / "architecture").mkdir(parents=True, exist_ok=True)
+        (self.temp_dir / "docs" / "release").mkdir(parents=True, exist_ok=True)
         (self.temp_dir / ".venv").mkdir(parents=True, exist_ok=True)
         (self.temp_dir / "docs" / "architecture" / "TRUST_BOUNDARIES.md").write_text("# Trust\n", encoding="utf-8")
         checkpoint = self.temp_dir / "audit" / "backups" / "phase154_demo_checkpoint"
         checkpoint.mkdir(parents=True, exist_ok=True)
         (checkpoint / "doctor.py").write_text("print('doctor')\n", encoding="utf-8")
-        (checkpoint / "update.md").write_text("# Update\n", encoding="utf-8")
-        (checkpoint / "phase_upgrade.md").write_text("# Phase\n", encoding="utf-8")
+        (checkpoint / "docs" / "release").mkdir(parents=True, exist_ok=True)
+        (checkpoint / "docs" / "release" / "FRAMEWORK_RELEASE_NOTES.md").write_text("# Update\n", encoding="utf-8")
+        (checkpoint / "docs" / "release" / "UPGRADE_PATH_VERIFIED.md").write_text("# Phase\n", encoding="utf-8")
         self.state_store = SessionEventStore(db_path=self.temp_dir / "sessions" / "state" / "system_state.sqlite3")
 
     def tearDown(self) -> None:
