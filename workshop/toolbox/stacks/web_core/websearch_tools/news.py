@@ -29,6 +29,13 @@ logger = logging.getLogger(__name__)
 _NEWS_SEARX_TIMEOUT_S = 12.0
 _NEWS_REFINER_TIMEOUT_S = 4.0
 _NEWS_DDG_TIMEOUT_S = 12.0
+_NEWS_TAVILY_TIMEOUT_S = 12.0
+
+# --- Tavily opt-in (activated when TAVILY_API_KEY is set) ---
+try:
+    from config.settings import TAVILY_API_KEY as _TAVILY_API_KEY
+except Exception:
+    _TAVILY_API_KEY = ""
 
 try:
     from config.settings import DEFAULT_NEWS_REGION as _DEFAULT_NEWS_REGION
@@ -411,6 +418,44 @@ Query: {raw_q}
             logger.warning(f"DDG news failed: {e}")
             return []
 
+    async def _tavily_news(self, query: str, max_results: int = 15) -> List[Dict[str, Any]]:
+        """Tavily news search (topic='news'). Returns normalized rows."""
+        if not _TAVILY_API_KEY:
+            return []
+
+        def _run() -> List[Dict[str, Any]]:
+            from tavily import TavilyClient
+            client = TavilyClient(api_key=_TAVILY_API_KEY)
+            resp = client.search(query, max_results=max_results, topic="news")
+            return resp.get("results") or []
+
+        try:
+            raw = await asyncio.to_thread(_run)
+            return self._normalize_tavily_news(raw)
+        except Exception as exc:
+            logger.debug("Tavily news failed: %s", exc)
+            return []
+
+    def _normalize_tavily_news(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out = []
+        for r in results or []:
+            if not isinstance(r, dict):
+                continue
+            url = (r.get("url") or "").strip()
+            if not url:
+                continue
+            out.append(
+                {
+                    "title": (r.get("title") or "").strip(),
+                    "url": url,
+                    "description": (r.get("content") or "").strip(),
+                    "source": "tavily_news",
+                    "provider": "tavily",
+                    "published_at": r.get("published_date") or "",
+                }
+            )
+        return out
+
     def _normalize_ddg_news(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         out = []
         for r in results or []:
@@ -513,10 +558,26 @@ Query: {raw_q}
         q_hyg, applied_term = _apply_ambiguity_hygiene(q)
 
         # Keep searx aligned to original user wording (before LLM refinement).
+        # Run Tavily news in parallel with SearXNG when key is present.
+        tavily_results: List[Dict[str, Any]] = []
         try:
-            searx_results = await asyncio.wait_for(self._searx_news(q_hyg, max_results=15), timeout=_NEWS_SEARX_TIMEOUT_S)
+            coros = [asyncio.wait_for(self._searx_news(q_hyg, max_results=15), timeout=_NEWS_SEARX_TIMEOUT_S)]
+            if _TAVILY_API_KEY:
+                coros.append(asyncio.wait_for(self._tavily_news(q_hyg, max_results=15), timeout=_NEWS_TAVILY_TIMEOUT_S))
+            gathered = await asyncio.gather(*coros, return_exceptions=True)
+            searx_results = gathered[0] if not isinstance(gathered[0], BaseException) else []
+            if _TAVILY_API_KEY and len(gathered) > 1:
+                tavily_results = gathered[1] if not isinstance(gathered[1], BaseException) else []
         except Exception:
             searx_results = []
+
+        # Merge Tavily news into searx results (Tavily first for priority).
+        if tavily_results:
+            seen_urls = {(r.get("url") or "").strip() for r in searx_results}
+            for tr in tavily_results:
+                if (tr.get("url") or "").strip() not in seen_urls:
+                    searx_results.append(tr)
+                    seen_urls.add((tr.get("url") or "").strip())
 
         topical_news_query = any(term in q_hyg.lower() for term in ("headlines", "news", "today", "breaking"))
         if searx_results and topical_news_query and self._query_relevance_score(q_hyg, searx_results) >= 1:

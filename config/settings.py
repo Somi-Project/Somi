@@ -187,6 +187,10 @@ RAG_WEBSITES = [
 # System timezone
 SYSTEM_TIMEZONE = "America/New_York"
 
+# Tavily search API (opt-in; activated when TAVILY_API_KEY is non-empty)
+import os as _os
+TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
+
 # Finance vendor backend toggle: "yfinance" | "yahooquery"
 FINANCE_YAHOO_BACKEND = "yfinance"
 
