@@ -24,6 +24,7 @@ lxml>=5.3.0,<7.0
 readability-lxml>=0.8.1,<1.0
 trafilatura==2.0.0
 duckduckgo-search==8.1.1
+tavily-python>=0.5.0,<1.0
 yfinance==1.2.0
 yahooquery==2.4.1
 Pillow==12.1.1

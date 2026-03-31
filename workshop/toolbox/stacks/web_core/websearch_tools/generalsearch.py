@@ -17,6 +17,41 @@ from .search_common import SearchProfile, normalize_search_result, dedupe_by_url
 
 logger = logging.getLogger(__name__)
 
+# --- Tavily opt-in (activated when TAVILY_API_KEY is set) ---
+try:
+    from config.settings import TAVILY_API_KEY as _TAVILY_API_KEY
+except Exception:
+    _TAVILY_API_KEY = ""
+
+
+async def _tavily_text(query: str, max_results: int = 8) -> List[Dict[str, Any]]:
+    """Run a Tavily general web search in a thread (blocking SDK)."""
+    if not _TAVILY_API_KEY:
+        return []
+
+    def _run() -> List[Dict[str, Any]]:
+        from tavily import TavilyClient
+        client = TavilyClient(api_key=_TAVILY_API_KEY)
+        resp = client.search(query, max_results=max_results, topic="general")
+        return resp.get("results") or []
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as exc:
+        logger.debug("Tavily general search failed: %s", exc)
+        return []
+
+
+def _normalize_tavily(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    for r in rows or []:
+        if not isinstance(r, dict):
+            continue
+        rr = normalize_search_result(r, source="tavily", provider="tavily")
+        if rr.get("url"):
+            out.append(rr)
+    return out
+
 GENERAL_PROFILE = SearchProfile(name="general", category="general", domain="general")
 
 _TELEMETRY: Dict[str, int] = {
@@ -170,6 +205,13 @@ async def search_general(
                 out.append(rr)
     except Exception:
         searx_failed = True
+
+    # --- Tavily parallel path (opt-in) ---
+    if _TAVILY_API_KEY:
+        tavily_rows = _normalize_tavily(await _tavily_text(q, max_results=10))
+        if tavily_rows:
+            out = dedupe_by_url([*out, *tavily_rows])
+            out = [r for r in out if not _is_junk_result(str(r.get("url") or ""), str(r.get("title") or ""), str(r.get("description") or ""), query=q)]
 
     if allow_ddg_fallback and (searx_failed or len(out) < int(min_results)):
         _TELEMETRY["fallback_triggered_count"] += 1
