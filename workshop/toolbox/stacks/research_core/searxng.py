@@ -20,6 +20,8 @@ from config.settings import (
     SCRAPER_MAX_RESULT_LINKS,
     SCRAPER_PAGE_TIMEOUT_MS,
     SEARXNG_BASE_URL,
+    TAVILY_API_KEY,
+    TAVILY_RESEARCH_ENABLED,
 )
 from workshop.toolbox.stacks.research_core.base import pack_result, safe_trim
 from workshop.toolbox.stacks.web_core.websearch_tools.search_common import SearchProfile
@@ -117,6 +119,70 @@ async def _detect_capabilities(client: httpx.AsyncClient, base: str) -> Dict[str
 
     _CAPABILITY_CACHE[k] = {"at": now, "caps": caps}
     return caps
+
+
+async def tavily_enrich(
+    query: str,
+    max_results: int,
+    existing_urls: set[str],
+    domain: str,
+    topic: str = "general",
+) -> List[Dict[str, Any]]:
+    """
+    Optional Tavily enrichment — only called when TAVILY_API_KEY and
+    TAVILY_RESEARCH_ENABLED are both set.  Returns pack_result dicts,
+    excluding URLs already present in *existing_urls*.
+    """
+    if not TAVILY_API_KEY or not TAVILY_RESEARCH_ENABLED:
+        return []
+
+    try:
+        from tavily import AsyncTavilyClient
+
+        client = AsyncTavilyClient(api_key=TAVILY_API_KEY)
+        response = await client.search(
+            query=query,
+            max_results=max_results,
+            search_depth="basic",
+            topic=topic,
+        )
+    except Exception as exc:
+        logger.debug("Tavily enrichment failed for '%s': %s", query, exc)
+        return []
+
+    rows: List[Dict[str, Any]] = []
+    for item in response.get("results") or []:
+        url = (item.get("url") or "").strip()
+        if not url or url in existing_urls:
+            continue
+        existing_urls.add(url)
+
+        title = (item.get("title") or "Tavily Result").strip()
+        content = (item.get("content") or "").strip()
+        spans = [safe_trim(content, 300)] if content else []
+
+        r_dict = pack_result(
+            title=title,
+            url=url,
+            description=safe_trim(content, 800),
+            source="tavily",
+            domain=domain,
+            id_type="url",
+            id=url,
+            published="",
+            evidence_level="web_search",
+            evidence_spans=spans[:6],
+        )
+        r_dict["volatile"] = True
+        r_dict["provider"] = "tavily"
+        rows.append(r_dict)
+
+    if rows:
+        logger.info(
+            "Tavily enrichment added %d results for '%s' (domain=%s)",
+            len(rows), query, domain,
+        )
+    return rows
 
 
 async def search_searxng(
@@ -336,6 +402,22 @@ async def search_searxng(
                     )
         except Exception as e:
             logger.debug(f"SearXNG playwright fallback failed for '{q}': {e}")
+    # --- Tavily enrichment: trigger when results are below threshold ---
+    tavily_threshold = max(0, int(SCRAPER_FALLBACK_MIN_RESULTS or 0))
+    if len(out) < tavily_threshold and TAVILY_API_KEY and TAVILY_RESEARCH_ENABLED:
+        seen_urls = {str(r.get("url") or "") for r in out if isinstance(r, dict)}
+        tavily_topic = "news" if chosen_cat == "news" else "general"
+        tavily_rows = await tavily_enrich(
+            query=q,
+            max_results=int(max_results) - len(out),
+            existing_urls=seen_urls,
+            domain=chosen_domain,
+            topic=tavily_topic,
+        )
+        if tavily_rows:
+            out.extend(tavily_rows)
+            out = out[:int(max_results)]
+
     logger.info(
         "SearXNG returned %d results for '%s' (category=%s, profile=%s, pages=%d)",
         len(out),

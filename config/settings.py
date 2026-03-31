@@ -1,4 +1,6 @@
 ﻿# config/settings.py
+import os
+
 from config.heartbeatsettings import *
 from config.memorysettings import *
 from config.modelsettings import MODEL_CAPABILITY_PROFILE, MODEL_CAPABILITY_PROFILES, get_active_model_profile_name, get_model_profile
@@ -416,6 +418,10 @@ MONTAGUE_TELEMETRY_PATH = "executive/index/montague_context_telemetry.json"
 # Strategic cognition UX/safety
 STRATEGIC_EXECUTION_BYPASS_PHRASES = ["do it", "apply", "run", "execute", "proceed now"]
 STRATEGIC_HUMAN_SUMMARY_ENABLED = False
+
+# Tavily research enrichment (additive alongside SearXNG)
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+TAVILY_RESEARCH_ENABLED = os.environ.get("TAVILY_RESEARCH_ENABLED", "").lower() in ("1", "true", "yes")
 
 # Researcher Layer rollout flags (safe defaults)
 RESEARCHER_LAYER_ENABLED = False
