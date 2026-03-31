@@ -1,4 +1,6 @@
 ﻿# config/settings.py
+import os
+
 from config.heartbeatsettings import *
 from config.memorysettings import *
 from config.modelsettings import MODEL_CAPABILITY_PROFILE, MODEL_CAPABILITY_PROFILES, get_active_model_profile_name, get_model_profile
@@ -418,9 +420,8 @@ STRATEGIC_EXECUTION_BYPASS_PHRASES = ["do it", "apply", "run", "execute", "proce
 STRATEGIC_HUMAN_SUMMARY_ENABLED = False
 
 # Tavily research enrichment (additive alongside SearXNG)
-import os as _os
-TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
-TAVILY_RESEARCH_ENABLED = _os.environ.get("TAVILY_RESEARCH_ENABLED", "").lower() in ("1", "true", "yes")
+TAVILY_API_KEY = os.environ.get("TAVILY_API_KEY", "")
+TAVILY_RESEARCH_ENABLED = os.environ.get("TAVILY_RESEARCH_ENABLED", "").lower() in ("1", "true", "yes")
 
 # Researcher Layer rollout flags (safe defaults)
 RESEARCHER_LAYER_ENABLED = False

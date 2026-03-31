@@ -9,7 +9,7 @@ from typing import Any, Callable, Dict, List
 
 import httpx
 
-from workshop.toolbox.stacks.research_core.searxng import search_searxng, _tavily_enrich
+from workshop.toolbox.stacks.research_core.searxng import search_searxng, tavily_enrich
 from workshop.toolbox.stacks.web_core.websearch_tools.search_common import SearchProfile, dedupe_by_url, normalize_search_result
 
 from .ctickers import COMMODITY_TICKER_DICTIONARY
@@ -369,12 +369,12 @@ async def search_finance_historical(
     # Tavily finance enrichment when results remain thin
     if len(filtered) < min_results:
         seen_urls = {str(r.get("url") or "") for r in all_rows if isinstance(r, dict)}
-        tavily_rows = await _tavily_enrich(
+        tavily_rows = await tavily_enrich(
             query=cleaned,
             max_results=min_results - len(filtered),
             existing_urls=seen_urls,
             domain="finance_historical",
-            topic="finance",
+            topic="general",
         )
         if tavily_rows:
             tavily_norm = [normalize_search_result(r, source="tavily", provider="tavily") for r in tavily_rows]

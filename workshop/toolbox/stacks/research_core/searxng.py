@@ -121,7 +121,7 @@ async def _detect_capabilities(client: httpx.AsyncClient, base: str) -> Dict[str
     return caps
 
 
-async def _tavily_enrich(
+async def tavily_enrich(
     query: str,
     max_results: int,
     existing_urls: set[str],
@@ -137,10 +137,10 @@ async def _tavily_enrich(
         return []
 
     try:
-        from tavily import TavilyClient
+        from tavily import AsyncTavilyClient
 
-        client = TavilyClient(api_key=TAVILY_API_KEY)
-        response = client.search(
+        client = AsyncTavilyClient(api_key=TAVILY_API_KEY)
+        response = await client.search(
             query=query,
             max_results=max_results,
             search_depth="basic",
@@ -407,7 +407,7 @@ async def search_searxng(
     if len(out) < tavily_threshold and TAVILY_API_KEY and TAVILY_RESEARCH_ENABLED:
         seen_urls = {str(r.get("url") or "") for r in out if isinstance(r, dict)}
         tavily_topic = "news" if chosen_cat == "news" else "general"
-        tavily_rows = await _tavily_enrich(
+        tavily_rows = await tavily_enrich(
             query=q,
             max_results=int(max_results) - len(out),
             existing_urls=seen_urls,
