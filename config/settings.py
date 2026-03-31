@@ -417,6 +417,11 @@ MONTAGUE_TELEMETRY_PATH = "executive/index/montague_context_telemetry.json"
 STRATEGIC_EXECUTION_BYPASS_PHRASES = ["do it", "apply", "run", "execute", "proceed now"]
 STRATEGIC_HUMAN_SUMMARY_ENABLED = False
 
+# Tavily research enrichment (additive alongside SearXNG)
+import os as _os
+TAVILY_API_KEY = _os.environ.get("TAVILY_API_KEY", "")
+TAVILY_RESEARCH_ENABLED = _os.environ.get("TAVILY_RESEARCH_ENABLED", "").lower() in ("1", "true", "yes")
+
 # Researcher Layer rollout flags (safe defaults)
 RESEARCHER_LAYER_ENABLED = False
 RESEARCHER_BUNDLE_SHADOW_MODE = True
